@@ -1,7 +1,7 @@
 [project]
 name = "niscala-api"
 version = "0.1.0"
-description = "Add your description here"
+description = "Backend API for Niscala: business rules, data and the API contract for the Niscala app."
 readme = "README.md"
 authors = [
     { name = "Andi Naufal Nurfadhil", email = "111062395+andinaufal120@users.noreply.github.com" }
