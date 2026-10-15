@@ -1,0 +1,19 @@
+[project]
+name = "niscala-api"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Andi Naufal Nurfadhil", email = "111062395+andinaufal120@users.noreply.github.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi[standard-no-fastapi-cloud-cli]>=0.143.2",
+]
+
+[project.scripts]
+niscala-api = "niscala_api:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
