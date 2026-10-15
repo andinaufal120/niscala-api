@@ -100,13 +100,13 @@ Agents maintain the project docs (`docs/SPEC.md`, `ARCHITECTURE.md`, `README.md`
 - **Code:** identifiers MUST be English only, using the "Code name" column of the `docs/SPEC.md` glossary and status tables, in PEP 8 form: classes keep the name (`Tenant`, `RentBill`), attributes and functions use snake_case (`grace_period_days`), enum members use UPPER_SNAKE_CASE (`PaymentStatus.AWAITING_VERIFICATION`). The values these take on the wire are undecided (U-10 in `docs/SPEC.md` §10).
 - **Writing:** em-dashes (—) MUST NOT be used in docs written for humans (`README.md`), code comments, commits, or PRs. Docs written for agents (`CLAUDE.md`, `REVIEW.md`, `docs/SPEC.md`, `ARCHITECTURE.md`, `.claude/agents/`) MAY use them.
 - **Markdown docs:** domain terms MUST use the format *Original term (English term)*, e.g. *Penyewa (Tenant)*.
-- **User-facing text:** the app's UI is Indonesian, and it shows some API errors as returned. The language and shape of user-facing API messages is undecided (U-9 in `docs/SPEC.md` §10).
+- **API messages:** MUST be English. Every error MUST carry an error code. The app's Indonesian text is keyed on the code, so a released code MUST NOT be renamed, removed, or change meaning. The response shape and code list are undecided (U-9 in `docs/SPEC.md` §10).
 - **Commits, PRs and issue references:** MUST be in English, and SHOULD cite IDs (`UC-05`, `FR-13`, `NKMA-22`) where relevant.
 
 ## Boundaries
 
 - The backend owns every business rule: permissions, billing and due dates, payment-pattern facts, risk flags, subscription gating, AI calls (Gemini), invitations and notifications. The app only renders what the API returns, so a rule that isn't enforced here isn't enforced anywhere.
-- The OpenAPI document FastAPI generates from this code is the API contract. The app generates its Dart client from it. A breaking change (a removed or renamed path, field or enum value, or a changed type) MUST be raised in Plan mode and released together with a PR in `andinaufal120/niscala-app`.
+- The OpenAPI document FastAPI generates from this code is the API contract. The app generates its Dart client from it. A breaking change (a removed or renamed path, field, enum value or error code, or a changed type) MUST be raised in Plan mode and released together with a PR in `andinaufal120/niscala-app`.
 - App internals (screens, widgets, accessibility) MUST NOT be documented in this repo. What the app needs is stated in the shared `docs/SPEC.md` sections and the contract.
 
 ## CI

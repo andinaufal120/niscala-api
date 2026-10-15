@@ -10,6 +10,7 @@ Reserve Important for findings that would break behavior or break a project rule
 - A permission check missing or weaker than `docs/SPEC.md` §4 allows
 - Business rules placed in database constraints instead of application code
 - An AI failure or timeout that blocks or rolls back saving data
+- An error response without an error code
 - A breaking OpenAPI change without a matching PR in `andinaufal120/niscala-app`
 - Changes under `tests/` in an implementation commit
 - Code that contradicts `docs/SPEC.md`, or implements an item from its §10 "Undecided" by assumption

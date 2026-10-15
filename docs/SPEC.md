@@ -124,7 +124,7 @@ The allowed transitions are listed with the use case that causes them in §8.
 These apply to every use case below. Use cases do not repeat them.
 
 1. **Session:** every endpoint except `GET /health` requires a valid session. An expired or invalid session gets an authentication error the app can tell apart from other errors (mechanism: U-14).
-2. **Validation errors** name the field and the cause, so the app can show the cause next to the field (shape and language: U-9).
+2. **Errors** carry a stable error code, the field it belongs to (for validation errors), and an English message for developers and logs. The app shows Indonesian text mapped from the code, so validation errors can be shown next to their field. The codes are part of the OpenAPI document (response shape and code list: U-9).
 3. **Conflict:** a write based on data another user has changed since it was read is rejected with a conflict error and not applied (detection: U-15).
 4. **Failure is atomic:** a request that fails saves nothing, so the user can retry. The only partial outcomes are the ones a use case states (an invitation, a notification or an AI call failing after the main save).
 5. **Empty lists** are a successful response with no items, not an error.
@@ -148,12 +148,12 @@ Login and sign-up are preconditions, not use cases. All use cases assume a valid
     - minimum 8 characters, and at least 64 accepted;
     - no composition rules and no forced periodic change;
     - a show-password toggle while typing;
-    - the backend checks passwords against common/breached lists and rate-limits failed logins. The app shows those errors as returned.
+    - the backend checks passwords against common/breached lists and rate-limits failed logins. The app shows those errors in Indonesian, mapped from the error code the API returns.
 <!-- shared:end -->
 
 Additional backend rules:
 
-- Rate limiting of failed logins MUST NOT use a puzzle-style CAPTCHA or a "retype the code" check. The API returns a message the app can show as is.
+- Rate limiting of failed logins MUST NOT use a puzzle-style CAPTCHA or a "retype the code" check. The API returns an error code the app shows in Indonesian.
 - Deactivating or deleting an account ends its sessions (UC-30, UC-34, UC-35).
 
 ## 8. Server-side rules per use case
@@ -258,7 +258,7 @@ If the gateway is unreachable, return an error and create no transaction.
 
 **UC-34 Edit user account** (FR-29) · Changes name, email (MUST be unique) and status (*Aktif*/*Nonaktif*). Deactivating ends the account's sessions.
 
-**UC-35 Delete user account** (FR-29) · Soft delete that ends sessions. Rejected, with the reason returned, if the account is an Owner with a property that has an active lease.
+**UC-35 Delete user account** (FR-29) · Soft delete that ends sessions. Rejected, with an error code for the reason, if the account is an Owner with a property that has an active lease.
 
 ## 9. API contract
 
@@ -286,7 +286,7 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-6   | Bill generation (FR-31): when bills are created, how the amount is set, and proration.                                           | UC-04, UC-08, UC-25       |
 | U-7   | Payment-pattern facts: formulas, and the at-risk threshold.                                                                      | UC-26                     |
 | U-8   | AI calls: timeout, retries, fallback, and whether classification runs within the save request or after it.                       | UC-02, UC-26              |
-| U-9   | User-facing API messages: language (the app UI is Indonesian and shows some errors as returned) and whether errors carry codes.  | §6, §7, all field errors  |
+| U-9   | Error response shape and the list of error codes.                                                                                | §6, §7, all endpoints     |
 | U-10  | Wire formats: enum values, JSON field casing, and date/time format.                                                              | §3, §5, §9, all endpoints |
 | U-11  | Subscription plans, features and prices.                                                                                         | UC-31                     |
 | U-12  | Due-date reminder timing.                                                                                                        | UC-06                     |
@@ -299,3 +299,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | Date       | Change                                                                                                                    | Decided in |
 |------------|---------------------------------------------------------------------------------------------------------------------------|------------|
 | 15-10-2026 | Initial version, derived from the app's `docs/SPEC.md` and requirements baseline v1.1 (11-10-2026). Shared blocks marked. | NKMA-14    |
+| 15-10-2026 | U-9 partly decided: API messages are English with error codes; the app maps codes to Indonesian.                          | NKMA-14    |
