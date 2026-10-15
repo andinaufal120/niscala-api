@@ -1,7 +1,7 @@
 [project]
 name = "niscala-api"
 version = "0.1.0"
-description = "Add your description here"
+description = "Backend API for Niscala: business rules, data and the API contract for the Niscala app."
 readme = "README.md"
 authors = [
     { name = "Andi Naufal Nurfadhil", email = "111062395+andinaufal120@users.noreply.github.com" }
@@ -12,8 +12,17 @@ dependencies = [
 ]
 
 [project.scripts]
-niscala-api = "niscala_api:main"
+niscala-api = "app:main"
 
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "app"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
