@@ -97,7 +97,7 @@ Agents maintain the project docs (`docs/SPEC.md`, `ARCHITECTURE.md`, `README.md`
 
 ## Vocabulary
 
-- **Code:** identifiers MUST be English only, using the "Code name" column of the `docs/SPEC.md` glossary and status tables, in PEP 8 form: classes keep the name (`Tenant`, `RentBill`), attributes and functions use snake_case (`grace_period_days`), enum members use UPPER_SNAKE_CASE (`PaymentStatus.AWAITING_VERIFICATION`). The values these take on the wire are undecided (U-10 in `docs/SPEC.md` §10).
+- **Code:** identifiers MUST be English only, using the "Code name" column of the `docs/SPEC.md` glossary and status tables, in PEP 8 form: classes keep the name (`Tenant`, `RentBill`), attributes and functions use snake_case (`grace_period_days`), enum members use UPPER_SNAKE_CASE (`PaymentStatus.AWAITING_VERIFICATION`). On the wire, fields are camelCase and enum values are the codeNames (`docs/SPEC.md` §9).
 - **Writing:** em-dashes (—) MUST NOT be used in docs written for humans (`README.md`), code comments, commits, or PRs. Docs written for agents (`CLAUDE.md`, `REVIEW.md`, `docs/SPEC.md`, `ARCHITECTURE.md`, `.claude/agents/`) MAY use them.
 - **Markdown docs:** domain terms MUST use the format *Original term (English term)*, e.g. *Penyewa (Tenant)*.
 - **API messages:** MUST be English. Every error MUST carry an error code. The app's Indonesian text is keyed on the code, so a released code MUST NOT be renamed, removed, or change meaning. The response shape and code list are undecided (U-9 in `docs/SPEC.md` §10).

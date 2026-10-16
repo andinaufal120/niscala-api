@@ -76,7 +76,7 @@ Markdown docs use the format *Original term (English term)*. Code uses the Engli
 | Soft delete (Soft delete)                           | —                         | Marked inactive; history is kept.                                                  |
 <!-- shared:end -->
 
-The code names above are used in PEP 8 form in this repository (see `CLAUDE.md`, "Vocabulary"). Their values on the wire are undecided (U-10).
+The code names above are used in PEP 8 form in this repository (see `CLAUDE.md`, "Vocabulary"). Their wire form is set in §9.
 
 ## 4. Roles and permissions
 
@@ -220,9 +220,9 @@ If notifying the Tenant fails, the status change still stands.
 
 **UC-09 Change payment status manually** (FR-08, FR-11) · Target status *Belum Bayar*, *Lunas* or *Ditolak*, with a **required** reason. Rejected with a field error if the target equals the current status or the reason is empty.
 
-**UC-10 Add property** (FR-12, FR-21) · Owner only. Name and address required. The name MUST be unique within the Owner's account; a duplicate gets a field error. Optional bank account for rent transfers: bank name, account number, account holder name.
+**UC-10 Add property** (FR-12, FR-21) · Owner only. Name and address required. The name MUST be unique within the Owner's account; a duplicate gets a field error. Optional bank account for rent transfers: bank name, account number, account holder name. If any bank-account field is given, all three are required.
 
-**UC-11 View properties** (FR-12, FR-21) · Accessible properties, each with room count and assigned managers. Detail adds name, address and the bank account, if set.
+**UC-11 View properties** (FR-12, FR-21) · Accessible properties, each with name, address, room count, occupied room count and assigned managers. Detail adds the vacant room count and the bank account, if set.
 
 **UC-12 Edit property** (FR-12) · Owner only. Edits name, address and bank account.
 
@@ -230,13 +230,13 @@ If notifying the Tenant fails, the status change still stands.
 
 **UC-14 Add room** (FR-12) · Fields:
 - room number: required, MUST be unique within the property;
-- base rate: required, per month;
+- base rate: required, per month, greater than 0;
 - `lengthM` and `widthM`: optional, in metres, each 0 < x ≤ 20 with at most 2 decimals. Both or neither, otherwise a field error. Area is not stored;
 - facilities: free-form tags. On save each tag is trimmed, lowercased and has repeated spaces collapsed; duplicates are dropped. At most 30 characters per tag and 15 tags per room (storage: U-19).
 
 A suggestions endpoint returns the distinct facility tags already used on rooms of the same Owner.
 
-**UC-15 View rooms** (FR-12) · Each room with number, base rate and occupancy. Detail adds dimensions and facilities, plus the Tenant, lease dates and that lease's rent if occupied.
+**UC-15 View rooms** (FR-12) · Each room with number, base rate, occupancy, dimensions and facilities, plus, if occupied, the Tenant's name and the lease end date. Detail adds the Tenant's phone number, the lease start date and that lease's rent.
 
 **UC-16 Edit room** (FR-12) · Same fields and rules as UC-14. Changing the base rate never changes the rent of existing leases.
 
@@ -309,11 +309,36 @@ If the gateway is unreachable, return an error and create no transaction.
 
 This repository owns the contract. The OpenAPI document FastAPI generates from the code is the source; the app generates a Dart client from it and never hand-edits it. A breaking change (removed or renamed path, field or enum value, changed type) is released together with an app PR.
 
-The only endpoint so far:
+Conventions:
 
-| Method | Path      | Purpose                                                   | Used by                                                   |
-|--------|-----------|-----------------------------------------------------------|-----------------------------------------------------------|
-| `GET`  | `/health` | Confirms the API is up and its database connection works. | Walking skeleton (NKMA-6): the app displays the response. |
+- Field names are the glossary code names (§3) in camelCase.
+- Enum values are the §5 codeNames, except Baru, whose value is `new`.
+- Dates are `YYYY-MM-DD`; timestamps are ISO 8601 in UTC with `Z`.
+- Money is an integer number of rupiah.
+- Room dimensions are JSON numbers.
+- IDs are UUID strings.
+- A list response is an object with an `items` array, so pagination or totals can be added without a breaking change.
+- An edit is a `PUT` of the full resource.
+- Error responses (U-9) and the authentication scheme (U-14) are not declared yet.
+
+Endpoints:
+
+| Method   | Path                                            | Purpose                                                   | Used by                                                   |
+|----------|-------------------------------------------------|-----------------------------------------------------------|-----------------------------------------------------------|
+| `GET`    | `/health`                                       | Confirms the API is up and its database connection works. | Walking skeleton (NKMA-6): the app displays the response. |
+| `POST`   | `/properties`                                   | Add property.                                             | UC-10                                                     |
+| `GET`    | `/properties`                                   | List accessible properties.                               | UC-11                                                     |
+| `GET`    | `/properties/{propertyId}`                      | Property detail.                                          | UC-11                                                     |
+| `PUT`    | `/properties/{propertyId}`                      | Edit property.                                            | UC-12                                                     |
+| `DELETE` | `/properties/{propertyId}`                      | Delete property.                                          | UC-13                                                     |
+| `POST`   | `/properties/{propertyId}/rooms`                | Add room.                                                 | UC-14                                                     |
+| `GET`    | `/properties/{propertyId}/rooms`                | List the property's rooms.                                | UC-15                                                     |
+| `GET`    | `/properties/{propertyId}/facility-suggestions` | Facility tags already used on rooms of the property's Owner. | UC-14, UC-16                                           |
+| `GET`    | `/rooms/{roomId}`                               | Room detail.                                              | UC-15                                                     |
+| `PUT`    | `/rooms/{roomId}`                               | Edit room.                                                | UC-16                                                     |
+| `DELETE` | `/rooms/{roomId}`                               | Delete room.                                              | UC-17                                                     |
+
+The property and room endpoints are declared in the contract but not implemented yet; they respond `501 Not Implemented`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -331,7 +356,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-7   | Payment-pattern facts: formulas, and the at-risk threshold.                                                                      | UC-26                     |
 | U-8   | AI calls: timeout, retries, fallback, and whether classification runs within the save request or after it.                       | UC-02, UC-26              |
 | U-9   | Error response shape and the list of error codes.                                                                                | §6, §7, all endpoints     |
-| U-10  | Wire formats: enum values, JSON field casing, and date/time format. Decided: complaint status *Baru* is `"new"`.                 | §3, §5, §9, all endpoints |
 | U-11  | Subscription plans, features and prices.                                                                                         | UC-31                     |
 | U-12  | Due-date reminder timing.                                                                                                        | UC-06                     |
 | U-13  | Invitation expiry.                                                                                                               | UC-18, UC-20, UC-27       |
@@ -348,3 +372,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 15-10-2026 | Initial version, derived from the app's `docs/SPEC.md` and requirements baseline v1.1 (11-10-2026). Shared blocks marked. | NKMA-14    |
 | 15-10-2026 | U-9 partly decided: API messages are English with error codes; the app maps codes to Indonesian.                          | NKMA-14    |
 | 16-10-2026 | SRS v1.1 revision: Owner-only property writes and per-property bank account; room base rate, dimensions, facilities; rent per lease; complaint status split from classification state, one-step flow, urgency values, handling note, manual classification (UC-36); receipt JPG/PNG up to 5 MB; sessions (UC-37, UC-38); password blocklist. U-2 decided; U-10, U-14 narrowed; U-16, U-19, U-21 added. | NKMA-96 |
+| 16-10-2026 | U-10 decided: camelCase fields, codeName enum values, ISO 8601 dates, integer rupiah, UUID ids, wrapped lists, full-resource `PUT`. UC-10, UC-11, UC-14, UC-15 extended; property and room endpoints added to §9. | NKMA-7 |
