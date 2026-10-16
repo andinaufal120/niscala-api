@@ -238,13 +238,12 @@ def test_property_input_text_field_is_non_empty_string(
     assert schema["minLength"] == 1
 
 
-def test_property_input_bank_account_is_nullable_bank_account_defaulting_to_null(
+def test_property_input_bank_account_is_optional_nullable_bank_account(
     openapi: OpenApiDoc, property_input_schema: dict[str, Any]
 ) -> None:
     schema = property_input_schema["properties"]["bankAccount"]
     assert openapi.ref_name(nullable_inner(schema)) == "BankAccount"
-    assert "default" in schema
-    assert schema["default"] is None
+    assert "bankAccount" not in property_input_schema["required"]
 
 
 # ManagerRef

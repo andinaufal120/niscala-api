@@ -244,7 +244,7 @@ def test_room_input_base_rate_is_positive_integer(
 
 
 @pytest.mark.parametrize("field", ["lengthM", "widthM"])
-def test_room_input_dimension_is_nullable_number_in_range_defaulting_to_null(
+def test_room_input_dimension_is_optional_nullable_number_in_range(
     room_input_schema: dict[str, Any], field: str
 ) -> None:
     schema = room_input_schema["properties"][field]
@@ -252,8 +252,7 @@ def test_room_input_dimension_is_nullable_number_in_range_defaulting_to_null(
     assert inner["type"] == "number"
     assert inner["exclusiveMinimum"] == 0
     assert inner["maximum"] == 20
-    assert "default" in schema
-    assert schema["default"] is None
+    assert field not in room_input_schema["required"]
 
 
 def test_room_input_facilities_is_string_array_defaulting_to_empty(
