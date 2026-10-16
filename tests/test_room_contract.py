@@ -192,7 +192,9 @@ def test_list_facility_suggestions_responds_with_facility_suggestion_list(
         "Occupancy",
         "RoomInput",
         "RoomLease",
+        "RoomLeaseSummary",
         "Room",
+        "RoomSummary",
         "RoomList",
         "FacilitySuggestionList",
     ],
@@ -402,10 +404,137 @@ def test_room_lease_rent_is_integer(room_lease_schema: dict[str, Any]) -> None:
     assert room_lease_schema["properties"]["rent"]["type"] == "integer"
 
 
+# RoomSummary
+
+ROOM_SUMMARY_FIELDS = {
+    "id",
+    "number",
+    "baseRate",
+    "occupancy",
+    "lengthM",
+    "widthM",
+    "facilities",
+    "lease",
+}
+
+
+@pytest.fixture
+def room_summary_schema(openapi: OpenApiDoc) -> dict[str, Any]:
+    return openapi.component("RoomSummary")
+
+
+def test_room_summary_has_exactly_its_fields(
+    room_summary_schema: dict[str, Any],
+) -> None:
+    assert _property_names(room_summary_schema) == ROOM_SUMMARY_FIELDS
+
+
+def test_room_summary_requires_every_field(
+    room_summary_schema: dict[str, Any],
+) -> None:
+    assert set(room_summary_schema["required"]) == ROOM_SUMMARY_FIELDS
+
+
+def test_room_summary_leaves_out_property_id(
+    room_summary_schema: dict[str, Any],
+) -> None:
+    assert "propertyId" not in _property_names(room_summary_schema)
+
+
+def test_room_summary_id_is_uuid_string(room_summary_schema: dict[str, Any]) -> None:
+    schema = room_summary_schema["properties"]["id"]
+    assert schema["type"] == "string"
+    assert schema["format"] == "uuid"
+
+
+def test_room_summary_number_is_string(room_summary_schema: dict[str, Any]) -> None:
+    assert room_summary_schema["properties"]["number"]["type"] == "string"
+
+
+def test_room_summary_base_rate_is_integer(
+    room_summary_schema: dict[str, Any],
+) -> None:
+    assert room_summary_schema["properties"]["baseRate"]["type"] == "integer"
+
+
+def test_room_summary_occupancy_is_occupancy_enum(
+    openapi: OpenApiDoc, room_summary_schema: dict[str, Any]
+) -> None:
+    schema = room_summary_schema["properties"]["occupancy"]
+    assert openapi.ref_name(schema) == "Occupancy"
+
+
+@pytest.mark.parametrize("field", ["lengthM", "widthM"])
+def test_room_summary_dimension_is_nullable_number(
+    room_summary_schema: dict[str, Any], field: str
+) -> None:
+    assert nullable_inner(room_summary_schema["properties"][field])["type"] == "number"
+
+
+def test_room_summary_facilities_is_string_array(
+    room_summary_schema: dict[str, Any],
+) -> None:
+    schema = room_summary_schema["properties"]["facilities"]
+    assert schema["type"] == "array"
+    assert schema["items"]["type"] == "string"
+
+
+def test_room_summary_lease_is_nullable_room_lease_summary(
+    openapi: OpenApiDoc, room_summary_schema: dict[str, Any]
+) -> None:
+    schema = room_summary_schema["properties"]["lease"]
+    assert openapi.ref_name(nullable_inner(schema)) == "RoomLeaseSummary"
+
+
+# RoomLeaseSummary
+
+ROOM_LEASE_SUMMARY_FIELDS = {"tenantName", "endDate"}
+
+
+@pytest.fixture
+def room_lease_summary_schema(openapi: OpenApiDoc) -> dict[str, Any]:
+    return openapi.component("RoomLeaseSummary")
+
+
+def test_room_lease_summary_has_exactly_its_fields(
+    room_lease_summary_schema: dict[str, Any],
+) -> None:
+    assert _property_names(room_lease_summary_schema) == ROOM_LEASE_SUMMARY_FIELDS
+
+
+def test_room_lease_summary_requires_every_field(
+    room_lease_summary_schema: dict[str, Any],
+) -> None:
+    assert set(room_lease_summary_schema["required"]) == ROOM_LEASE_SUMMARY_FIELDS
+
+
+@pytest.mark.parametrize("field", ["tenantPhone", "startDate", "rent"])
+def test_room_lease_summary_leaves_out_detail_only_field(
+    room_lease_summary_schema: dict[str, Any], field: str
+) -> None:
+    assert field not in _property_names(room_lease_summary_schema)
+
+
+def test_room_lease_summary_tenant_name_is_string(
+    room_lease_summary_schema: dict[str, Any],
+) -> None:
+    assert room_lease_summary_schema["properties"]["tenantName"]["type"] == "string"
+
+
+def test_room_lease_summary_end_date_is_nullable_date_string(
+    room_lease_summary_schema: dict[str, Any],
+) -> None:
+    inner = nullable_inner(room_lease_summary_schema["properties"]["endDate"])
+    assert inner["type"] == "string"
+    assert inner["format"] == "date"
+
+
 # RoomList and FacilitySuggestionList
 
 
-def test_room_list_items_is_required_array_of_room(openapi: OpenApiDoc) -> None:
+def test_room_list_items_is_required_array_of_room_summary(
+    openapi: OpenApiDoc,
+) -> None:
     schema = openapi.component(
         openapi.response_schema_ref("get", "/properties/{propertyId}/rooms", 200)
     )
@@ -413,7 +542,7 @@ def test_room_list_items_is_required_array_of_room(openapi: OpenApiDoc) -> None:
     assert set(schema["required"]) == {"items"}
     items = schema["properties"]["items"]
     assert items["type"] == "array"
-    assert openapi.ref_name(items["items"]) == "Room"
+    assert openapi.ref_name(items["items"]) == "RoomSummary"
 
 
 def test_facility_suggestion_list_items_is_required_array_of_string(

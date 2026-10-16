@@ -164,7 +164,15 @@ def test_list_properties_responds_with_property_list(openapi: OpenApiDoc) -> Non
 
 
 @pytest.mark.parametrize(
-    "name", ["BankAccount", "PropertyInput", "ManagerRef", "Property", "PropertyList"]
+    "name",
+    [
+        "BankAccount",
+        "PropertyInput",
+        "ManagerRef",
+        "Property",
+        "PropertySummary",
+        "PropertyList",
+    ],
 )
 def test_property_component_schema_is_declared(openapi: OpenApiDoc, name: str) -> None:
     assert name in openapi.components
@@ -340,6 +348,72 @@ def test_property_managers_is_array_of_manager_ref(
     assert openapi.ref_name(schema["items"]) == "ManagerRef"
 
 
+# PropertySummary
+
+PROPERTY_SUMMARY_FIELDS = {
+    "id",
+    "name",
+    "address",
+    "roomCount",
+    "occupiedRoomCount",
+    "managers",
+}
+
+
+@pytest.fixture
+def property_summary_schema(openapi: OpenApiDoc) -> dict[str, Any]:
+    return openapi.component("PropertySummary")
+
+
+def test_property_summary_has_exactly_its_fields(
+    property_summary_schema: dict[str, Any],
+) -> None:
+    assert _property_names(property_summary_schema) == PROPERTY_SUMMARY_FIELDS
+
+
+def test_property_summary_requires_every_field(
+    property_summary_schema: dict[str, Any],
+) -> None:
+    assert set(property_summary_schema["required"]) == PROPERTY_SUMMARY_FIELDS
+
+
+@pytest.mark.parametrize("field", ["bankAccount", "vacantRoomCount"])
+def test_property_summary_leaves_out_detail_only_field(
+    property_summary_schema: dict[str, Any], field: str
+) -> None:
+    assert field not in _property_names(property_summary_schema)
+
+
+def test_property_summary_id_is_uuid_string(
+    property_summary_schema: dict[str, Any],
+) -> None:
+    schema = property_summary_schema["properties"]["id"]
+    assert schema["type"] == "string"
+    assert schema["format"] == "uuid"
+
+
+@pytest.mark.parametrize("field", ["name", "address"])
+def test_property_summary_text_field_is_string(
+    property_summary_schema: dict[str, Any], field: str
+) -> None:
+    assert property_summary_schema["properties"][field]["type"] == "string"
+
+
+@pytest.mark.parametrize("field", ["roomCount", "occupiedRoomCount"])
+def test_property_summary_room_count_is_integer(
+    property_summary_schema: dict[str, Any], field: str
+) -> None:
+    assert property_summary_schema["properties"][field]["type"] == "integer"
+
+
+def test_property_summary_managers_is_array_of_manager_ref(
+    openapi: OpenApiDoc, property_summary_schema: dict[str, Any]
+) -> None:
+    schema = property_summary_schema["properties"]["managers"]
+    assert schema["type"] == "array"
+    assert openapi.ref_name(schema["items"]) == "ManagerRef"
+
+
 # PropertyList
 
 
@@ -353,12 +427,12 @@ def test_property_list_has_exactly_items(property_list_schema: dict[str, Any]) -
     assert set(property_list_schema["required"]) == {"items"}
 
 
-def test_property_list_items_is_array_of_property(
+def test_property_list_items_is_array_of_property_summary(
     openapi: OpenApiDoc, property_list_schema: dict[str, Any]
 ) -> None:
     schema = property_list_schema["properties"]["items"]
     assert schema["type"] == "array"
-    assert openapi.ref_name(schema["items"]) == "Property"
+    assert openapi.ref_name(schema["items"]) == "PropertySummary"
 
 
 # Wire naming conventions across the whole document
@@ -376,6 +450,13 @@ def _property_names_with_underscore(node: Any, location: str) -> list[str]:
         for index, value in enumerate(node):
             found += _property_names_with_underscore(value, f"{location}[{index}]")
     return found
+
+
+@pytest.mark.parametrize("name", ["PropertySummary", "RoomSummary", "RoomLeaseSummary"])
+def test_summary_component_property_names_contain_no_underscore(
+    openapi: OpenApiDoc, name: str
+) -> None:
+    assert _property_names_with_underscore(openapi.component(name), name) == []
 
 
 def test_no_component_schema_property_name_contains_underscore(
