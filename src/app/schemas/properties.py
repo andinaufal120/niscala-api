@@ -48,7 +48,18 @@ class Property(ApiModel):
     managers: list[ManagerRef]
 
 
+class PropertySummary(ApiModel):
+    """A property as shown in the property list."""
+
+    id: UUID
+    name: str
+    address: str
+    room_count: int
+    occupied_room_count: int
+    managers: list[ManagerRef]
+
+
 class PropertyList(ApiModel):
     """Properties the caller may access."""
 
-    items: list[Property]
+    items: list[PropertySummary]

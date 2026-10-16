@@ -66,10 +66,30 @@ class Room(ApiModel):
     lease: RoomLease | None
 
 
+class RoomLeaseSummary(ApiModel):
+    """The active lease of an occupied room as shown in the room list."""
+
+    tenant_name: str
+    end_date: date | None
+
+
+class RoomSummary(ApiModel):
+    """A room as shown in the room list."""
+
+    id: UUID
+    number: str
+    base_rate: int = Field(description="Per month, in rupiah.")
+    occupancy: Occupancy
+    length_m: float | None = Field(description="In metres.")
+    width_m: float | None = Field(description="In metres.")
+    facilities: list[str]
+    lease: RoomLeaseSummary | None
+
+
 class RoomList(ApiModel):
     """Rooms of a property."""
 
-    items: list[Room]
+    items: list[RoomSummary]
 
 
 class FacilitySuggestionList(ApiModel):
