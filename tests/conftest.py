@@ -9,6 +9,7 @@ REF_PREFIX = "#/components/schemas/"
 
 PROPERTY_ID = "3f1c2a4e-8b7d-4c6a-9e5f-1a2b3c4d5e6f"
 ROOM_ID = "7a8b9c0d-1e2f-4a3b-8c5d-6e7f8a9b0c1d"
+TENANT_ID = "c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f"
 NOT_A_UUID = "not-a-uuid"
 
 
