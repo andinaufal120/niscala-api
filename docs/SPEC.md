@@ -199,7 +199,7 @@ Same IDs and order as the app's use cases. Only what the backend must enforce or
 
 **UC-03 View complaint status and history** (FR-05) · The Tenant's own complaints, each with its status and classification state. Detail includes category and urgency when classified, and the handling note of each status change.
 
-**UC-04 View rent payment history and status** (FR-06) · Tenant with an active lease. Bills and payments with status, period, amount and due date (bill date + grace period).
+**UC-04 View rent payment history and status** (FR-06) · Tenant with an active lease. Bills and payments with status, period, amount and due date (bill date + grace period). Each bill carries its days overdue: the days past its due date while it is *Belum Bayar* or *Ditolak*, otherwise 0. A bill *Menunggu Verifikasi* is not overdue. Bill detail, for the Tenant and for management, includes the status history: every status the bill has had, starting with its creation. Each entry has the time, the actor (none for the system), whether it was a manual change (UC-09), the reason (for a rejection or a manual change) and, for *Lunas*, the method.
 
 **UC-05 Upload transfer receipt** (FR-07) · Allowed only for the Tenant's current-period payment that is *Belum Bayar* or *Ditolak*, and only when the property has a bank account. Images only: JPG or PNG, at most 5 MB; anything else gets a field error. Returns the property's bank account and the amount to transfer for the upload screen. On success: *Menunggu Verifikasi*.
 
@@ -212,14 +212,14 @@ Lists are limited to the properties the caller may access: all of an Owner's own
 Every payment-status change (UC-05, UC-07, UC-08, UC-09) triggers regeneration of that Tenant's payment-pattern summary (UC-26). Changes made by management (UC-07, UC-08, UC-09) notify the Tenant (FR-08).
 
 **UC-07 Verify or reject receipt** (FR-08, FR-09) · Lists payments *Menunggu Verifikasi*. Detail returns tenant, room, period, amount and the receipt image.
-- Verify: *Menunggu Verifikasi* → *Lunas*.
+- Verify: *Menunggu Verifikasi* → *Lunas*. The payment date is the date the receipt was uploaded.
 - Reject: requires a rejection reason; *Menunggu Verifikasi* → *Ditolak*. The Tenant may upload again (UC-05).
 
 If notifying the Tenant fails, the status change still stands.
 
-**UC-08 Record cash payment** (FR-08, FR-10) · Management only. For a bill that is *Belum Bayar* or *Ditolak*: takes the period and the date received (an invalid date gets a field error) → *Lunas*, method *Tunai*.
+**UC-08 Record cash payment** (FR-08, FR-10) · Management only. For a bill that is *Belum Bayar* or *Ditolak*: takes the period and the date received (an invalid date, or a date after today, gets a field error) → *Lunas*, method *Tunai*.
 
-**UC-09 Change payment status manually** (FR-08, FR-11) · Target status *Belum Bayar*, *Lunas* or *Ditolak*, with a **required** reason. Rejected with a field error if the target equals the current status or the reason is empty.
+**UC-09 Change payment status manually** (FR-08, FR-11) · Target status *Belum Bayar*, *Lunas* or *Ditolak*, with a **required** reason. Rejected with a field error if the target equals the current status or the reason is empty. When the target is *Lunas*, the method (*Tunai* or *Transfer*) and the date received are also required, with the same date rule as UC-08. For any other target they MUST be absent; otherwise a field error.
 
 **UC-10 Add property** (FR-12, FR-21) · Owner only. Name and address required. The name MUST be unique within the Owner's account; a duplicate gets a field error. Optional bank account for rent transfers: bank name, account number, account holder name. If any bank-account field is given, all three are required.
 
@@ -273,8 +273,11 @@ Regenerate invitation link, for an unused or expired invitation (expiry: U-13): 
 **UC-25 Payment status of all tenants** (FR-17) · For a property and a date (default: today): each Tenant with room and the bill whose period contains that date, with its amount and payment status, or none. Each Tenant's payment history is the list of their bills.
 
 **UC-26 Payment-pattern summary** (FR-18, FR-19, FR-25, FR-28) · For every Tenant:
-- rule-computed facts, e.g. average days paid relative to the due date, and late frequency (formulas: U-7);
-- an at-risk flag (threshold: U-7);
+- rule-computed facts over the Tenant's **counted bills**: the last 6 bills, by due date, that are *Lunas* or overdue (UC-04). A counted bill is **late** if it was paid after its due date or is overdue.
+    - on-time count and counted-bill count (e.g. 4 of 6);
+    - average days late: the mean days past the due date of the counted bills paid late, rounded to the nearest whole day; 0 if there are none;
+    - arrears: the total amount of all the Tenant's overdue bills.
+- an at-risk flag: at least 2 late counted bills, or any bill more than 7 days overdue;
 - the stored AI summary, or none yet.
 
 Without an active subscription, facts and flags are returned and the summary is withheld. Reading this data never triggers AI generation; summaries are regenerated when a payment status changes.
@@ -366,6 +369,7 @@ Endpoints:
 | `POST`   | `/rent-bills/{rentBillId}/cash-payment`         | Record a cash payment.                                    | UC-08                                                     |
 | `POST`   | `/rent-bills/{rentBillId}/status-changes`       | Change the payment status manually, with a required reason. | UC-09                                                   |
 | `GET`    | `/properties/{propertyId}/payment-overview`     | Each Tenant's bill covering a date (`date`, default today). | UC-25                                                   |
+| `GET`    | `/properties/{propertyId}/payment-patterns`     | Each Tenant's payment-pattern facts, at-risk flag and AI summary. | UC-26                                             |
 
 The property, room, tenant, complaint, lease and rent-bill endpoints are declared in the contract but not implemented yet; they respond `501 Not Implemented`.
 
@@ -381,7 +385,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-1   | `/health` response shape.                                                                                                        | §9, NKMA-22               |
 | U-4   | Invitation link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01       |
 | U-6   | Bill generation (FR-31): when bills are created, how the amount is set, and proration.                                           | UC-04, UC-08, UC-25       |
-| U-7   | Payment-pattern facts: formulas, and the at-risk threshold.                                                                      | UC-26                     |
 | U-8   | AI calls: timeout, retries, fallback, and whether classification runs within the save request or after it.                       | UC-02, UC-26              |
 | U-9   | Error response shape and the list of error codes.                                                                                | §6, §7, all endpoints     |
 | U-11  | Subscription plans, features and prices.                                                                                         | UC-31                     |
@@ -403,3 +406,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | U-21 decided: rent is per billing cycle; base rate pre-fills monthly leases only. Billing cycle values added to §5. Activation requires 2 to 4 emergency contacts (§7). UC-18 to UC-20 extended with phone format, occupation, emergency contacts, list and detail fields and invitation re-sharing; tenant endpoints added to §9. | NKMA-8 |
 | 17-10-2026 | U-3 decided: complaint description at least 10 characters. U-16 narrowed: categories are server data from an endpoint. Withheld AI classification flagged on the wire. Complaint endpoints added to §9. | NKMA-16 |
 | 17-10-2026 | UC-25 period defined as the bill covering a date. Lease and rent-bill endpoints added to §9. | NKMA-8 |
+| 17-10-2026 | U-7 decided: payment-pattern facts and at-risk threshold (UC-26). Bills carry days overdue and a status history; a manual *Lunas* takes a method and a date; payment dates cannot be after today. Payment-pattern endpoint added to §9. | NKMA-8 |
