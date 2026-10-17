@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Path, Query, Response, status
 
-from app.schemas.payments import PaymentOverview
+from app.schemas.payments import PaymentOverview, PaymentPatternList
 from app.schemas.properties import Property, PropertyInput, PropertyList
 from app.schemas.rooms import FacilitySuggestionList, Room, RoomInput, RoomList
 from app.schemas.tenants import NewTenantInput, Tenant, TenantList
@@ -92,4 +92,10 @@ def get_payment_overview(
     date: Annotated[dt.date | None, Query()] = None,
 ) -> PaymentOverview:
     """Show each tenant's bill covering a date, defaulting to today."""
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+
+
+@router.get("/{propertyId}/payment-patterns", tags=["rent-bills"])
+def get_payment_patterns(property_id: PropertyId) -> PaymentPatternList:
+    """Show each tenant's payment pattern over their most recent bills."""
     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
