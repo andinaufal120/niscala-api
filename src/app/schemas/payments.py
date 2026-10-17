@@ -1,4 +1,4 @@
-"""Schemas for rent bills, their payment state and the payment overview."""
+"""Schemas for rent bills, their payment state and history, the payment overview and payment patterns."""
 
 import datetime as dt
 from enum import StrEnum

@@ -1,4 +1,4 @@
-"""Endpoints under /properties: properties and their rooms, facility suggestions and tenants.
+"""Endpoints under /properties: properties and their rooms, facility suggestions, tenants, payment overview and payment patterns.
 
 Declared in the contract; not implemented yet.
 """
