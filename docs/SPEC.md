@@ -197,7 +197,9 @@ Same IDs and order as the app's use cases. Only what the backend must enforce or
 - *Menunggu Klasifikasi*: the AI was attempted and failed or timed out;
 - *Belum Diklasifikasi*: the Owner had no active subscription when the complaint was saved, so the AI was skipped.
 
-**UC-03 View complaint status and history** (FR-05) · The Tenant's own complaints, each with its status and classification state. Detail includes category and urgency when classified, and the handling note of each status change.
+Optionally, one photo of the problem: JPG or PNG, at most 5 MB; anything else gets a field error. It is attached after the complaint is saved, and the Tenant may attach or replace it while the complaint is *Baru*. A failed upload leaves the complaint saved, and the Tenant can retry.
+
+**UC-03 View complaint status and history** (FR-05) · The Tenant's own complaints, each with its status and classification state. Detail includes category and urgency when classified, and the handling note of each status change. Detail says whether a photo is attached. The Tenant and management can fetch it.
 
 **UC-04 View rent payment history and status** (FR-06) · Tenant with an active lease. Bills and payments with status, period, amount and due date (bill date + grace period). Each bill carries its days overdue: the days past its due date while it is *Belum Bayar* or *Ditolak*, otherwise 0. A bill *Menunggu Verifikasi* is not overdue. Bill detail, for the Tenant and for management, includes the status history: every status the bill has had, starting with its creation. Each entry has the time, the actor (none for the system), whether it was a manual change (UC-09), the reason (for a rejection or a manual change) and, for *Lunas*, the method.
 
@@ -260,7 +262,7 @@ Regenerate invitation link, for an unused or expired invitation (expiry: U-13): 
 
 **UC-22 Occupancy dashboard** (FR-14) · Per property: occupied count, vacant count, occupancy percentage and each room's status, plus a summary across all accessible properties. All figures are computed here.
 
-**UC-23 Complaint list with AI classification** (FR-15, FR-25) · Complaints across accessible properties, sorted by urgency, then time. Includes category, urgency and suggested action when available; otherwise the classification state. Without an active subscription, AI classification results are withheld (§6 rule 6); manual classifications (UC-36) are not. A withheld AI result is flagged as withheld, so the app can tell it apart from an unclassified complaint.
+**UC-23 Complaint list with AI classification** (FR-15, FR-25) · Complaints across accessible properties, sorted by urgency, then time. Includes category, urgency and suggested action when available; otherwise the classification state. Without an active subscription, AI classification results are withheld (§6 rule 6); manual classifications (UC-36) are not. A withheld AI result is flagged as withheld, so the app can tell it apart from an unclassified complaint. A manual classification also returns who set it and the original AI result it replaced, if any. The original AI result is withheld like any AI result.
 
 **UC-24 Change complaint status** (FR-16) · The target MUST be the next status: *Baru* → *Diproses*, or *Diproses* → *Selesai*. Any other target is rejected, and so is any change once the complaint is *Selesai*. An optional handling note is stored with the change and returned to the Tenant (UC-03).
 
@@ -358,6 +360,8 @@ Endpoints:
 | `GET`    | `/complaints/{complaintId}`                     | Complaint detail with its status history.                 | UC-03, UC-23                                              |
 | `POST`   | `/complaints/{complaintId}/status-changes`      | Move a complaint to its next status, with an optional handling note. | UC-24                                          |
 | `PUT`    | `/complaints/{complaintId}/classification`      | Set or correct the category and urgency manually.         | UC-36                                                     |
+| `PUT`    | `/complaints/{complaintId}/photo`               | Attach or replace the complaint photo (multipart, JPG or PNG, at most 5 MB). | UC-02                                  |
+| `GET`    | `/complaints/{complaintId}/photo`               | The complaint photo.                                      | UC-03, UC-23                                              |
 | `GET`    | `/complaint-categories`                         | The allowed complaint categories.                         | UC-36                                                     |
 | `GET`    | `/me/lease`                                     | The calling Tenant's room and lease, or none.             | UC-01                                                     |
 | `GET`    | `/rent-bills`                                   | List rent bills (Tenant: own; management: accessible properties), optionally by `tenantId` and `paymentStatus`. | UC-04, UC-07, UC-25 |
@@ -406,5 +410,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | U-21 decided: rent is per billing cycle; base rate pre-fills monthly leases only. Billing cycle values added to §5. Activation requires 2 to 4 emergency contacts (§7). UC-18 to UC-20 extended with phone format, occupation, emergency contacts, list and detail fields and invitation re-sharing; tenant endpoints added to §9. | NKMA-8 |
 | 17-10-2026 | U-3 decided: complaint description at least 10 characters. U-16 narrowed: categories are server data from an endpoint. Withheld AI classification flagged on the wire. Complaint endpoints added to §9. | NKMA-16 |
 | 17-10-2026 | UC-25 period defined as the bill covering a date. Lease and rent-bill endpoints added to §9. | NKMA-8 |
+| 17-10-2026 | Optional complaint photo added (UC-02, UC-03). Manual classifications return the actor and the original AI result (UC-23). Complaint photo endpoints added to §9. | NKMA-16 |
 | 17-10-2026 | U-7 decided: payment-pattern facts and at-risk threshold (UC-26). Bills carry days overdue and a status history; a manual *Lunas* takes a method and a date; payment dates cannot be after today. Payment-pattern endpoint added to §9. | NKMA-8 |
 | 17-10-2026 | UC-26 average days late includes overdue counted bills. §9 lists the payment-pattern endpoint as not implemented. | NKMA-8 |

@@ -10,6 +10,7 @@ COMPLAINT_PATHS = {
     "/complaints/{complaintId}": {"get"},
     "/complaints/{complaintId}/status-changes": {"post"},
     "/complaints/{complaintId}/classification": {"put"},
+    "/complaints/{complaintId}/photo": {"put", "get"},
     "/complaint-categories": {"get"},
 }
 
@@ -30,6 +31,8 @@ COMPLAINT_OPERATIONS = [
         "classify_complaint",
         200,
     ),
+    ("put", "/complaints/{complaintId}/photo", "upload_complaint_photo", 200),
+    ("get", "/complaints/{complaintId}/photo", "get_complaint_photo", 200),
     ("get", "/complaint-categories", "list_complaint_categories", 200),
 ]
 
@@ -47,6 +50,18 @@ COMPLAINT_PATH_PARAMETERS = [
         "/complaints/{complaintId}/classification",
         "complaintId",
         id="classify_complaint",
+    ),
+    pytest.param(
+        "put",
+        "/complaints/{complaintId}/photo",
+        "complaintId",
+        id="upload_complaint_photo",
+    ),
+    pytest.param(
+        "get",
+        "/complaints/{complaintId}/photo",
+        "complaintId",
+        id="get_complaint_photo",
     ),
 ]
 
@@ -68,7 +83,11 @@ COMPLAINTS_URL = "/complaints"
 COMPLAINT_URL = f"/complaints/{COMPLAINT_ID}"
 STATUS_CHANGES_URL = f"{COMPLAINT_URL}/status-changes"
 CLASSIFICATION_URL = f"{COMPLAINT_URL}/classification"
+PHOTO_URL = f"{COMPLAINT_URL}/photo"
 CATEGORIES_URL = "/complaint-categories"
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 16
 
 COMPLAINT_COMPONENTS = [
     "ComplaintStatus",
@@ -76,6 +95,7 @@ COMPLAINT_COMPONENTS = [
     "ComplaintClassificationState",
     "ComplaintInput",
     "ComplaintClassificationInput",
+    "AiComplaintClassification",
     "ComplaintClassification",
     "ComplaintStatusChangeInput",
     "ComplaintStatusChange",
@@ -199,9 +219,15 @@ def test_complaint_write_operation_request_body_schema(
     [
         ("get", "/complaints"),
         ("get", "/complaints/{complaintId}"),
+        ("get", "/complaints/{complaintId}/photo"),
         ("get", "/complaint-categories"),
     ],
-    ids=["list_complaints", "get_complaint", "list_complaint_categories"],
+    ids=[
+        "list_complaints",
+        "get_complaint",
+        "get_complaint_photo",
+        "list_complaint_categories",
+    ],
 )
 def test_complaint_read_operations_take_no_request_body(
     openapi: OpenApiDoc, method: str, path: str
@@ -217,6 +243,7 @@ def test_complaint_read_operations_take_no_request_body(
         ("get", "/complaints/{complaintId}", 200, "Complaint"),
         ("post", "/complaints/{complaintId}/status-changes", 201, "Complaint"),
         ("put", "/complaints/{complaintId}/classification", 200, "Complaint"),
+        ("put", "/complaints/{complaintId}/photo", 200, "Complaint"),
         ("get", "/complaint-categories", 200, "ComplaintCategoryList"),
     ],
     ids=[
@@ -225,6 +252,7 @@ def test_complaint_read_operations_take_no_request_body(
         "get_complaint",
         "change_complaint_status",
         "classify_complaint",
+        "upload_complaint_photo",
         "list_complaint_categories",
     ],
 )
@@ -232,6 +260,60 @@ def test_complaint_operation_response_schema(
     openapi: OpenApiDoc, method: str, path: str, status: int, schema: str
 ) -> None:
     assert openapi.response_schema_ref(method, path, status) == schema
+
+
+# Photo upload and download
+
+
+def test_upload_complaint_photo_requires_multipart_form_data_body(
+    openapi: OpenApiDoc,
+) -> None:
+    body = openapi.operation("put", "/complaints/{complaintId}/photo")["requestBody"]
+    assert body["required"] is True
+    assert set(body["content"]) == {"multipart/form-data"}
+
+
+@pytest.fixture
+def photo_form_schema(openapi: OpenApiDoc) -> dict[str, Any]:
+    body = openapi.operation("put", "/complaints/{complaintId}/photo")["requestBody"]
+    return openapi.resolve(body["content"]["multipart/form-data"]["schema"])
+
+
+def test_upload_complaint_photo_form_has_exactly_the_file_field(
+    photo_form_schema: dict[str, Any],
+) -> None:
+    assert _property_names(photo_form_schema) == {"file"}
+
+
+def test_upload_complaint_photo_form_requires_the_file_field(
+    photo_form_schema: dict[str, Any],
+) -> None:
+    assert set(photo_form_schema["required"]) == {"file"}
+
+
+def test_upload_complaint_photo_file_field_is_binary_string(
+    photo_form_schema: dict[str, Any],
+) -> None:
+    schema = photo_form_schema["properties"]["file"]
+    assert schema["type"] == "string"
+    assert schema["format"] == "binary"
+
+
+def test_get_complaint_photo_responds_with_jpeg_and_png_images_only(
+    openapi: OpenApiDoc,
+) -> None:
+    responses = openapi.operation("get", "/complaints/{complaintId}/photo")["responses"]
+    assert set(responses["200"]["content"]) == {"image/jpeg", "image/png"}
+
+
+@pytest.mark.parametrize("content_type", ["image/jpeg", "image/png"])
+def test_get_complaint_photo_image_response_is_binary(
+    openapi: OpenApiDoc, content_type: str
+) -> None:
+    responses = openapi.operation("get", "/complaints/{complaintId}/photo")["responses"]
+    schema = responses["200"]["content"][content_type].get("schema", {})
+    assert "$ref" not in schema
+    assert schema.get("format", "binary") == "binary"
 
 
 @pytest.mark.parametrize("name", COMPLAINT_COMPONENTS)
@@ -329,7 +411,13 @@ def test_classification_input_urgency_is_complaint_urgency(
 
 # ComplaintClassification
 
-CLASSIFICATION_FIELDS = {"category", "urgency", "suggestedAction"}
+CLASSIFICATION_FIELDS = {
+    "category",
+    "urgency",
+    "suggestedAction",
+    "classifiedByName",
+    "originalAiClassification",
+}
 
 
 @pytest.fixture
@@ -367,6 +455,63 @@ def test_classification_suggested_action_is_nullable_string(
 ) -> None:
     schema = classification_schema["properties"]["suggestedAction"]
     assert nullable_inner(schema)["type"] == "string"
+
+
+def test_classification_classified_by_name_is_nullable_string(
+    classification_schema: dict[str, Any],
+) -> None:
+    schema = classification_schema["properties"]["classifiedByName"]
+    assert nullable_inner(schema)["type"] == "string"
+
+
+def test_classification_original_ai_classification_is_nullable_ai_classification(
+    openapi: OpenApiDoc, classification_schema: dict[str, Any]
+) -> None:
+    schema = classification_schema["properties"]["originalAiClassification"]
+    assert openapi.ref_name(nullable_inner(schema)) == "AiComplaintClassification"
+
+
+# AiComplaintClassification
+
+AI_CLASSIFICATION_FIELDS = {"category", "urgency", "suggestedAction"}
+
+
+@pytest.fixture
+def ai_classification_schema(openapi: OpenApiDoc) -> dict[str, Any]:
+    return openapi.component("AiComplaintClassification")
+
+
+def test_ai_classification_has_exactly_its_fields(
+    ai_classification_schema: dict[str, Any],
+) -> None:
+    assert _property_names(ai_classification_schema) == AI_CLASSIFICATION_FIELDS
+
+
+def test_ai_classification_requires_every_field(
+    ai_classification_schema: dict[str, Any],
+) -> None:
+    assert set(ai_classification_schema["required"]) == AI_CLASSIFICATION_FIELDS
+
+
+def test_ai_classification_category_is_string(
+    ai_classification_schema: dict[str, Any],
+) -> None:
+    assert ai_classification_schema["properties"]["category"]["type"] == "string"
+
+
+def test_ai_classification_urgency_is_complaint_urgency(
+    openapi: OpenApiDoc, ai_classification_schema: dict[str, Any]
+) -> None:
+    schema = ai_classification_schema["properties"]["urgency"]
+    assert openapi.ref_name(schema) == "ComplaintUrgency"
+
+
+def test_ai_classification_suggested_action_is_non_nullable_string(
+    ai_classification_schema: dict[str, Any],
+) -> None:
+    schema = ai_classification_schema["properties"]["suggestedAction"]
+    assert schema["type"] == "string"
+    assert "anyOf" not in schema
 
 
 # ComplaintStatusChangeInput
@@ -489,6 +634,7 @@ SUMMARY_FIELDS = {
     "classification",
     "classificationState",
     "classificationWithheld",
+    "hasPhoto",
 }
 
 COMPLAINT_FIELDS = {*SUMMARY_FIELDS, "statusChanges"}
@@ -579,6 +725,12 @@ def test_complaint_classification_withheld_is_boolean(
     assert schema["type"] == "boolean"
 
 
+def test_complaint_has_photo_is_boolean(
+    any_complaint_schema: dict[str, Any],
+) -> None:
+    assert any_complaint_schema["properties"]["hasPhoto"]["type"] == "boolean"
+
+
 def test_complaint_status_changes_is_array_of_complaint_status_change(
     openapi: OpenApiDoc,
 ) -> None:
@@ -621,6 +773,7 @@ def test_complaint_category_list_items_is_required_array_of_strings(
         pytest.param("post", COMPLAINTS_URL, VALID_COMPLAINT_INPUT, id="create"),
         pytest.param("get", COMPLAINTS_URL, None, id="list"),
         pytest.param("get", COMPLAINT_URL, None, id="get"),
+        pytest.param("get", PHOTO_URL, None, id="get_photo"),
         pytest.param(
             "post", STATUS_CHANGES_URL, VALID_STATUS_CHANGE_INPUT, id="change_status"
         ),
@@ -646,6 +799,20 @@ def test_valid_complaint_request_responds_not_implemented(
     client, method: str, url: str, body: dict[str, Any] | None
 ) -> None:
     response = client.request(method, url, json=body)
+    assert response.status_code == 501
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "content_type"),
+    [
+        pytest.param("photo.png", PNG_BYTES, "image/png", id="png"),
+        pytest.param("photo.jpg", JPEG_BYTES, "image/jpeg", id="jpeg"),
+    ],
+)
+def test_valid_complaint_photo_upload_responds_not_implemented(
+    client, filename: str, content: bytes, content_type: str
+) -> None:
+    response = client.put(PHOTO_URL, files={"file": (filename, content, content_type)})
     assert response.status_code == 501
 
 
@@ -784,6 +951,37 @@ def test_complaint_write_without_body_is_rejected_with_validation_error(
 ) -> None:
     response = client.request(method, url)
     assert response.status_code == 422
+
+
+def test_non_uuid_complaint_id_in_photo_upload_is_rejected_with_validation_error(
+    client,
+) -> None:
+    response = client.put(
+        f"/complaints/{NOT_A_UUID}/photo",
+        files={"file": ("photo.png", PNG_BYTES, "image/png")},
+    )
+    assert response.status_code == 422
+
+
+def test_complaint_photo_upload_without_file_is_rejected_with_validation_error(
+    client,
+) -> None:
+    assert client.put(PHOTO_URL).status_code == 422
+
+
+def test_complaint_photo_upload_with_wrong_form_field_is_rejected_with_validation_error(
+    client,
+) -> None:
+    response = client.put(
+        PHOTO_URL, files={"photo": ("photo.png", PNG_BYTES, "image/png")}
+    )
+    assert response.status_code == 422
+
+
+def test_non_uuid_complaint_id_in_photo_download_is_rejected_with_validation_error(
+    client,
+) -> None:
+    assert client.get(f"/complaints/{NOT_A_UUID}/photo").status_code == 422
 
 
 @pytest.mark.parametrize(

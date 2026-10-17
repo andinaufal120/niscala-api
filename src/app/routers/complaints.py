@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Path, status
+from fastapi import APIRouter, File, HTTPException, Path, Response, UploadFile, status
 
 from app.schemas.complaints import (
     Complaint,
@@ -51,6 +51,25 @@ def classify_complaint(
     complaint_id: ComplaintId, body: ComplaintClassificationInput
 ) -> Complaint:
     """Set a complaint's category and urgency manually."""
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+
+
+@router.put("/{complaintId}/photo")
+def upload_complaint_photo(
+    complaint_id: ComplaintId,
+    file: Annotated[UploadFile, File(json_schema_extra={"format": "binary"})],
+) -> Complaint:
+    """Attach or replace the complaint photo."""
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+
+
+@router.get(
+    "/{complaintId}/photo",
+    response_class=Response,
+    responses={200: {"content": {"image/jpeg": {}, "image/png": {}}}},
+)
+def get_complaint_photo(complaint_id: ComplaintId) -> Response:
+    """Return the complaint photo."""
     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
 
 
