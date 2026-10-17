@@ -270,7 +270,7 @@ Regenerate invitation link, for an unused or expired invitation (expiry: U-13): 
 - No active subscription is required; this is not an AI feature.
 - Submitting the current values changes nothing.
 
-**UC-25 Payment status of all tenants** (FR-17) · For a property and a period (default: current): each Tenant with room, amount and payment status, and each Tenant's payment history.
+**UC-25 Payment status of all tenants** (FR-17) · For a property and a date (default: today): each Tenant with room and the bill whose period contains that date, with its amount and payment status, or none. Each Tenant's payment history is the list of their bills.
 
 **UC-26 Payment-pattern summary** (FR-18, FR-19, FR-25, FR-28) · For every Tenant:
 - rule-computed facts, e.g. average days paid relative to the due date, and late frequency (formulas: U-7);
@@ -356,8 +356,18 @@ Endpoints:
 | `POST`   | `/complaints/{complaintId}/status-changes`      | Move a complaint to its next status, with an optional handling note. | UC-24                                          |
 | `PUT`    | `/complaints/{complaintId}/classification`      | Set or correct the category and urgency manually.         | UC-36                                                     |
 | `GET`    | `/complaint-categories`                         | The allowed complaint categories.                         | UC-36                                                     |
+| `GET`    | `/me/lease`                                     | The calling Tenant's room and lease, or none.             | UC-01                                                     |
+| `GET`    | `/rent-bills`                                   | List rent bills (Tenant: own; management: accessible properties), optionally by `tenantId` and `paymentStatus`. | UC-04, UC-07, UC-25 |
+| `GET`    | `/rent-bills/{rentBillId}`                      | Rent bill detail with the property's bank account.        | UC-04, UC-05, UC-07                                       |
+| `PUT`    | `/rent-bills/{rentBillId}/receipt`              | Upload a transfer receipt (multipart, JPG or PNG, at most 5 MB). | UC-05                                              |
+| `GET`    | `/rent-bills/{rentBillId}/receipt`              | The receipt image.                                        | UC-07                                                     |
+| `POST`   | `/rent-bills/{rentBillId}/verification`         | Verify a receipt.                                         | UC-07                                                     |
+| `POST`   | `/rent-bills/{rentBillId}/rejection`            | Reject a receipt, with a required reason.                 | UC-07                                                     |
+| `POST`   | `/rent-bills/{rentBillId}/cash-payment`         | Record a cash payment.                                    | UC-08                                                     |
+| `POST`   | `/rent-bills/{rentBillId}/status-changes`       | Change the payment status manually, with a required reason. | UC-09                                                   |
+| `GET`    | `/properties/{propertyId}/payment-overview`     | Each Tenant's bill covering a date (`date`, default today). | UC-25                                                   |
 
-The property, room, tenant and complaint endpoints are declared in the contract but not implemented yet; they respond `501 Not Implemented`.
+The property, room, tenant, complaint, lease and rent-bill endpoints are declared in the contract but not implemented yet; they respond `501 Not Implemented`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -392,3 +402,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 16-10-2026 | U-10 decided: camelCase fields, codeName enum values, ISO 8601 dates, integer rupiah, UUID ids, wrapped lists, full-resource `PUT`. UC-10, UC-11, UC-14, UC-15 extended; property and room endpoints added to §9. | NKMA-7 |
 | 17-10-2026 | U-21 decided: rent is per billing cycle; base rate pre-fills monthly leases only. Billing cycle values added to §5. Activation requires 2 to 4 emergency contacts (§7). UC-18 to UC-20 extended with phone format, occupation, emergency contacts, list and detail fields and invitation re-sharing; tenant endpoints added to §9. | NKMA-8 |
 | 17-10-2026 | U-3 decided: complaint description at least 10 characters. U-16 narrowed: categories are server data from an endpoint. Withheld AI classification flagged on the wire. Complaint endpoints added to §9. | NKMA-16 |
+| 17-10-2026 | UC-25 period defined as the bill covering a date. Lease and rent-bill endpoints added to §9. | NKMA-8 |
