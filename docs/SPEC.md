@@ -73,6 +73,8 @@ Markdown docs use the format *Original term (English term)*. Code uses the Engli
 | Ringkasan pola pembayaran (Payment-pattern summary) | `PaymentPatternSummary`   | AI-written sentence built from rule-computed payment facts.                        |
 | Langganan (Subscription)                            | `Subscription`            | The Owner's paid plan that unlocks AI features.                                    |
 | Sesi (Session)                                      | `Session`                 | One logged-in device of a user.                                                    |
+| Notifikasi (Notification)                           | `Notification`            | In-app message about an event: bill, payment, complaint or account. Kept even when its push is off. |
+| Pengaturan notifikasi (Notification settings)       | `NotificationSettings`    | Per-user push on/off switch per notification category.                             |
 | Soft delete (Soft delete)                           | —                         | Marked inactive; history is kept.                                                  |
 <!-- shared:end -->
 
@@ -87,7 +89,7 @@ The code names above are used in PEP 8 form in this repository (see `CLAUDE.md`,
 
 | Capability                                                   | Tenant | Owner | Manager | Admin |
 |--------------------------------------------------------------|:------:|:-----:|:-------:|:-----:|
-| View own room, lease, payments, complaints, notifications    |   ✓   |   —   |    —    |   —   |
+| View own room, lease, payments, complaints                   |   ✓   |   —   |    —    |   —   |
 | Submit complaint, upload transfer receipt                    |   ✓   |   —   |    —    |   —   |
 | Add / edit / delete property                                 |   —    |  ✓   |    —    |   —   |
 | View property                                                |   —    |  ✓   |    A    |   —   |
@@ -100,11 +102,12 @@ The code names above are used in PEP 8 form in this repository (see `CLAUDE.md`,
 | Choose and pay for a subscription                            |   —    |  ✓   |    —    |   —   |
 | View / edit / delete any user account                        |   —    |   —   |    —    |  ✓   |
 | View / end own sessions, change own password                 |   ✓   |  ✓   |    ✓    |  ✓   |
+| View own notifications, change own notification settings     |   ✓   |  ✓   |    ✓    |   —   |
 
 Each role sees only the menus it is allowed to use. The backend enforces permissions; the app hides what a role cannot do.
 <!-- shared:end -->
 
-The API checks every request against this table. `A` means the check includes the Manager's current property assignments, so a removed assignment (UC-29) or a deleted Manager (UC-30) loses access immediately.
+The API checks every request against this table. `A` means the check includes the Manager's current property assignments, so a removed assignment (UC-29) or a deleted Manager (UC-30) loses access immediately. Notifications are filtered the same way for a Manager: only assigned properties.
 
 ## 5. Status vocabularies
 
@@ -183,7 +186,7 @@ Additional backend rules:
     - contains "niscala", or the user's email local part or name (when ≥ 4 characters).
 
   The error code is `PASSWORD_TOO_COMMON`.
-- **Sessions.** One `sessions` row per device, holding the hashed refresh token, device name, platform, login method, `last_active_at` and `revoked_at`. Revoking a session sets `revoked_at`. Access tokens live 15 minutes at most, so a revoked session stops working within 15 minutes. No IP address or location is stored.
+- **Sessions.** One `sessions` row per device, holding the hashed refresh token, device name, platform, login method, `last_active_at` and `revoked_at`. Revoking a session sets `revoked_at`. Access tokens live 15 minutes at most, so a revoked session stops working within 15 minutes. No IP address or location is stored. A session may hold one push token, removed with the session.
 - **Tokens.** The access token is a signed JWT valid for 15 minutes at most, sent as `Authorization: Bearer <token>`, and identifies the session. The refresh token is opaque, stored hashed on the `sessions` row, and rotated on every use: the old one stops working at once. Presenting an already-rotated or revoked refresh token ends that session. Refreshing never extends the 30-day cap. Sign-up, login, activation and refresh return both tokens in the JSON body.
 - **Single-use links.** Invitation links last 7 days. Password-reset links last 30 minutes. Both can be used once. Creating a new invitation link or a new reset link invalidates the previous one.
 - **Email.** Emails are trimmed and compared case-insensitively. An email belongs to one account.
@@ -219,7 +222,40 @@ Optionally, one photo of the problem: JPG or PNG, at most 5 MB; anything else ge
 
 **UC-05 Upload transfer receipt** (FR-07) · Allowed only for the Tenant's current-period payment that is *Belum Bayar* or *Ditolak*, and only when the property has a bank account. Images only: JPG or PNG, at most 5 MB; anything else gets a field error. Returns the property's bank account and the amount to transfer for the upload screen. On success: *Menunggu Verifikasi*.
 
-**UC-06 View notifications** (FR-08) · The Tenant's in-app notifications, newest first, with a read flag. Two types: due-date reminder (timing: U-12) and payment-status change. Each carries type, period and status. Opening one marks it read.
+**UC-06 View notifications** (FR-08) · All roles except Admin. The caller's in-app notifications, newest first, each with a read flag, type, creation time and the facts of the event it announces, as they were when it happened (for example the payment status the notification announces, not the bill's current status). Opening one marks it read; the caller can also mark all as read. Marking an already-read notification read changes nothing. A notification is created and kept even when its push is switched off or fails, and a failure to create or push one never undoes the event that caused it.
+
+Notification types and who receives them:
+
+| Type                   | Recipient                                  | Created when                                                                                                                                                                  |
+|------------------------|--------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `billIssued`           | Tenant                                     | A rent bill is generated (timing: U-6).                                                                                                                                       |
+| `dueDateReminder`      | Tenant                                     | 3 days before a bill's due date at 07:00, if the bill is still *Belum Bayar* or *Ditolak*. Not sent for a bill issued fewer than 3 days before its due date.                  |
+| `billOverdue`          | Tenant; Owner and Managers of the property | At 07:00 on the day after a bill's due date, if the bill is still *Belum Bayar* or *Ditolak*. Once per bill.                                                                  |
+| `paymentStatusChanged` | Tenant                                     | Management changes a payment status (UC-07, UC-08, UC-09). Carries the new status, the method for *Lunas*, and the rejection or manual-change reason.                         |
+| `complaintStatusChanged` | Tenant                                   | Management moves the Tenant's complaint to a new status (UC-24). Carries the status and the handling note.                                                                    |
+| `complaintSubmitted`   | Owner and Managers of the property         | A Tenant submits a complaint (UC-02). Carries urgency and category when classified.                                                                                           |
+| `receiptUploaded`      | Owner and Managers of the property         | A Tenant uploads a transfer receipt (UC-05).                                                                                                                                  |
+| `cashPaymentRecorded`  | Owner                                      | A Manager records a cash payment (UC-08). Not sent when the Owner records it.                                                                                                 |
+| `tenantActivated`      | Owner and Managers of the property         | A Tenant activates their account.                                                                                                                                             |
+| `managerActivated`     | Owner                                      | A Manager activates their account.                                                                                                                                            |
+
+A Manager sees only notifications about properties currently assigned to them; a removed assignment hides them immediately. Times are 07:00 in Asia/Jakarta (WIB) for every user. Retention: notifications are kept; there is no automatic deletion.
+
+**Notification settings** (UC-06) · All roles except Admin. Each user has one push on/off switch per notification category, and the settings only control **push** delivery; every notification still appears in the list (UC-06). Categories by role:
+
+| Category            | Roles          | Covers                                                                                                                                                                              |
+|---------------------|----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `billing`           | Tenant         | `billIssued`, `dueDateReminder`, `billOverdue`                                                                                                                                      |
+| `paymentStatus`     | Tenant         | `paymentStatusChanged`                                                                                                                                                              |
+| `complaintProgress` | Tenant         | `complaintStatusChanged`                                                                                                                                                            |
+| `newComplaint`      | Owner, Manager | `complaintSubmitted`; has an urgency scope: `allUrgencies` (default) or `highOnly` (only complaints classified with urgency *Tinggi*; unclassified complaints are not pushed under `highOnly`) |
+| `receiptUpload`     | Owner, Manager | `receiptUploaded`                                                                                                                                                                   |
+| `overdueBill`       | Owner, Manager | `billOverdue`                                                                                                                                                                       |
+| `accountActivity`   | Owner, Manager | `tenantActivated`; and for the Owner also `managerActivated` and `cashPaymentRecorded`                                                                                              |
+
+Defaults: every category on, scope `allUrgencies`. A user who never saved settings gets the defaults. The save replaces the whole resource and MUST contain exactly the categories of the caller's role. Whether the Android OS allows notifications, and per-channel sound or vibration, are handled by the app and the OS and are not stored here.
+
+**Push token.** The app registers its device push token for the current session. One token per session; registering again replaces it. The token stops being used when the session ends (UC-37). Push is sent only for notifications whose category is switched on for that user.
 
 ### 8.2 Management (Pemilik Kost and Pengelola Kost)
 
@@ -441,6 +477,12 @@ Endpoints:
 | `DELETE` | `/me/sessions`                                  | End the sessions of all other devices.                    | UC-37                                                     |
 | `POST`   | `/me/password-changes`                          | Change the caller's password; says whether other sessions exist. | UC-38                                                     |
 | `GET`    | `/occupancy-dashboard`                          | Occupancy figures per accessible property and across all of them. | UC-22                                                     |
+| `GET`    | `/notifications`                                | List the caller's notifications, newest first, with the unread count. | UC-06                                                     |
+| `POST`   | `/notifications/{notificationId}/read`          | Mark one notification read; returns it.                   | UC-06                                                     |
+| `POST`   | `/notifications/read-all`                       | Mark all of the caller's notifications read.              | UC-06                                                     |
+| `GET`    | `/me/notification-settings`                     | The caller's push settings, one entry per category of their role. | UC-06                                                     |
+| `PUT`    | `/me/notification-settings`                     | Replace the caller's push settings.                       | UC-06                                                     |
+| `PUT`    | `/me/push-token`                                | Register the current session's device push token.         | UC-06                                                     |
 
 Every endpoint listed above except `GET /health` is declared in the contract but not implemented yet; it responds `501 Not Implemented`.
 
@@ -459,10 +501,10 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-8   | AI calls: timeout, retries, fallback, and whether classification runs within the save request or after it.                       | UC-02, UC-26              |
 | U-9   | Error response shape and the list of error codes.                                                                                | §6, §7, all endpoints     |
 | U-11  | Subscription plans, features and prices.                                                                                         | UC-31                     |
-| U-12  | Due-date reminder timing.                                                                                                        | UC-06                     |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 | U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
 | U-19  | Facility tag storage: `TEXT[]` column vs. join tables (proposed: `TEXT[]`).                                                      | UC-14, UC-16              |
+| U-22  | Push delivery: provider (recommended: Firebase Cloud Messaging, Android only), retry policy, and removal of invalid tokens. The contract carries an opaque token string, so it does not depend on this. | UC-06 |
 
 ## 11. Changelog
 
@@ -482,3 +524,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | UC-37 and UC-38 detailed: session list fields and order, not-found and current-session errors, password change errors and `hasOtherSessions`. Login method values added to §5. Session and password endpoints added to §9. | NKMA-15 |
 | 17-10-2026 | Manager use cases UC-27 to UC-30 detailed: managers are added with name, phone and properties and join through a shared invitation link (nothing is emailed); statuses reduced to *Belum Diaktifkan* and *Aktif*; an existing Manager account can accept; invitation regeneration; delete revokes this Owner's assignments and keeps the account. Manager endpoints added to §9. | NKMA-7 |
 | 17-10-2026 | UC-22 extended: room count, occupancy percentage rule (whole number, halves up, 0 without rooms, summary from summed counts), ordering and empty result. Occupancy-dashboard endpoint added to §9. | NKMA-7 |
+| 17-10-2026 | U-12 decided: due-date reminder 3 days before the due date at 07:00 Asia/Jakarta. UC-06 extended to Owner and Manager, with notification types, recipients and creation rules; notification settings (push on/off per category, urgency scope for new complaints) and push token added under UC-06. Notification endpoints added to §9. U-22 added. | NKMA-63 |
