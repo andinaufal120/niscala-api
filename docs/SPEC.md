@@ -116,6 +116,7 @@ The API checks every request against this table. `A` means the check includes th
 | Room occupancy                   | Terisi (Occupied, `occupied`) · Kosong (Vacant, `vacant`)                                                                                                                                                             |
 | Payment                          | Belum Bayar (Unpaid, `unpaid`) · Menunggu Verifikasi (Awaiting verification, `awaitingVerification`) · Lunas (Paid, `paid`) · Ditolak (Rejected, `rejected`)                                                          |
 | Payment method                   | Transfer (Bank transfer, `transfer`) · Tunai (Cash, `cash`)                                                                                                                                                           |
+| Login method                     | Google (Google, `google`) · Kata sandi (Password, `password`)                                                                                                                                                         |
 | Billing cycle                    | Mingguan (Weekly, `weekly`) · Bulanan (Monthly, `monthly`) · 3 Bulan (Quarterly, `quarterly`) · 6 Bulan (Semiannual, `semiannual`) · 12 Bulan (Annual, `annual`) |
 | Complaint                        | Baru (New, `new_`) · Diproses (In progress, `inProgress`) · Selesai (Done, `done`) |
 | Complaint classification         | Menunggu Klasifikasi (Awaiting classification, `awaitingClassification`) · Belum Diklasifikasi (Not classified, `notClassified`) |
@@ -326,9 +327,21 @@ If the gateway is unreachable, return an error and create no transaction.
 
 ### 8.5 All roles
 
-**UC-37 Manage active sessions** (FR-33, NFR-18) · Lists the caller's active sessions with device name, platform, login method and last activity, flagging the current one. The caller can end the session of one other device or of all other devices. The current session is not ended here; it ends through normal logout.
+**UC-37 Manage active sessions** (FR-33, NFR-18) · Lists the caller's active sessions (not ended, not past the 30-day limit), most recently active first. Each has device name, platform, login method (`google` or `password`) and last activity, and flags the current one (the session of the request). The platform is free text sent by the app at login (for example "Android 14"); the backend stores it as given and never branches on it. The caller can end the session of one other device or of all other devices. The current session is not ended here; it ends through normal logout.
+- Ending a session sets its `revoked_at`; it stops working within 15 minutes (§7).
+- Ending one session: a session that does not exist, is already ended, or belongs to another user gets the same not-found error (error code `SESSION_NOT_FOUND`). The current session gets `SESSION_IS_CURRENT`.
+- Ending all other sessions with none to end is a success. Both end calls respond with no body.
+- Available to every role and only on the caller's own sessions.
 
-**UC-38 Change password** (FR-33, NFR-11) · Takes the current password and a new one; the new password is checked against the §7 rules. The response says whether the user has other sessions, so the app can offer to end them (UC-37).
+**UC-38 Change password** (FR-33, NFR-11) · Takes the current password and a new one. The new password is checked against the §7 rules; the confirmation field is app-only. Errors, each with its error code and the field it belongs to:
+- wrong current password: `CURRENT_PASSWORD_INCORRECT` (field `currentPassword`);
+- new password shorter than 8 or longer than 128 characters: field error on `newPassword`;
+- blocklisted (§7): `PASSWORD_TOO_COMMON`;
+- same as the current password: `PASSWORD_UNCHANGED`;
+- account has no local password (Google only): `PASSWORD_NOT_SET`; the user adds one from the profile menu first (§7);
+- too many failed attempts: `TOO_MANY_ATTEMPTS`.
+
+The current session stays logged in. The response says whether the user has other active sessions (`hasOtherSessions`), so the app can offer to end them (UC-37). Ending them is a separate call.
 
 ## 9. API contract
 
@@ -407,6 +420,10 @@ Endpoints:
 | `GET`    | `/me`                                           | The caller's account and sign-in methods.                 | FR-30                                                     |
 | `POST`   | `/me/local-password`                            | Add a local password to a Google account.                 | FR-30                                                     |
 | `POST`   | `/me/google-link`                               | Link a Google account to a password account.              | FR-30                                                     |
+| `GET`    | `/me/sessions`                                  | List the caller's active sessions; the current one is flagged. | UC-37                                                     |
+| `DELETE` | `/me/sessions/{sessionId}`                      | End the session of one other device.                      | UC-37                                                     |
+| `DELETE` | `/me/sessions`                                  | End the sessions of all other devices.                    | UC-37                                                     |
+| `POST`   | `/me/password-changes`                          | Change the caller's password; says whether other sessions exist. | UC-38                                                     |
 
 Every endpoint listed above except `GET /health` is declared in the contract but not implemented yet; it responds `501 Not Implemented`.
 
@@ -445,3 +462,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | U-7 decided: payment-pattern facts and at-risk threshold (UC-26). Bills carry days overdue and a status history; a manual *Lunas* takes a method and a date; payment dates cannot be after today. Payment-pattern endpoint added to §9. | NKMA-8 |
 | 17-10-2026 | UC-26 average days late includes overdue counted bills. §9 lists the payment-pattern endpoint as not implemented. | NKMA-8 |
 | 17-10-2026 | U-13 decided: invitation links last 7 days, password-reset links 30 minutes, both single-use. U-14 decided: JWT access token (15 minutes), opaque rotating refresh token, bearer transport, both in JSON bodies. Email verification by 6-digit code for local-password accounts, gating other endpoints until confirmed. Failed logins lock an email for 15 minutes after 5 failures. Passwords are 8 to 128 characters. Invitation activation takes the person's own email for Tenant and Manager; an existing Manager account may accept a Manager invitation. U-4 extended to password-reset links. Account-access endpoints added to §9. | NKMA-15 |
+| 17-10-2026 | UC-37 and UC-38 detailed: session list fields and order, not-found and current-session errors, password change errors and `hasOtherSessions`. Login method values added to §5. Session and password endpoints added to §9. | NKMA-15 |
