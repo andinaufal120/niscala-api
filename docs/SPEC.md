@@ -122,7 +122,7 @@ The API checks every request against this table. `A` means the check includes th
 | Complaint classification         | Menunggu Klasifikasi (Awaiting classification, `awaitingClassification`) · Belum Diklasifikasi (Not classified, `notClassified`) |
 | Complaint urgency                | Rendah (Low, `low`) · Sedang (Medium, `medium`) · Tinggi (High, `high`) |
 | Tenant account                   | Belum Diaktifkan (Not activated, `notActivated`) · Aktif (Active, `active`)                                                                                                                                           |
-| Manager account                  | Belum Terkirim (Invitation not sent, `invitationNotSent`) · Belum Diaktivasi (Not activated, `notActivated`) · Aktif (Active, `active`)                                                                               |
+| Manager account                  | Belum Diaktifkan (Not activated, `notActivated`) · Aktif (Active, `active`)                                                                                                                                           |
 | User account (Admin view)        | Aktif (Active, `active`) · Nonaktif (Inactive, `inactive`)                                                                                                                                                            |
 | Subscription order / transaction | Menunggu Pembayaran (Awaiting payment, `awaitingPayment`) · Berhasil (Succeeded, `succeeded`) · Gagal (Failed, `failed`) · Kedaluwarsa (Expired, `expired`)                                                           |
 
@@ -158,7 +158,7 @@ Login and sign-up are preconditions, not use cases. All use cases assume a valid
 
 - **Owner** signs up and logs in with Google or a local password (FR-20).
 - **Tenant** activates through an invitation link shared by management. During activation the tenant completes whatever data management left empty, including email and at least 2 emergency contacts if management gave none, then chooses Google or a local password (FR-01).
-- **Manager** activates through an invitation sent to their email by the Owner, with Google or a local password (FR-26).
+- **Manager** activates through an invitation link shared by the Owner, enters their own email, and chooses Google or a local password; a person who already has a Manager account can accept the link with that account (FR-26).
 - **Profile menu (FR-30):** a Google-only user can add a local password. A password user can link Google, but only after logging in with the password. The app never links accounts automatically by matching email.
 - **Local password rules (NFR-11, NIST SP 800-63B Rev. 3, AAL1).** These apply only to accounts with a local password:
     - minimum 8 characters, and at least 64 accepted;
@@ -300,13 +300,18 @@ Without an active subscription, facts and flags are returned and the summary is 
 
 ### 8.3 Owner only (Pemilik Kost)
 
-**UC-27 Add manager** (FR-22) · Name, email, and at least one property. Rejected if the email is already registered. An invitation is emailed. If sending fails, the account is saved as *Belum Terkirim* and the invitation can be resent (UC-29).
+**UC-27 Add manager** (FR-22) · Owner only. Required: name, phone (WhatsApp) and at least one property; every property MUST belong to the Owner.
+- Phone number: the same rule as UC-18 (Indonesian mobile number, `08` or `628` followed by 8 to 11 digits after removing spaces and dashes; stored and returned as digits starting with `08`).
+- Email is not set here and nothing is emailed; the Manager types their own email during activation (§7), so a Manager's email is empty until then.
 
-**UC-28 View managers** (FR-22) · Each Manager with name, email, assigned properties and account status.
+The account is created as *Belum Diaktifkan* and an invitation link is created and returned: single use, expiring 7 days after creation (§7). The Owner shares the link (copy, WhatsApp or QR). The response returns the Manager with the invitation.
 
-**UC-29 Edit manager** (FR-22) · Changes name, email or assigned properties, keeping at least one property. Access to removed properties is revoked. Resend invitation: only for accounts that are not yet *Aktif*.
+**UC-28 View managers** (FR-22) · Owner only. Each Manager with name, phone, email (once set), assigned properties (id, name, address) and account status; the list can be limited to one property. Detail adds, while the account is not *Aktif*, the invitation: when it was created, when it expires, whether it has expired and, if not, its link. While an invitation is unused and not expired its link can be shown again, so the backend keeps it in a form it can return (as for UC-20).
 
-**UC-30 Delete manager** (FR-22) · Soft delete: assignments are revoked and active sessions end. The Manager's action history is kept.
+**UC-29 Edit manager** (FR-22) · Owner only. Replaces name, phone (same rule as UC-27) and assigned properties, keeping at least one property. Access to removed properties is revoked at once. Email is not edited here.
+Regenerate invitation link: only for a Manager that is not yet *Aktif*; it creates a new link and invalidates the old one, and for an expired invitation it renews it. For an *Aktif* Manager it is rejected.
+
+**UC-30 Delete manager** (FR-22) · Owner only. Revokes this Owner's property assignments for the Manager and keeps the Manager's account. When no assignments from any Owner remain, the account is soft-deleted and its sessions end. The Manager's action history is kept.
 
 **UC-31 Choose subscription plan** (FR-23, FR-25) · Returns the current subscription status and the available plans with features and price (plans and prices: U-11). With an active plan, also its end date. Confirming a plan creates an order *Menunggu Pembayaran*.
 
@@ -382,6 +387,12 @@ Endpoints:
 | `PUT`    | `/tenants/{tenantId}`                           | Edit tenant.                                              | UC-20                                                     |
 | `DELETE` | `/tenants/{tenantId}`                           | Delete tenant.                                            | UC-21                                                     |
 | `POST`   | `/tenants/{tenantId}/invitation`                | Regenerate the invitation link.                           | UC-20                                                     |
+| `POST`   | `/managers`                                     | Add manager; returns the invitation link.                 | UC-27                                                     |
+| `GET`    | `/managers`                                     | List the Owner's managers, optionally by `propertyId`.    | UC-28                                                     |
+| `GET`    | `/managers/{managerId}`                         | Manager detail with the invitation while not active.      | UC-28                                                     |
+| `PUT`    | `/managers/{managerId}`                         | Edit manager.                                             | UC-29                                                     |
+| `DELETE` | `/managers/{managerId}`                         | Delete manager.                                           | UC-30                                                     |
+| `POST`   | `/managers/{managerId}/invitation`              | Regenerate the invitation link (not yet active only).     | UC-29                                                     |
 | `POST`   | `/complaints`                                   | Submit a complaint; returns it with its classification state. | UC-02                                                 |
 | `GET`    | `/complaints`                                   | List the caller's complaints (Tenant: own; management: accessible properties). | UC-03, UC-23                         |
 | `GET`    | `/complaints/{complaintId}`                     | Complaint detail with its status history.                 | UC-03, UC-23                                              |
@@ -463,3 +474,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | UC-26 average days late includes overdue counted bills. §9 lists the payment-pattern endpoint as not implemented. | NKMA-8 |
 | 17-10-2026 | U-13 decided: invitation links last 7 days, password-reset links 30 minutes, both single-use. U-14 decided: JWT access token (15 minutes), opaque rotating refresh token, bearer transport, both in JSON bodies. Email verification by 6-digit code for local-password accounts, gating other endpoints until confirmed. Failed logins lock an email for 15 minutes after 5 failures. Passwords are 8 to 128 characters. Invitation activation takes the person's own email for Tenant and Manager; an existing Manager account may accept a Manager invitation. U-4 extended to password-reset links. Account-access endpoints added to §9. | NKMA-15 |
 | 17-10-2026 | UC-37 and UC-38 detailed: session list fields and order, not-found and current-session errors, password change errors and `hasOtherSessions`. Login method values added to §5. Session and password endpoints added to §9. | NKMA-15 |
+| 17-10-2026 | Manager use cases UC-27 to UC-30 detailed: managers are added with name, phone and properties and join through a shared invitation link (nothing is emailed); statuses reduced to *Belum Diaktifkan* and *Aktif*; an existing Manager account can accept; invitation regeneration; delete revokes this Owner's assignments and keeps the account. Manager endpoints added to §9. | NKMA-7 |
