@@ -10,6 +10,7 @@ from app.routers import (
     invitations,
     managers,
     me,
+    notifications,
     properties,
     rent_bills,
     rooms,
@@ -38,3 +39,5 @@ app.include_router(complaints.categories_router, dependencies=session)
 app.include_router(rent_bills.router, dependencies=session)
 app.include_router(me.router, dependencies=session)
 app.include_router(dashboard.router, dependencies=session)
+app.include_router(notifications.router, dependencies=session)
+app.include_router(notifications.me_router, dependencies=session)
