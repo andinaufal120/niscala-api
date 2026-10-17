@@ -55,6 +55,7 @@ Markdown docs use the format *Original term (English term)*. Code uses the Engli
 | Pemilik Kost (Owner)                                | `Owner`                   | User who owns one or more properties and holds the subscription.                   |
 | Pengelola Kost (Manager)                            | `Manager`                 | Optional user assigned by an Owner to specific properties.                         |
 | Admin (Admin)                                       | `Admin`                   | Internal user who manages all user accounts.                                       |
+| Akun pengguna (User account)                        | `UserAccount`             | Any user's login identity: name, email, role and status. Admins manage all of them. |
 | Manajemen kost (Management)                         | `management` (role group) | Owner and Manager together.                                                        |
 | Rekening bank (Bank account)                        | `BankAccount`             | Optional per-property account for rent transfers: bank name, account number, account holder name. |
 | Tarif dasar (Base rate)                             | `baseRate`                | A room's monthly price. Only pre-fills the rent of a new monthly lease.            |
@@ -126,12 +127,14 @@ The API checks every request against this table. `A` means the check includes th
 | Complaint urgency                | Rendah (Low, `low`) · Sedang (Medium, `medium`) · Tinggi (High, `high`) |
 | Tenant account                   | Belum Diaktifkan (Not activated, `notActivated`) · Aktif (Active, `active`)                                                                                                                                           |
 | Manager account                  | Belum Diaktifkan (Not activated, `notActivated`) · Aktif (Active, `active`)                                                                                                                                           |
-| User account (Admin view)        | Aktif (Active, `active`) · Nonaktif (Inactive, `inactive`)                                                                                                                                                            |
+| User account (Admin view)        | Aktif (Active, `active`) · Nonaktif (Suspended, `inactive`) · Dihapus (Deleted, `deleted`)                                                                                                                            |
 | Subscription order / transaction | Menunggu Pembayaran (Awaiting payment, `awaitingPayment`) · Berhasil (Succeeded, `succeeded`) · Gagal (Failed, `failed`) · Kedaluwarsa (Expired, `expired`)                                                           |
 
 Complaint status moves forward one step at a time: *Baru* → *Diproses* → *Selesai*. Nothing changes after *Selesai*.
 
 Classification state is separate from status. *Menunggu Klasifikasi* = AI was attempted and failed or timed out. *Belum Diklasifikasi* = the Owner had no active subscription when the complaint was saved, so AI was skipped. A classified complaint has neither.
+
+A *Nonaktif* account is suspended: it cannot log in and can be reactivated. A *Dihapus* account is soft-deleted, hidden from the default account list, and can never be reactivated. *Dihapus* is shown, never set, through the edit endpoint.
 
 `new_` is only the Dart identifier, because `new` is reserved in Dart. The wire value is `"new"`.
 <!-- shared:end -->
@@ -365,11 +368,21 @@ If the gateway is unreachable, return an error and create no transaction.
 
 ### 8.4 Admin
 
-**UC-33 View user accounts** (FR-29) · All accounts with name, email, role and status. Search by email and filter by role; no match is an empty result.
+**UC-33 View user accounts** (FR-29) · Admin only. All accounts of every role, each with name, email, role (*Penyewa*, *Pemilik Kost*, *Pengelola Kost*, *Admin*) and status. Search by email (case-insensitive, matches any part of the current email) and filter by role; no match is an empty result. *Dihapus* accounts are hidden unless the caller asks for them. Detail adds the registration time, the login methods, the last login time, any pending email change and what the account is linked to: the properties an Owner owns or a Manager is assigned to, the number of active leases, and a Tenant's property, room and lease end date. Accounts that have not been activated yet are not listed.
 
-**UC-34 Edit user account** (FR-29) · Changes name, email (MUST be unique) and status (*Aktif*/*Nonaktif*). Deactivating ends the account's sessions.
+**UC-34 Edit user account** (FR-29) · Admin only. Changes name, email and status. The email MUST be unique among all accounts, deleted ones included; a duplicate gets a field error. The status is *Aktif* or *Nonaktif*; a *Nonaktif* account can be set back to *Aktif* at any time.
+- Deactivating ends the account's sessions (they stop working within 15 minutes, §7). A deactivated account cannot log in. Its data and bills continue as before.
+- An Admin cannot deactivate their own account (`CANNOT_MODIFY_OWN_ACCOUNT`). Editing their own name or email, and any action on other Admins, is allowed.
+- An email change does not take effect at once. The backend sends a single-use verification link to the new address and a notice to the current one. The link is valid for 7 days. Until the link is confirmed the account keeps logging in with the current email, and the response carries the new address as the pending email with its expiry. Confirming the link replaces the email and clears the pending one.
+- Submitting the current email while a change is pending cancels the pending change.
+- Submitting the current values changes nothing.
+- A *Dihapus* account cannot be edited.
 
-**UC-35 Delete user account** (FR-29) · Soft delete that ends sessions. Rejected, with an error code for the reason, if the account is an Owner with a property that has an active lease.
+**UC-35 Delete user account** (FR-29) · Admin only. Soft delete that ends the account's sessions and cannot be undone from the app. An Admin cannot delete their own account (`CANNOT_MODIFY_OWN_ACCOUNT`); other Admins can be deleted. Rejected, each with its own error code, if the account is:
+- an Owner with a property that has an active lease (`OWNER_HAS_ACTIVE_LEASE`);
+- a Tenant with an active lease (`TENANT_HAS_ACTIVE_LEASE`).
+
+Deleting an Owner archives their properties, rooms and the Managers' assignments to them (hidden and read-only, history kept). Deleting a Manager revokes their assignments. Payment and complaint history is kept in every case. An account already deleted through UC-21 or UC-30 is also *Dihapus* here. Deleting an already deleted account is rejected (`USER_ACCOUNT_DELETED`).
 
 ### 8.5 All roles
 
@@ -403,6 +416,8 @@ Conventions:
 - IDs are UUID strings.
 - A list response is an object with an `items` array, so pagination or totals can be added without a breaking change.
 - An edit is a `PUT` of the full resource.
+- Role values are the lower-case code names: `tenant`, `owner`, `manager`, `admin`.
+- A query parameter that filters a list is optional; omitting it means no filter.
 - Authentication: an HTTP bearer scheme named `bearerAuth` (JWT access token) is declared on every operation except `GET /health` and the endpoints marked *public* below.
 - Error responses (U-9) are not declared yet.
 
@@ -483,6 +498,10 @@ Endpoints:
 | `GET`    | `/me/notification-settings`                     | The caller's push settings, one entry per category of their role. | UC-06                                                     |
 | `PUT`    | `/me/notification-settings`                     | Replace the caller's push settings.                       | UC-06                                                     |
 | `PUT`    | `/me/push-token`                                | Register the current session's device push token.         | UC-06                                                     |
+| `GET`    | `/user-accounts`                                | List user accounts, optionally by `email` (substring), `role` and `includeDeleted` (default false). Admin only. | UC-33      |
+| `GET`    | `/user-accounts/{userAccountId}`                | User account detail. Admin only.                          | UC-33                                                     |
+| `PUT`    | `/user-accounts/{userAccountId}`                | Edit name, email and status. A new email stays pending until verified. Admin only. | UC-34                            |
+| `DELETE` | `/user-accounts/{userAccountId}`                | Soft-delete an account. Admin only.                       | UC-35                                                     |
 
 Every endpoint listed above except `GET /health` is declared in the contract but not implemented yet; it responds `501 Not Implemented`.
 
@@ -525,3 +544,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | Manager use cases UC-27 to UC-30 detailed: managers are added with name, phone and properties and join through a shared invitation link (nothing is emailed); statuses reduced to *Belum Diaktifkan* and *Aktif*; an existing Manager account can accept; invitation regeneration; delete revokes this Owner's assignments and keeps the account. Manager endpoints added to §9. | NKMA-7 |
 | 17-10-2026 | UC-22 extended: room count, occupancy percentage rule (whole number, halves up, 0 without rooms, summary from summed counts), ordering and empty result. Occupancy-dashboard endpoint added to §9. | NKMA-7 |
 | 17-10-2026 | U-12 decided: due-date reminder 3 days before the due date at 07:00 Asia/Jakarta. UC-06 extended to Owner and Manager, with notification types, recipients and creation rules; notification settings (push on/off per category, urgency scope for new complaints) and push token added under UC-06. Notification endpoints added to §9. Push provider decided: Firebase Cloud Messaging. U-23 added for the remaining push delivery questions. | NKMA-63 |
+| 17-10-2026 | Admin account management (UC-33 to UC-35) defined: *Nonaktif* is a reversible suspension, *Dihapus* status added to the Admin account vocabulary, deleted accounts hidden from the default list, delete also rejected for a Tenant with an active lease, an Admin cannot deactivate or delete their own account, an Admin email change stays pending until the new email is verified (link single use, 7 days). `UserAccount` added to the glossary. User-account endpoints added to §9. | NKMA-18 |

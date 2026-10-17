@@ -16,6 +16,7 @@ from app.routers import (
     rooms,
     sessions,
     tenants,
+    user_accounts,
 )
 from app.security import bearer_scheme
 
@@ -41,3 +42,4 @@ app.include_router(me.router, dependencies=session)
 app.include_router(dashboard.router, dependencies=session)
 app.include_router(notifications.router, dependencies=session)
 app.include_router(notifications.me_router, dependencies=session)
+app.include_router(user_accounts.router, dependencies=session)
