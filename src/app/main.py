@@ -1,17 +1,34 @@
 """FastAPI application. Its generated OpenAPI document is the API contract."""
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
-from app.routers import complaints, me, properties, rent_bills, rooms, tenants
+from app.routers import (
+    account,
+    auth,
+    complaints,
+    invitations,
+    me,
+    properties,
+    rent_bills,
+    rooms,
+    tenants,
+)
+from app.security import bearer_scheme
 
 app = FastAPI(
     title="Niscala API",
     generate_unique_id_function=lambda route: route.name,
 )
-app.include_router(properties.router)
-app.include_router(rooms.router)
-app.include_router(tenants.router)
-app.include_router(complaints.router)
-app.include_router(complaints.categories_router)
-app.include_router(rent_bills.router)
-app.include_router(me.router)
+# Routers whose operations all need a session. The auth and invitations routers
+# declare the requirement per operation because some of their operations are public.
+session = [Depends(bearer_scheme)]
+app.include_router(auth.router)
+app.include_router(invitations.router)
+app.include_router(account.router, dependencies=session)
+app.include_router(properties.router, dependencies=session)
+app.include_router(rooms.router, dependencies=session)
+app.include_router(tenants.router, dependencies=session)
+app.include_router(complaints.router, dependencies=session)
+app.include_router(complaints.categories_router, dependencies=session)
+app.include_router(rent_bills.router, dependencies=session)
+app.include_router(me.router, dependencies=session)
