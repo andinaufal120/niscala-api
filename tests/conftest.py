@@ -14,6 +14,7 @@ MANAGER_ID = "4a5b6c7d-8e9f-4a0b-9c1d-2e3f4a5b6c7d"
 COMPLAINT_ID = "e5f6a7b8-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
 RENT_BILL_ID = "1b2c3d4e-5f60-4a71-8b92-a3b4c5d6e7f8"
 SESSION_ID = "9d8c7b6a-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
+NOTIFICATION_ID = "6c5d4e3f-2a1b-4c0d-9e8f-7a6b5c4d3e2f"
 NOT_A_UUID = "not-a-uuid"
 
 
