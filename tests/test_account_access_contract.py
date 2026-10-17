@@ -656,7 +656,7 @@ def test_account_access_component_property_names_contain_no_underscore(
     assert offenders == []
 
 
-@pytest.mark.parametrize("name", ["DevicePlatform", "LoginMethod"])
+@pytest.mark.parametrize("name", ["DevicePlatform"])
 def test_enum_not_defined_by_account_access_is_absent(
     openapi: OpenApiDoc, name: str
 ) -> None:

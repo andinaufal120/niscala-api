@@ -11,6 +11,7 @@ from app.routers import (
     properties,
     rent_bills,
     rooms,
+    sessions,
     tenants,
 )
 from app.security import bearer_scheme
@@ -25,6 +26,7 @@ session = [Depends(bearer_scheme)]
 app.include_router(auth.router)
 app.include_router(invitations.router)
 app.include_router(account.router, dependencies=session)
+app.include_router(sessions.router, dependencies=session)
 app.include_router(properties.router, dependencies=session)
 app.include_router(rooms.router, dependencies=session)
 app.include_router(tenants.router, dependencies=session)
