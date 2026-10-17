@@ -64,6 +64,7 @@ class Room(ApiModel):
     width_m: float | None = Field(description="In metres.")
     facilities: list[str]
     lease: RoomLease | None
+    editable: bool = Field(description="False while the room is view-only.")
 
 
 class RoomLeaseSummary(ApiModel):
@@ -84,6 +85,7 @@ class RoomSummary(ApiModel):
     width_m: float | None = Field(description="In metres.")
     facilities: list[str]
     lease: RoomLeaseSummary | None
+    editable: bool = Field(description="False while the room is view-only.")
 
 
 class RoomList(ApiModel):

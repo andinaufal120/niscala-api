@@ -15,6 +15,7 @@ from app.routers import (
     rent_bills,
     rooms,
     sessions,
+    subscriptions,
     tenants,
     user_accounts,
 )
@@ -43,3 +44,5 @@ app.include_router(dashboard.router, dependencies=session)
 app.include_router(notifications.router, dependencies=session)
 app.include_router(notifications.me_router, dependencies=session)
 app.include_router(user_accounts.router, dependencies=session)
+app.include_router(subscriptions.router, dependencies=session)
+app.include_router(subscriptions.plans_router, dependencies=session)
