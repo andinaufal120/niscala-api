@@ -78,6 +78,7 @@ RENT_BILL_COMPONENTS = [
     "RentBillList",
     "ReceiptRejectionInput",
     "CashPaymentInput",
+    "PaymentStatusChange",
     "PaymentStatusChangeInput",
     "PaymentOverviewItem",
     "PaymentOverview",
@@ -474,10 +475,11 @@ SUMMARY_FIELDS = {
     "periodEnd",
     "dueDate",
     "amount",
+    "daysOverdue",
     "payment",
 }
 
-RENT_BILL_FIELDS = {*SUMMARY_FIELDS, "property", "bankAccount"}
+RENT_BILL_FIELDS = {*SUMMARY_FIELDS, "property", "bankAccount", "statusChanges"}
 
 
 @pytest.fixture(params=["RentBill", "RentBillSummary"])
@@ -495,7 +497,7 @@ def test_rent_bill_requires_every_field(openapi: OpenApiDoc) -> None:
     assert set(openapi.component("RentBill")["required"]) == RENT_BILL_FIELDS
 
 
-def test_rent_bill_summary_has_exactly_the_rent_bill_fields_without_property_and_bank_account(
+def test_rent_bill_summary_has_exactly_the_rent_bill_fields_without_detail_only_fields(
     openapi: OpenApiDoc,
 ) -> None:
     assert _property_names(openapi.component("RentBillSummary")) == SUMMARY_FIELDS
@@ -531,6 +533,102 @@ def test_rent_bill_date_is_date_string(
 
 def test_rent_bill_amount_is_integer(any_rent_bill_schema: dict[str, Any]) -> None:
     assert any_rent_bill_schema["properties"]["amount"]["type"] == "integer"
+
+
+def test_rent_bill_days_overdue_is_non_negative_integer(
+    any_rent_bill_schema: dict[str, Any],
+) -> None:
+    schema = any_rent_bill_schema["properties"]["daysOverdue"]
+    assert schema["type"] == "integer"
+    assert schema["minimum"] == 0
+
+
+def test_rent_bill_status_changes_is_array_of_payment_status_change(
+    openapi: OpenApiDoc,
+) -> None:
+    schema = openapi.component("RentBill")["properties"]["statusChanges"]
+    assert schema["type"] == "array"
+    assert openapi.ref_name(schema["items"]) == "PaymentStatusChange"
+
+
+def test_rent_bill_summary_does_not_declare_status_changes(
+    openapi: OpenApiDoc,
+) -> None:
+    assert "statusChanges" not in _property_names(openapi.component("RentBillSummary"))
+
+
+def test_payment_overview_item_bill_carries_days_overdue(openapi: OpenApiDoc) -> None:
+    item = openapi.component("PaymentOverviewItem")
+    bill = openapi.component(
+        openapi.ref_name(nullable_inner(item["properties"]["bill"]))
+    )
+    assert bill["properties"]["daysOverdue"]["minimum"] == 0
+    assert "daysOverdue" in bill["required"]
+
+
+# PaymentStatusChange
+
+STATUS_CHANGE_FIELDS = {
+    "status",
+    "method",
+    "reason",
+    "manual",
+    "actorName",
+    "changedAt",
+}
+
+
+@pytest.fixture
+def status_change_schema(openapi: OpenApiDoc) -> dict[str, Any]:
+    return openapi.component("PaymentStatusChange")
+
+
+def test_payment_status_change_has_exactly_its_fields(
+    status_change_schema: dict[str, Any],
+) -> None:
+    assert _property_names(status_change_schema) == STATUS_CHANGE_FIELDS
+
+
+def test_payment_status_change_requires_every_field(
+    status_change_schema: dict[str, Any],
+) -> None:
+    assert set(status_change_schema["required"]) == STATUS_CHANGE_FIELDS
+
+
+def test_payment_status_change_status_is_payment_status(
+    openapi: OpenApiDoc, status_change_schema: dict[str, Any]
+) -> None:
+    schema = status_change_schema["properties"]["status"]
+    assert openapi.ref_name(schema) == "PaymentStatus"
+
+
+def test_payment_status_change_method_is_nullable_payment_method(
+    openapi: OpenApiDoc, status_change_schema: dict[str, Any]
+) -> None:
+    schema = status_change_schema["properties"]["method"]
+    assert openapi.ref_name(nullable_inner(schema)) == "PaymentMethod"
+
+
+@pytest.mark.parametrize("field", ["reason", "actorName"])
+def test_payment_status_change_text_field_is_nullable_string(
+    status_change_schema: dict[str, Any], field: str
+) -> None:
+    schema = status_change_schema["properties"][field]
+    assert nullable_inner(schema)["type"] == "string"
+
+
+def test_payment_status_change_manual_is_boolean(
+    status_change_schema: dict[str, Any],
+) -> None:
+    assert status_change_schema["properties"]["manual"]["type"] == "boolean"
+
+
+def test_payment_status_change_changed_at_is_date_time_string(
+    status_change_schema: dict[str, Any],
+) -> None:
+    schema = status_change_schema["properties"]["changedAt"]
+    assert schema["type"] == "string"
+    assert schema["format"] == "date-time"
 
 
 def test_rent_bill_payment_is_payment(
@@ -608,6 +706,12 @@ def test_cash_payment_input_received_on_is_date_string(
     _assert_date_string(cash_payment_input_schema["properties"]["receivedOn"])
 
 
+def test_cash_payment_input_received_on_is_described(
+    cash_payment_input_schema: dict[str, Any],
+) -> None:
+    assert cash_payment_input_schema["properties"]["receivedOn"]["description"].strip()
+
+
 # PaymentStatusChangeInput
 
 
@@ -616,10 +720,38 @@ def status_change_input_schema(openapi: OpenApiDoc) -> dict[str, Any]:
     return openapi.component("PaymentStatusChangeInput")
 
 
-def test_status_change_input_has_exactly_status_and_reason(
+def test_status_change_input_has_exactly_status_reason_method_and_received_on(
     status_change_input_schema: dict[str, Any],
 ) -> None:
-    assert _property_names(status_change_input_schema) == {"status", "reason"}
+    assert _property_names(status_change_input_schema) == {
+        "status",
+        "reason",
+        "method",
+        "receivedOn",
+    }
+
+
+def test_status_change_input_method_is_optional_nullable_payment_method(
+    openapi: OpenApiDoc, status_change_input_schema: dict[str, Any]
+) -> None:
+    schema = status_change_input_schema["properties"]["method"]
+    assert openapi.ref_name(nullable_inner(schema)) == "PaymentMethod"
+    assert "method" not in status_change_input_schema["required"]
+
+
+def test_status_change_input_received_on_is_optional_nullable_date(
+    status_change_input_schema: dict[str, Any],
+) -> None:
+    schema = status_change_input_schema["properties"]["receivedOn"]
+    _assert_date_string(nullable_inner(schema))
+    assert "receivedOn" not in status_change_input_schema["required"]
+
+
+@pytest.mark.parametrize("field", ["method", "receivedOn"])
+def test_status_change_input_conditional_field_is_described(
+    status_change_input_schema: dict[str, Any], field: str
+) -> None:
+    assert status_change_input_schema["properties"][field]["description"].strip()
 
 
 def test_status_change_input_requires_status_and_reason(
@@ -797,6 +929,73 @@ def test_every_manual_target_status_is_accepted_in_a_status_change(
 def test_non_blank_reason_is_accepted_in_a_rejection(client, reason: str) -> None:
     response = client.post(REJECTION_URL, json={"reason": reason})
     assert response.status_code == 501
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            {"status": "paid", "reason": "Cash.", "method": "cash"},
+            id="paid_with_method",
+        ),
+        pytest.param(
+            {
+                "status": "paid",
+                "reason": "Cash.",
+                "method": "cash",
+                "receivedOn": "2026-10-17",
+            },
+            id="paid_with_method_and_received_on",
+        ),
+        pytest.param(
+            {
+                "status": "paid",
+                "reason": "Transfer.",
+                "method": "transfer",
+                "receivedOn": "2026-10-01",
+            },
+            id="paid_by_transfer",
+        ),
+        pytest.param(
+            {"status": "paid", "reason": "Cash.", "method": None, "receivedOn": None},
+            id="paid_with_explicit_nulls",
+        ),
+        pytest.param({"status": "paid", "reason": "No details."}, id="paid_bare"),
+        pytest.param(
+            {"status": "unpaid", "reason": "Undo.", "method": "cash"},
+            id="unpaid_with_method",
+        ),
+        pytest.param(
+            {"status": "rejected", "reason": "Bad.", "receivedOn": "2026-10-17"},
+            id="rejected_with_received_on",
+        ),
+    ],
+)
+def test_status_change_conditional_fields_are_not_cross_checked_by_request_validation(
+    client, body: dict[str, Any]
+) -> None:
+    assert client.post(STATUS_CHANGES_URL, json=body).status_code == 501
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param({"method": "check"}, id="unknown_method"),
+        pytest.param({"method": "CASH"}, id="wrong_case_method"),
+        pytest.param({"method": 1}, id="numeric_method"),
+        pytest.param({"receivedOn": "not-a-date"}, id="not_a_date"),
+        pytest.param({"receivedOn": "2026-02-30"}, id="day_out_of_range"),
+        pytest.param({"receivedOn": "17/10/2026"}, id="wrong_date_format"),
+        pytest.param({"receivedOn": 20261017}, id="numeric_date"),
+    ],
+)
+def test_malformed_status_change_conditional_field_is_rejected_with_validation_error(
+    client, extra: dict[str, Any]
+) -> None:
+    response = client.post(
+        STATUS_CHANGES_URL, json={**VALID_STATUS_CHANGE_INPUT, **extra}
+    )
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize(
