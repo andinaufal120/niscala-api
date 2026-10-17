@@ -6,6 +6,7 @@ from app.routers import (
     account,
     auth,
     complaints,
+    dashboard,
     invitations,
     managers,
     me,
@@ -36,3 +37,4 @@ app.include_router(complaints.router, dependencies=session)
 app.include_router(complaints.categories_router, dependencies=session)
 app.include_router(rent_bills.router, dependencies=session)
 app.include_router(me.router, dependencies=session)
+app.include_router(dashboard.router, dependencies=session)
