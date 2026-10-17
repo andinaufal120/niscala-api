@@ -275,7 +275,7 @@ Regenerate invitation link, for an unused or expired invitation (expiry: U-13): 
 **UC-26 Payment-pattern summary** (FR-18, FR-19, FR-25, FR-28) · For every Tenant:
 - rule-computed facts over the Tenant's **counted bills**: the last 6 bills, by due date, that are *Lunas* or overdue (UC-04). A counted bill is **late** if it was paid after its due date or is overdue.
     - on-time count and counted-bill count (e.g. 4 of 6);
-    - average days late: the mean days past the due date of the counted bills paid late, rounded to the nearest whole day; 0 if there are none;
+    - average days late: the mean days late of the late counted bills, rounded to the nearest whole day. A bill paid late counts the days from its due date to its payment date; an overdue bill counts its days overdue so far. 0 if there are none;
     - arrears: the total amount of all the Tenant's overdue bills.
 - an at-risk flag: at least 2 late counted bills, or any bill more than 7 days overdue;
 - the stored AI summary, or none yet.
@@ -371,7 +371,7 @@ Endpoints:
 | `GET`    | `/properties/{propertyId}/payment-overview`     | Each Tenant's bill covering a date (`date`, default today). | UC-25                                                   |
 | `GET`    | `/properties/{propertyId}/payment-patterns`     | Each Tenant's payment-pattern facts, at-risk flag and AI summary. | UC-26                                             |
 
-The property, room, tenant, complaint, lease and rent-bill endpoints are declared in the contract but not implemented yet; they respond `501 Not Implemented`.
+The property, room, tenant, complaint, lease, rent-bill and payment-pattern endpoints are declared in the contract but not implemented yet; they respond `501 Not Implemented`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -407,3 +407,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | U-3 decided: complaint description at least 10 characters. U-16 narrowed: categories are server data from an endpoint. Withheld AI classification flagged on the wire. Complaint endpoints added to §9. | NKMA-16 |
 | 17-10-2026 | UC-25 period defined as the bill covering a date. Lease and rent-bill endpoints added to §9. | NKMA-8 |
 | 17-10-2026 | U-7 decided: payment-pattern facts and at-risk threshold (UC-26). Bills carry days overdue and a status history; a manual *Lunas* takes a method and a date; payment dates cannot be after today. Payment-pattern endpoint added to §9. | NKMA-8 |
+| 17-10-2026 | UC-26 average days late includes overdue counted bills. §9 lists the payment-pattern endpoint as not implemented. | NKMA-8 |
