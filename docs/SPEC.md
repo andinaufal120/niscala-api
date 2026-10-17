@@ -198,8 +198,9 @@ Additional backend rules:
     - contains "niscala", or the user's email local part or name (when ≥ 4 characters).
 
   The error code is `PASSWORD_TOO_COMMON`.
-- **Sessions.** One `sessions` row per device, holding the hashed refresh token, device name, platform, login method, `last_active_at` and `revoked_at`. Revoking a session sets `revoked_at`. Access tokens live 15 minutes at most, so a revoked session stops working within 15 minutes. No IP address or location is stored. A session may hold one push token, removed with the session.
+- **Sessions.** One `sessions` row per device, holding the hashed refresh token, device name, platform, login method, `last_active_at`, `reauthenticated_at` and `revoked_at`. Revoking a session sets `revoked_at`. Access tokens live 15 minutes at most, so a revoked session stops working within 15 minutes. No IP address or location is stored. A session may hold one push token, removed with the session.
 - **Tokens.** The access token is a signed JWT valid for 15 minutes at most, sent as `Authorization: Bearer <token>`, and identifies the session. The refresh token is opaque, stored hashed on the `sessions` row, and rotated on every use: the old one stops working at once. Presenting an already-rotated or revoked refresh token ends that session. Refreshing restarts the 90-day idle window and never extends the 1-year cap; a refresh after either limit fails and the session is ended. Sign-up, login, activation and refresh return both tokens in the JSON body.
+- **Re-authentication.** Some changes need a recent re-authentication of the session. The caller proves they hold the account with their password or, for an account that signs in with Google, a fresh Google ID token of the linked account; the session is then marked re-authenticated for 5 minutes. Failed attempts count toward the same per-email lock as login failures. Changing a property's bank account is the only such change for now.
 - **Single-use links.** Invitation links last 7 days. Password-reset links last 30 minutes. Both can be used once. Creating a new invitation link or a new reset link invalidates the previous one.
 - **Email.** Emails are trimmed and compared case-insensitively. An email belongs to one account.
 - **Email verification** applies only to accounts with a local password (Owner sign-up, and Tenant or Manager activation with a password). Accounts created with Google count as verified. Verification uses a 6-digit code emailed to the account, valid 10 minutes, voided after 5 wrong attempts. A new code can be requested once every 60 seconds; requesting one voids the previous. Until the code is confirmed, the account can log in and use only the endpoints needed to verify the email, read its profile and log out; every other endpoint answers `EMAIL_NOT_VERIFIED`.
@@ -290,7 +291,7 @@ The Owner's plan limits the number of properties (Gratis 1, Basic 3, Pro unlimit
 
 **UC-11 View properties** (FR-12, FR-21) · Accessible properties, each with name, address, room count, occupied room count and assigned managers. Detail adds the vacant room count and the bank account, if set.
 
-**UC-12 Edit property** (FR-12) · Owner only. Edits name, address and bank account. Rejected with `PROPERTY_READ_ONLY` while the property is view-only (§6 rule 10).
+**UC-12 Edit property** (FR-12) · Owner only. Edits name, address and bank account. Rejected with `PROPERTY_READ_ONLY` while the property is view-only (§6 rule 10). Changing the bank account (adding, replacing or removing it) needs a recent re-authentication of the session (§7); otherwise the request is rejected with `REAUTHENTICATION_REQUIRED` and nothing is saved. Editing the name or address does not.
 
 **UC-13 Delete property** (FR-12) · Owner only. Rejected if the property has an active lease. On success the property's rooms and manager assignments are removed too. A view-only property can still be deleted, which frees a place under the plan limit.
 
@@ -528,6 +529,8 @@ Endpoints:
 | `POST`   | `/subscription/orders/{orderId}/purchase-verification` | Verify the Google Play purchase token of an order.             | UC-32 |
 | `PUT`    | `/subscription/scheduled-downgrade`                    | Confirm a downgrade and the properties and rooms that stay editable. | UC-31 |
 | `DELETE` | `/subscription/scheduled-downgrade`                    | Cancel the scheduled downgrade.                                | UC-31 |
+| `POST`   | `/me/reauthentication/password`                        | Re-authenticate the current session with the password.         | UC-12 |
+| `POST`   | `/me/reauthentication/google`                          | Re-authenticate the current session with a Google ID token.    | UC-12 |
 
 Every endpoint listed above except `GET /health` is declared in the contract but not implemented yet; it responds `501 Not Implemented`.
 
@@ -574,3 +577,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | Admin account management (UC-33 to UC-35) defined: *Nonaktif* is a reversible suspension, *Dihapus* status added to the Admin account vocabulary, deleted accounts hidden from the default list, delete also rejected for a Tenant with an active lease, an Admin cannot deactivate or delete their own account, an Admin email change stays pending until the new email is verified (link single use, 7 days). `UserAccount` added to the glossary. User-account endpoints added to §9. | NKMA-18 |
 | 17-10-2026 | Subscription decided: plans Gratis, Basic and Pro with limits and prices; billing through Google Play Billing with server-side purchase verification; downgrades at period end with kept properties and rooms; property and room limits added to UC-10 and UC-14; order statuses mapped to Google Play. TBD-3 narrowed, U-11 decided. Subscription endpoints added to §9. | NKMA-17 |
 | 18-10-2026 | Session lifetime relaxed: a session ends after 90 days without use or 1 year after the last authentication, instead of a fixed 30 days, so that users are not forced to log in about once a month. | NKMA-15 |
+| 18-10-2026 | Re-authentication added: changing a property's bank account needs the session to have re-authenticated with the password or Google within the last 5 minutes. Re-authentication endpoints added to §9. | NKMA-15 |
