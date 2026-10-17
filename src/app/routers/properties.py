@@ -1,4 +1,4 @@
-"""Endpoints under /properties: properties and the rooms and facility suggestions of a property.
+"""Endpoints under /properties: properties and their rooms, facility suggestions and tenants.
 
 Declared in the contract; not implemented yet.
 """
@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Path, Response, status
 
 from app.schemas.properties import Property, PropertyInput, PropertyList
 from app.schemas.rooms import FacilitySuggestionList, Room, RoomInput, RoomList
+from app.schemas.tenants import NewTenantInput, Tenant, TenantList
 
 router = APIRouter(prefix="/properties")
 
@@ -66,4 +67,18 @@ def list_rooms(property_id: PropertyId) -> RoomList:
 @router.get("/{propertyId}/facility-suggestions", tags=["rooms"])
 def list_facility_suggestions(property_id: PropertyId) -> FacilitySuggestionList:
     """List the distinct facility tags already used on rooms of the property's Owner."""
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+
+
+@router.post(
+    "/{propertyId}/tenants", status_code=status.HTTP_201_CREATED, tags=["tenants"]
+)
+def create_tenant(property_id: PropertyId, body: NewTenantInput) -> Tenant:
+    """Add a tenant to a vacant room of a property and create their invitation."""
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+
+
+@router.get("/{propertyId}/tenants", tags=["tenants"])
+def list_tenants(property_id: PropertyId) -> TenantList:
+    """List a property's tenants."""
     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
