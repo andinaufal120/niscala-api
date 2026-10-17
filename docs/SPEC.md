@@ -255,7 +255,7 @@ A Manager sees only notifications about properties currently assigned to them; a
 
 Defaults: every category on, scope `allUrgencies`. A user who never saved settings gets the defaults. The save replaces the whole resource and MUST contain exactly the categories of the caller's role. Whether the Android OS allows notifications, and per-channel sound or vibration, are handled by the app and the OS and are not stored here.
 
-**Push token.** The app registers its device push token for the current session. One token per session; registering again replaces it. The token stops being used when the session ends (UC-37). Push is sent only for notifications whose category is switched on for that user.
+**Push token.** The app registers its device push token for the current session. One token per session; registering again replaces it. The token stops being used when the session ends (UC-37). Push is sent only for notifications whose category is switched on for that user. Push is delivered through Firebase Cloud Messaging (Android only); the token is the device's FCM registration token.
 
 ### 8.2 Management (Pemilik Kost and Pengelola Kost)
 
@@ -504,7 +504,7 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 | U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
 | U-19  | Facility tag storage: `TEXT[]` column vs. join tables (proposed: `TEXT[]`).                                                      | UC-14, UC-16              |
-| U-22  | Push delivery: provider (recommended: Firebase Cloud Messaging, Android only), retry policy, and removal of invalid tokens. The contract carries an opaque token string, so it does not depend on this. | UC-06 |
+| U-23  | Push delivery through Firebase Cloud Messaging: retry policy and removal of invalid tokens. The contract carries an opaque token string, so it does not depend on this. | UC-06 |
 
 ## 11. Changelog
 
@@ -524,4 +524,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | UC-37 and UC-38 detailed: session list fields and order, not-found and current-session errors, password change errors and `hasOtherSessions`. Login method values added to §5. Session and password endpoints added to §9. | NKMA-15 |
 | 17-10-2026 | Manager use cases UC-27 to UC-30 detailed: managers are added with name, phone and properties and join through a shared invitation link (nothing is emailed); statuses reduced to *Belum Diaktifkan* and *Aktif*; an existing Manager account can accept; invitation regeneration; delete revokes this Owner's assignments and keeps the account. Manager endpoints added to §9. | NKMA-7 |
 | 17-10-2026 | UC-22 extended: room count, occupancy percentage rule (whole number, halves up, 0 without rooms, summary from summed counts), ordering and empty result. Occupancy-dashboard endpoint added to §9. | NKMA-7 |
-| 17-10-2026 | U-12 decided: due-date reminder 3 days before the due date at 07:00 Asia/Jakarta. UC-06 extended to Owner and Manager, with notification types, recipients and creation rules; notification settings (push on/off per category, urgency scope for new complaints) and push token added under UC-06. Notification endpoints added to §9. U-22 added. | NKMA-63 |
+| 17-10-2026 | U-12 decided: due-date reminder 3 days before the due date at 07:00 Asia/Jakarta. UC-06 extended to Owner and Manager, with notification types, recipients and creation rules; notification settings (push on/off per category, urgency scope for new complaints) and push token added under UC-06. Notification endpoints added to §9. Push provider decided: Firebase Cloud Messaging. U-23 added for the remaining push delivery questions. | NKMA-63 |
