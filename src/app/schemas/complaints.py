@@ -52,6 +52,14 @@ class ComplaintClassificationInput(ApiModel):
     urgency: ComplaintUrgency
 
 
+class AiComplaintClassification(ApiModel):
+    """A classification produced by the AI."""
+
+    category: str
+    urgency: ComplaintUrgency
+    suggested_action: str
+
+
 class ComplaintClassification(ApiModel):
     """The category and urgency of a complaint."""
 
@@ -59,6 +67,10 @@ class ComplaintClassification(ApiModel):
     urgency: ComplaintUrgency
     suggested_action: str | None = Field(
         description="Null for a manual classification."
+    )
+    classified_by_name: str | None = Field(description="Null for an AI classification.")
+    original_ai_classification: AiComplaintClassification | None = Field(
+        description="Null when there was none or it is withheld."
     )
 
 
@@ -94,6 +106,7 @@ class ComplaintSummary(ApiModel):
     room: RoomRef
     tenant_name: str
     created_at: datetime
+    has_photo: bool
     classification: ComplaintClassification | None
     classification_state: ComplaintClassificationState | None = Field(
         description="Null when the complaint is classified or its AI result is withheld."
