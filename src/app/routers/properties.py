@@ -3,11 +3,13 @@
 Declared in the contract; not implemented yet.
 """
 
+import datetime as dt
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Path, Response, status
+from fastapi import APIRouter, HTTPException, Path, Query, Response, status
 
+from app.schemas.payments import PaymentOverview
 from app.schemas.properties import Property, PropertyInput, PropertyList
 from app.schemas.rooms import FacilitySuggestionList, Room, RoomInput, RoomList
 from app.schemas.tenants import NewTenantInput, Tenant, TenantList
@@ -81,4 +83,13 @@ def create_tenant(property_id: PropertyId, body: NewTenantInput) -> Tenant:
 @router.get("/{propertyId}/tenants", tags=["tenants"])
 def list_tenants(property_id: PropertyId) -> TenantList:
     """List a property's tenants."""
+    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+
+
+@router.get("/{propertyId}/payment-overview", tags=["rent-bills"])
+def get_payment_overview(
+    property_id: PropertyId,
+    date: Annotated[dt.date | None, Query()] = None,
+) -> PaymentOverview:
+    """Show each tenant's bill covering a date, defaulting to today."""
     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)

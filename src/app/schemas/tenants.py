@@ -95,6 +95,28 @@ class Lease(ApiModel):
     next_bill_date: date | None
 
 
+class CurrentLeaseRoom(ApiModel):
+    """The room of the caller's lease."""
+
+    id: UUID
+    number: str
+    facilities: list[str]
+
+
+class CurrentLease(ApiModel):
+    """The calling tenant's active lease."""
+
+    room: CurrentLeaseRoom
+    start_date: date | None
+    end_date: date | None
+
+
+class CurrentLeaseResult(ApiModel):
+    """The calling tenant's lease."""
+
+    lease: CurrentLease | None = Field(description="Null when the lease has ended.")
+
+
 class TenantInvitation(ApiModel):
     """The link a Tenant uses to activate their account."""
 
