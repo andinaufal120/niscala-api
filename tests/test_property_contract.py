@@ -302,7 +302,15 @@ PROPERTY_FIELDS = {
     "occupiedRoomCount",
     "vacantRoomCount",
     "managers",
+    "editable",
 }
+
+
+def test_property_editable_is_required_boolean(
+    property_schema: dict[str, Any],
+) -> None:
+    assert property_schema["properties"]["editable"]["type"] == "boolean"
+    assert "editable" in property_schema["required"]
 
 
 def test_property_has_exactly_its_fields(property_schema: dict[str, Any]) -> None:
@@ -357,12 +365,26 @@ PROPERTY_SUMMARY_FIELDS = {
     "roomCount",
     "occupiedRoomCount",
     "managers",
+    "editable",
 }
 
 
 @pytest.fixture
 def property_summary_schema(openapi: OpenApiDoc) -> dict[str, Any]:
     return openapi.component("PropertySummary")
+
+
+def test_property_summary_editable_is_required_boolean(
+    property_summary_schema: dict[str, Any],
+) -> None:
+    assert property_summary_schema["properties"]["editable"]["type"] == "boolean"
+    assert "editable" in property_summary_schema["required"]
+
+
+def test_property_input_does_not_accept_editable(
+    property_input_schema: dict[str, Any],
+) -> None:
+    assert "editable" not in _property_names(property_input_schema)
 
 
 def test_property_summary_has_exactly_its_fields(

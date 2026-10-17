@@ -16,6 +16,7 @@ RENT_BILL_ID = "1b2c3d4e-5f60-4a71-8b92-a3b4c5d6e7f8"
 SESSION_ID = "9d8c7b6a-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
 NOTIFICATION_ID = "6c5d4e3f-2a1b-4c0d-9e8f-7a6b5c4d3e2f"
 USER_ACCOUNT_ID = "2f3e4d5c-6b7a-4980-8a1b-0c9d8e7f6a5b"
+ORDER_ID = "8e7d6c5b-4a39-4281-9f0e-d1c2b3a49586"
 NOT_A_UUID = "not-a-uuid"
 
 
