@@ -192,7 +192,7 @@ Same IDs and order as the app's use cases. Only what the backend must enforce or
 
 **UC-01 View room and lease** (FR-02) · Returns the Tenant's room number, facilities, and lease start and end dates, or a result the app can recognise as "no room or lease".
 
-**UC-02 Submit maintenance complaint** (FR-03, FR-04, FR-25, FR-28) · Tenant with an active lease only. Rejects an empty or too-short description with a field error (minimum length: U-3). Saving the complaint MUST NOT depend on the AI result. After saving, the complaint is *Baru* and its classification state is exactly one of:
+**UC-02 Submit maintenance complaint** (FR-03, FR-04, FR-25, FR-28) · Tenant with an active lease only. Rejects an empty or too-short description with a field error (at least 10 characters after trimming). Saving the complaint MUST NOT depend on the AI result. After saving, the complaint is *Baru* and its classification state is exactly one of:
 - a classification (category, urgency, suggested action);
 - *Menunggu Klasifikasi*: the AI was attempted and failed or timed out;
 - *Belum Diklasifikasi*: the Owner had no active subscription when the complaint was saved, so the AI was skipped.
@@ -260,11 +260,11 @@ Regenerate invitation link, for an unused or expired invitation (expiry: U-13): 
 
 **UC-22 Occupancy dashboard** (FR-14) · Per property: occupied count, vacant count, occupancy percentage and each room's status, plus a summary across all accessible properties. All figures are computed here.
 
-**UC-23 Complaint list with AI classification** (FR-15, FR-25) · Complaints across accessible properties, sorted by urgency, then time. Includes category, urgency and suggested action when available; otherwise the classification state. Without an active subscription, AI classification results are withheld (§6 rule 6); manual classifications (UC-36) are not.
+**UC-23 Complaint list with AI classification** (FR-15, FR-25) · Complaints across accessible properties, sorted by urgency, then time. Includes category, urgency and suggested action when available; otherwise the classification state. Without an active subscription, AI classification results are withheld (§6 rule 6); manual classifications (UC-36) are not. A withheld AI result is flagged as withheld, so the app can tell it apart from an unclassified complaint.
 
 **UC-24 Change complaint status** (FR-16) · The target MUST be the next status: *Baru* → *Diproses*, or *Diproses* → *Selesai*. Any other target is rejected, and so is any change once the complaint is *Selesai*. An optional handling note is stored with the change and returned to the Tenant (UC-03).
 
-**UC-36 Classify complaint manually** (FR-32) · Management sets category and urgency on a complaint whose classification state is *Menunggu Klasifikasi* or *Belum Diklasifikasi*, or corrects an AI classification (category list: U-16).
+**UC-36 Classify complaint manually** (FR-32) · Management sets category and urgency on a complaint whose classification state is *Menunggu Klasifikasi* or *Belum Diklasifikasi*, or corrects an AI classification. The category MUST be one of the complaint categories, which an endpoint returns (list contents: U-16).
 - Stored: the original AI result (if any), the manual values, the actor and the timestamp.
 - An AI result that arrives after a manual classification is stored only as the original AI result; it never overwrites the manual values.
 - No active subscription is required; this is not an AI feature.
@@ -350,8 +350,14 @@ Endpoints:
 | `PUT`    | `/tenants/{tenantId}`                           | Edit tenant.                                              | UC-20                                                     |
 | `DELETE` | `/tenants/{tenantId}`                           | Delete tenant.                                            | UC-21                                                     |
 | `POST`   | `/tenants/{tenantId}/invitation`                | Regenerate the invitation link.                           | UC-20                                                     |
+| `POST`   | `/complaints`                                   | Submit a complaint; returns it with its classification state. | UC-02                                                 |
+| `GET`    | `/complaints`                                   | List the caller's complaints (Tenant: own; management: accessible properties). | UC-03, UC-23                         |
+| `GET`    | `/complaints/{complaintId}`                     | Complaint detail with its status history.                 | UC-03, UC-23                                              |
+| `POST`   | `/complaints/{complaintId}/status-changes`      | Move a complaint to its next status, with an optional handling note. | UC-24                                          |
+| `PUT`    | `/complaints/{complaintId}/classification`      | Set or correct the category and urgency manually.         | UC-36                                                     |
+| `GET`    | `/complaint-categories`                         | The allowed complaint categories.                         | UC-36                                                     |
 
-The property, room and tenant endpoints are declared in the contract but not implemented yet; they respond `501 Not Implemented`.
+The property, room, tenant and complaint endpoints are declared in the contract but not implemented yet; they respond `501 Not Implemented`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -363,7 +369,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 |-------|----------------------------------------------------------------------------------------------------------------------------------|---------------------------|
 | TBD-3 | Payment gateway provider and its integration.                                                                                    | UC-32                     |
 | U-1   | `/health` response shape.                                                                                                        | §9, NKMA-22               |
-| U-3   | Complaint description minimum length.                                                                                            | UC-02                     |
 | U-4   | Invitation link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01       |
 | U-6   | Bill generation (FR-31): when bills are created, how the amount is set, and proration.                                           | UC-04, UC-08, UC-25       |
 | U-7   | Payment-pattern facts: formulas, and the at-risk threshold.                                                                      | UC-26                     |
@@ -374,7 +379,7 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-13  | Invitation expiry.                                                                                                               | UC-18, UC-20, UC-27       |
 | U-14  | Token format and transport. Session lifetime and revocation are decided (§7).                                                    | §6, §7                    |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
-| U-16  | Complaint category list (the prototype list is placeholder data).                                                                | UC-02, UC-23, UC-36       |
+| U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
 | U-19  | Facility tag storage: `TEXT[]` column vs. join tables (proposed: `TEXT[]`).                                                      | UC-14, UC-16              |
 
 ## 11. Changelog
@@ -386,3 +391,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 16-10-2026 | SRS v1.1 revision: Owner-only property writes and per-property bank account; room base rate, dimensions, facilities; rent per lease; complaint status split from classification state, one-step flow, urgency values, handling note, manual classification (UC-36); receipt JPG/PNG up to 5 MB; sessions (UC-37, UC-38); password blocklist. U-2 decided; U-10, U-14 narrowed; U-16, U-19, U-21 added. | NKMA-96 |
 | 16-10-2026 | U-10 decided: camelCase fields, codeName enum values, ISO 8601 dates, integer rupiah, UUID ids, wrapped lists, full-resource `PUT`. UC-10, UC-11, UC-14, UC-15 extended; property and room endpoints added to §9. | NKMA-7 |
 | 17-10-2026 | U-21 decided: rent is per billing cycle; base rate pre-fills monthly leases only. Billing cycle values added to §5. Activation requires 2 to 4 emergency contacts (§7). UC-18 to UC-20 extended with phone format, occupation, emergency contacts, list and detail fields and invitation re-sharing; tenant endpoints added to §9. | NKMA-8 |
+| 17-10-2026 | U-3 decided: complaint description at least 10 characters. U-16 narrowed: categories are server data from an endpoint. Withheld AI classification flagged on the wire. Complaint endpoints added to §9. | NKMA-16 |
