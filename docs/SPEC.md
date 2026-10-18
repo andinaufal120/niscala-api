@@ -308,7 +308,7 @@ The Owner's plan limits the number of properties (Gratis 1, Basic 3, Pro unlimit
 
 **UC-12 Edit property** (FR-12) · Owner only. Edits name, address and bank account. Rejected with `PROPERTY_READ_ONLY` while the property is view-only (§6 rule 10). Changing the bank account (adding, replacing or removing it) needs a recent re-authentication of the session (§7); otherwise the request is rejected with `REAUTHENTICATION_REQUIRED` and nothing is saved. Editing the name or address does not, and neither does sending the bank account unchanged. Checks run in this order: role, access, view-only, re-authentication, name already taken (the property's own name never counts).
 
-**UC-13 Delete property** (FR-12) · Owner only. Rejected if the property has an active lease. On success the property's rooms and manager assignments are removed too. A view-only property can still be deleted, which frees a place under the plan limit.
+**UC-13 Delete property** (FR-12) · Owner only. Rejected with `PROPERTY_HAS_ACTIVE_LEASE` (409) if any room of the property has an active lease, a view-only property included; nothing is deleted. On success the property's rooms and manager assignments are removed too. A view-only property can still be deleted, which frees a place under the plan limit.
 
 **UC-14 Add room** (FR-12) · Fields:
 - room number: required, trimmed, MUST be unique within the property ignoring case and surrounding spaces (`ROOM_NUMBER_TAKEN`, field `number`); the number of a deleted room can be used again;
@@ -324,7 +324,7 @@ A suggestions endpoint returns the distinct facility tags already used on rooms 
 
 **UC-16 Edit room** (FR-12) · Same fields and rules as UC-14. Changing the base rate never changes the rent of existing leases. Rejected with `ROOM_READ_ONLY` (or `PROPERTY_READ_ONLY` for a view-only property) while the room is view-only. Checks run in this order: role, room access, property view-only, room view-only, field rules, room number taken (the room's own number never counts). A room is `editable` only when neither it nor its property is view-only.
 
-**UC-17 Delete room** (FR-12) · Rejected if the room has an active lease. A view-only room, or a room of a view-only property, can still be deleted, which frees a place under the plan limit. Rooms are soft-deleted.
+**UC-17 Delete room** (FR-12) · Rejected with `ROOM_HAS_ACTIVE_LEASE` (409) if the room has an active lease, view-only or not. A view-only room, or a room of a view-only property, can still be deleted, which frees a place under the plan limit. Rooms are soft-deleted.
 
 **UC-18 Add tenant** (FR-13) · Required: a room that is *Kosong*, name, phone number. Optional: occupation, emergency contacts, lease dates, billing cycle (default monthly from the lease start date), grace period (default 0), rent.
 - Phone number: MUST be an Indonesian mobile number: after removing spaces and dashes, `08` or `628` followed by 8 to 11 digits. Stored and returned as digits starting with `08`.
@@ -611,3 +611,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 18-10-2026 | Property endpoints (UC-10 to UC-13) implemented: names are unique ignoring case and surrounding spaces and reusable after deletion, `PROPERTY_NAME_TAKEN`, `PROPERTY_LIMIT_REACHED` answers 403, order of the edit checks, an unchanged bank account needs no re-authentication. Property endpoints marked implemented in §9. | NKMA-37 |
 | 18-10-2026 | Room endpoints (UC-14 to UC-17) implemented: room numbers unique ignoring case and reusable after deletion, normalization and limits of facility tags, `ROOM_NUMBER_TAKEN`, `ROOM_LIMIT_REACHED` answers 403, `ROOM_NOT_FOUND`, natural order of room numbers, order of the checks, rooms are soft-deleted, property room counts are real and deleting a property deletes its rooms. | NKMA-41 |
 | 18-10-2026 | Adding and viewing Tenants (UC-18, UC-19) implemented: `ROOM_NOT_VACANT`, `TENANT_NOT_FOUND`, order of the checks, field errors of the lease, invitation links stored hashed and encrypted, the next bill date rule (display value only; U-6 stays undecided). Endpoints marked implemented in §9. | NKMA-52 |
+| 18-10-2026 | Leases wired into rooms and properties: a room is occupied while it has an active lease, property occupied counts follow, and deleting a room or a property with an active lease answers `ROOM_HAS_ACTIVE_LEASE` or `PROPERTY_HAS_ACTIVE_LEASE`. | NKMA-42 |
