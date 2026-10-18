@@ -23,11 +23,12 @@ uv run alembic upgrade head   # apply database migrations to DATABASE_URL
 
 ## Configuration
 
-Settings are read from environment variables, or from a `.env` file in the project root. Defaults exist for all of them today.
+Settings are read from environment variables, or from a `.env` file in the project root. Every variable has a default except `JWT_SECRET`, which MUST be set.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | `postgresql+psycopg://niscala:niscala@localhost:5432/niscala` | PostgreSQL connection URL |
+| `JWT_SECRET` | none (required) | Key that signs access tokens; use a long random value |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used for AI features |
 | `GEMINI_API_KEY` | none | Gemini API key |
 | `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |
