@@ -2,10 +2,10 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import EmailStr, Field, StringConstraints
+from pydantic import BeforeValidator, EmailStr, Field, StringConstraints
 
 from app.schemas.base import ApiModel
 
@@ -41,11 +41,16 @@ class DeviceInfo(ApiModel):
     platform: str = Field(min_length=1, max_length=50)
 
 
+TrimmedEmail = Annotated[
+    EmailStr, BeforeValidator(lambda v: v.strip() if isinstance(v, str) else v)
+]
+
+
 class RegisterOwnerInput(ApiModel):
     """Fields set when an Owner signs up with a password."""
 
     name: PersonName
-    email: EmailStr
+    email: TrimmedEmail
     password: Password
     device: DeviceInfo
 
@@ -53,7 +58,7 @@ class RegisterOwnerInput(ApiModel):
 class LoginInput(ApiModel):
     """Email and password of a login."""
 
-    email: EmailStr
+    email: TrimmedEmail
     password: str = Field(min_length=1)
     device: DeviceInfo
 
@@ -92,6 +97,19 @@ class Account(ApiModel):
     google_email: str | None = Field(
         description="Null when no Google account is linked."
     )
+
+    @classmethod
+    def from_user(cls, user: Any) -> Account:
+        """Build the account view of a `UserAccount`."""
+        return cls(
+            id=user.id,
+            name=user.name,
+            email=user.email,
+            role=user.role,
+            email_verified=user.email_verified,
+            has_password=user.password_hash is not None,
+            google_email=None,
+        )
 
 
 class AuthSession(AuthTokens):
