@@ -1,7 +1,11 @@
 """Endpoints under /auth. Declared in the contract; not implemented yet."""
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from typing import Annotated
 
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.orm import Session
+
+from app.db import get_session
 from app.schemas.auth import (
     Account,
     AuthSession,
@@ -17,7 +21,8 @@ from app.schemas.auth import (
     RegisterOwnerInput,
     TokenInput,
 )
-from app.security import bearer_scheme
+from app.security import CurrentUser, bearer_scheme, get_current_user
+from app.services.sessions import end_session, refresh_session
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -47,9 +52,11 @@ def login_with_google(body: GoogleAuthInput) -> AuthSession:
 
 
 @router.post("/refresh")
-def refresh_tokens(body: RefreshInput) -> AuthTokens:
+def refresh_tokens(
+    body: RefreshInput, db: Annotated[Session, Depends(get_session)]
+) -> AuthTokens:
     """Exchange a refresh token for a new token pair; the old one stops working."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return refresh_session(db, body.refresh_token)
 
 
 @router.post(
@@ -58,9 +65,12 @@ def refresh_tokens(body: RefreshInput) -> AuthTokens:
     response_class=Response,
     dependencies=[Depends(bearer_scheme)],
 )
-def logout() -> None:
+def logout(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_session)],
+) -> None:
     """End the current session."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    end_session(db, current.session)
 
 
 @router.post(

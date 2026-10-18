@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     invitation_base_url: str = "https://niscala.app"
     database_url: str = "postgresql+psycopg://niscala:niscala@localhost:5432/niscala"
+    jwt_secret: str
 
 
 @cache

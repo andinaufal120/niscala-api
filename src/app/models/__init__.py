@@ -1,18 +1,6 @@
-"""Declarative base for all database models."""
+"""Database models; importing this package registers every table."""
 
-from sqlalchemy import MetaData
-from sqlalchemy.orm import DeclarativeBase
+from app.models.base import Base
+from app.models.users import UserAccount, UserSession
 
-
-class Base(DeclarativeBase):
-    """Base class for models; constraint names follow a fixed convention."""
-
-    metadata = MetaData(
-        naming_convention={
-            "ix": "ix_%(column_0_label)s",
-            "uq": "uq_%(table_name)s_%(column_0_name)s",
-            "ck": "ck_%(table_name)s_%(constraint_name)s",
-            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-            "pk": "pk_%(table_name)s",
-        }
-    )
+__all__ = ["Base", "UserAccount", "UserSession"]
