@@ -136,10 +136,11 @@ def test_nested_field_path_is_camel_case_and_dotted(client, owner_headers):
     assert body["field"] == "bankAccount.accountNumber"
 
 
-def test_list_index_appears_as_number_segment_in_field_path(client):
+def test_list_index_appears_as_number_segment_in_field_path(client, owner_headers):
     response = client.post(
         f"/properties/{PROPERTY_ID}/rooms",
         json={"number": "1", "baseRate": 100000, "facilities": [1]},
+        headers=owner_headers,
     )
     assert response.status_code == 422
     body = response.json()
@@ -171,7 +172,7 @@ def test_malformed_json_body_returns_validation_failed_with_null_field(client):
 
 
 def test_unimplemented_endpoint_returns_not_implemented(client, owner_headers):
-    response = client.get(f"/properties/{PROPERTY_ID}/rooms", headers=owner_headers)
+    response = client.get(f"/properties/{PROPERTY_ID}/tenants", headers=owner_headers)
     assert response.status_code == 501
     body = response.json()
     assert_shape(body)

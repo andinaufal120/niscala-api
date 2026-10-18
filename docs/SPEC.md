@@ -311,20 +311,20 @@ The Owner's plan limits the number of properties (Gratis 1, Basic 3, Pro unlimit
 **UC-13 Delete property** (FR-12) · Owner only. Rejected if the property has an active lease. On success the property's rooms and manager assignments are removed too. A view-only property can still be deleted, which frees a place under the plan limit.
 
 **UC-14 Add room** (FR-12) · Fields:
-- room number: required, MUST be unique within the property;
+- room number: required, trimmed, MUST be unique within the property ignoring case and surrounding spaces (`ROOM_NUMBER_TAKEN`, field `number`); the number of a deleted room can be used again;
 - base rate: required, per month, greater than 0;
-- `lengthM` and `widthM`: optional, in metres, each 0 < x ≤ 20 with at most 2 decimals. Both or neither, otherwise a field error. Area is not stored;
-- facilities: free-form tags. On save each tag is trimmed, lowercased and has repeated spaces collapsed; duplicates are dropped. At most 30 characters per tag and 15 tags per room. They are stored as one text-array column on the room.
+- `lengthM` and `widthM`: optional, in metres, each 0 < x ≤ 20 with at most 2 decimals. Both or neither, otherwise a field error on the dimension that is missing. Area is not stored;
+- facilities: free-form tags. On save each tag is trimmed, lowercased and has repeated spaces collapsed; duplicates are dropped and empty tags are ignored. At most 30 characters per tag and 15 tags per room, counted after this normalization; going over either gives a field error on `facilities`. They are stored as one text-array column on the room.
 
-The Owner's plan limits the number of rooms per property (Gratis 15, Basic and Pro unlimited). Adding a room when the property already has that many (view-only ones included, deleted ones excluded) is rejected with `ROOM_LIMIT_REACHED`. Adding to a view-only property is rejected with `PROPERTY_READ_ONLY`.
+The Owner's plan limits the number of rooms per property (Gratis 15, Basic and Pro unlimited). Adding a room when the property already has that many (view-only ones included, deleted ones excluded) is rejected with `ROOM_LIMIT_REACHED` (403). The limit is the plan of the property's Owner, also when a Manager adds the room. Adding to a view-only property is rejected with `PROPERTY_READ_ONLY`. Checks run in this order: role, property access, view-only, field rules, room number taken, room limit.
 
-A suggestions endpoint returns the distinct facility tags already used on rooms of the same Owner.
+A suggestions endpoint returns the distinct facility tags already used on rooms of the same Owner (not deleted ones), sorted alphabetically. A Manager gets the tags of the property Owner's rooms, including properties not assigned to them.
 
-**UC-15 View rooms** (FR-12) · Each room with number, base rate, occupancy, dimensions and facilities, plus, if occupied, the Tenant's name and the lease end date. Detail adds the Tenant's phone number, the lease start date and that lease's rent.
+**UC-15 View rooms** (FR-12) · The list is in natural order of the room number ("2" before "10"). A room that does not exist, was deleted or belongs to a property the caller cannot access answers `ROOM_NOT_FOUND` (404). Each room with number, base rate, occupancy, dimensions and facilities, plus, if occupied, the Tenant's name and the lease end date. Detail adds the Tenant's phone number, the lease start date and that lease's rent.
 
-**UC-16 Edit room** (FR-12) · Same fields and rules as UC-14. Changing the base rate never changes the rent of existing leases. Rejected with `ROOM_READ_ONLY` (or `PROPERTY_READ_ONLY` for a view-only property) while the room is view-only.
+**UC-16 Edit room** (FR-12) · Same fields and rules as UC-14. Changing the base rate never changes the rent of existing leases. Rejected with `ROOM_READ_ONLY` (or `PROPERTY_READ_ONLY` for a view-only property) while the room is view-only. Checks run in this order: role, room access, property view-only, room view-only, field rules, room number taken (the room's own number never counts). A room is `editable` only when neither it nor its property is view-only.
 
-**UC-17 Delete room** (FR-12) · Rejected if the room has an active lease. A view-only room can still be deleted, which frees a place under the plan limit.
+**UC-17 Delete room** (FR-12) · Rejected if the room has an active lease. A view-only room, or a room of a view-only property, can still be deleted, which frees a place under the plan limit. Rooms are soft-deleted.
 
 **UC-18 Add tenant** (FR-13) · Required: a room that is *Kosong*, name, phone number. Optional: occupation, emergency contacts, lease dates, billing cycle (default monthly from the lease start date), grace period (default 0), rent.
 - Phone number: MUST be an Indonesian mobile number: after removing spaces and dashes, `08` or `628` followed by 8 to 11 digits. Stored and returned as digits starting with `08`.
@@ -549,7 +549,7 @@ Endpoints:
 | `POST`   | `/me/reauthentication/password`                        | Re-authenticate the current session with the password.         | UC-12 |
 | `POST`   | `/me/reauthentication/google`                          | Re-authenticate the current session with a Google ID token.    | UC-12 |
 
-Every endpoint listed above except `GET /health` and the implemented ones is declared in the contract but not implemented yet; it responds `501 Not Implemented`. Implemented so far: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/email-verification`, `POST /auth/email-verification/confirmation`, `GET /me`, `POST /me/reauthentication/password`, `POST /properties`, `GET /properties`, `GET /properties/{propertyId}`, `PUT /properties/{propertyId}`, `DELETE /properties/{propertyId}`.
+Every endpoint listed above except `GET /health` and the implemented ones is declared in the contract but not implemented yet; it responds `501 Not Implemented`. Implemented so far: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/email-verification`, `POST /auth/email-verification/confirmation`, `GET /me`, `POST /me/reauthentication/password`, `POST /properties`, `GET /properties`, `GET /properties/{propertyId}`, `PUT /properties/{propertyId}`, `DELETE /properties/{propertyId}`, `POST /properties/{propertyId}/rooms`, `GET /properties/{propertyId}/rooms`, `GET /properties/{propertyId}/facility-suggestions`, `GET /rooms/{roomId}`, `PUT /rooms/{roomId}`, `DELETE /rooms/{roomId}`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -603,3 +603,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 18-10-2026 | Effective plan defined (paid plan while its period runs, else Gratis); a development command grants a paid period until Google Play billing exists. | NKMA-76 |
 | 18-10-2026 | Re-authentication with the password implemented: per session, valid 5 minutes, shares the failed-login lock, error codes `PASSWORD_INCORRECT`, `PASSWORD_NOT_SET` and `REAUTHENTICATION_REQUIRED`. | NKMA-15 |
 | 18-10-2026 | Property endpoints (UC-10 to UC-13) implemented: names are unique ignoring case and surrounding spaces and reusable after deletion, `PROPERTY_NAME_TAKEN`, `PROPERTY_LIMIT_REACHED` answers 403, order of the edit checks, an unchanged bank account needs no re-authentication. Property endpoints marked implemented in §9. | NKMA-37 |
+| 18-10-2026 | Room endpoints (UC-14 to UC-17) implemented: room numbers unique ignoring case and reusable after deletion, normalization and limits of facility tags, `ROOM_NUMBER_TAKEN`, `ROOM_LIMIT_REACHED` answers 403, `ROOM_NOT_FOUND`, natural order of room numbers, order of the checks, rooms are soft-deleted, property room counts are real and deleting a property deletes its rooms. | NKMA-41 |

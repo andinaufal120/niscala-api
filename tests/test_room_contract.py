@@ -578,7 +578,12 @@ def test_facility_suggestion_list_items_is_required_array_of_string(
     assert items["items"]["type"] == "string"
 
 
-# Runtime: valid requests reach the not-implemented stub
+# Runtime: request validation
+
+
+@pytest.fixture
+def owner_headers(make_user, sign_in) -> dict[str, str]:
+    return sign_in(make_user()).headers
 
 
 @pytest.mark.parametrize(
@@ -602,11 +607,11 @@ def test_facility_suggestion_list_items_is_required_array_of_string(
         pytest.param("delete", f"/rooms/{ROOM_ID}", None, id="delete_room"),
     ],
 )
-def test_valid_room_request_responds_not_implemented(
-    client, method: str, url: str, body: dict[str, Any] | None
+def test_valid_room_request_is_not_a_validation_failure(
+    client, owner_headers, method: str, url: str, body: dict[str, Any] | None
 ) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 501
+    response = client.request(method, url, json=body, headers=owner_headers)
+    assert response.status_code != 422
 
 
 @pytest.mark.parametrize(("method", "url"), ROOM_WRITE_REQUESTS)
@@ -633,10 +638,10 @@ def test_valid_room_request_responds_not_implemented(
     ],
 )
 def test_room_input_edge_body_is_accepted(
-    client, method: str, url: str, body: dict[str, Any]
+    client, owner_headers, method: str, url: str, body: dict[str, Any]
 ) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 501
+    response = client.request(method, url, json=body, headers=owner_headers)
+    assert response.status_code != 422
 
 
 # Runtime: invalid requests are rejected with a validation error
@@ -666,17 +671,17 @@ def test_room_input_edge_body_is_accepted(
     ],
 )
 def test_invalid_room_input_is_rejected_with_validation_error(
-    client, method: str, url: str, body: dict[str, Any]
+    client, owner_headers, method: str, url: str, body: dict[str, Any]
 ) -> None:
-    response = client.request(method, url, json=body)
+    response = client.request(method, url, json=body, headers=owner_headers)
     assert response.status_code == 422
 
 
 @pytest.mark.parametrize(("method", "url"), ROOM_WRITE_REQUESTS)
 def test_room_write_without_body_is_rejected_with_validation_error(
-    client, method: str, url: str
+    client, owner_headers, method: str, url: str
 ) -> None:
-    response = client.request(method, url)
+    response = client.request(method, url, headers=owner_headers)
     assert response.status_code == 422
 
 
@@ -702,7 +707,7 @@ def test_room_write_without_body_is_rejected_with_validation_error(
     ],
 )
 def test_non_uuid_path_id_is_rejected_with_validation_error(
-    client, method: str, url: str, body: dict[str, Any] | None
+    client, owner_headers, method: str, url: str, body: dict[str, Any] | None
 ) -> None:
-    response = client.request(method, url, json=body)
+    response = client.request(method, url, json=body, headers=owner_headers)
     assert response.status_code == 422

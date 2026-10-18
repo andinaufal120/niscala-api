@@ -17,7 +17,7 @@ niscala-api/
 │   ├── plans.py       # Plan limits per subscription plan, as data
 │   ├── cli.py         # `niscala-api` command: grant-subscription (development tool)
 │   ├── access.py      # require_roles and the property access queries (owner: own, manager: assigned)
-│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties)
+│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms)
 │   ├── routers/       # One module per resource: parse the request, return a schema
 │   └── schemas/       # Pydantic request and response models; they define the OpenAPI contract
 ├── data/              # common-passwords.txt: the 100,000 most used passwords (SecLists, MIT license)
@@ -59,7 +59,7 @@ Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, A
 
 ## 4. Data Stores
 
-PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments` and `subscriptions`. Facility tags will be a text-array column on the room.
+PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions` and `rooms`. Facility tags are a text-array column on the room.
 
 ## 5. External Integrations / APIs
 
