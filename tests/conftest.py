@@ -214,6 +214,54 @@ def make_user(database) -> Callable[..., Any]:
 
 
 @pytest.fixture
+def make_property(database) -> Callable[..., Any]:
+    """Create and commit a `Property` owned by the given user."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Property
+
+    def factory(
+        owner,
+        name: str = "Kos Melati",
+        address: str = "Jl. Melati 5",
+        view_only: bool = False,
+        deleted: bool = False,
+    ) -> Property:
+        with Session(database, expire_on_commit=False) as session:
+            row = Property(
+                owner_id=owner.id,
+                name=name,
+                address=address,
+                view_only=view_only,
+                deleted_at=datetime.now(UTC) if deleted else None,
+            )
+            session.add(row)
+            session.commit()
+            return row
+
+    return factory
+
+
+@pytest.fixture
+def assign_manager(database) -> Callable[..., None]:
+    """Commit a `ManagerAssignment` of a manager to a property."""
+    from sqlalchemy.orm import Session
+
+    from app.models import ManagerAssignment
+
+    def assign(manager, property) -> None:
+        with Session(database) as session:
+            session.add(
+                ManagerAssignment(manager_id=manager.id, property_id=property.id)
+            )
+            session.commit()
+
+    return assign
+
+
+@pytest.fixture
 def sign_in(database) -> Callable[..., SignedIn]:
     """Start and commit a session for a user and return its tokens."""
     from sqlalchemy.orm import Session
