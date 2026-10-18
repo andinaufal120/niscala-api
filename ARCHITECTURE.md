@@ -11,9 +11,10 @@ niscala-api/
 │   ├── config.py      # Settings read from environment variables (.env supported)
 │   ├── errors.py      # ApiError and the handlers that give every error one JSON shape
 │   ├── db.py          # SQLAlchemy engine and the per-request session dependency
-│   ├── models/        # SQLAlchemy tables: user_accounts, sessions (declarative Base with a constraint naming convention)
+│   ├── models/        # SQLAlchemy tables: user_accounts, sessions, email_verification_codes (declarative Base with a constraint naming convention)
 │   ├── security.py    # bearerAuth scheme and the get_current_user dependency
-│   ├── services/      # Business rules per area; routers call them (sessions so far)
+│   ├── email.py       # EmailSender protocol; the console sender only logs the code
+│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification)
 │   ├── routers/       # One module per resource: parse the request, return a schema
 │   └── schemas/       # Pydantic request and response models; they define the OpenAPI contract
 ├── migrations/        # Alembic environment and revisions (alembic.ini at the root)
@@ -23,7 +24,7 @@ niscala-api/
 └── .github/workflows/ # Claude Code review
 ```
 
-*Not built yet:* the other services, `ai/` (Gemini classifier), `email.py` and `cli.py`.
+*Not built yet:* the other services, `ai/` (Gemini classifier) and `cli.py`.
 
 ## 2. High-Level System Diagram
 
@@ -54,7 +55,7 @@ Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, A
 
 ## 4. Data Stores
 
-PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts` and `sessions`. Facility tags will be a text-array column on the room.
+PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions` and `email_verification_codes`. Facility tags will be a text-array column on the room.
 
 ## 5. External Integrations / APIs
 
@@ -68,6 +69,7 @@ Fly.io for the API and Supabase for the database are planned; *not set up yet.* 
 ## 7. Security Considerations
 
 - Authentication: a bearer JWT access token (HS256, 15 minutes, signed with `JWT_SECRET`), declared as `bearerAuth` in the OpenAPI document. `get_current_user` validates it and also loads the session row, so an ended session stops working at once. The refresh token is opaque, stored only as a SHA-256 hash, and rotated on every use; presenting a rotated one ends the session. Sessions end after 90 days idle or 1 year after login.
+- Passwords are hashed with argon2id. Email verification codes are stored as SHA-256 hashes, valid 10 minutes and voided after 5 wrong attempts. Until the email is verified, `get_verified_user` answers `EMAIL_NOT_VERIFIED`; `get_current_user` is for the few endpoints open to unverified accounts.
 - Authorization: role and property access are enforced by the backend (`docs/SPEC.md` §4).
 - Transport: HTTPS only.
 

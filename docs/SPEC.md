@@ -203,7 +203,15 @@ Additional backend rules:
 - **Re-authentication.** Some changes need a recent re-authentication of the session. The caller proves they hold the account with their password or, for an account that signs in with Google, a fresh Google ID token of the linked account; the session is then marked re-authenticated for 5 minutes. Failed attempts count toward the same per-email lock as login failures. Changing a property's bank account is the only such change for now.
 - **Single-use links.** Invitation links last 7 days. Password-reset links last 30 minutes. Both can be used once. Creating a new invitation link or a new reset link invalidates the previous one.
 - **Email.** Emails are trimmed and compared case-insensitively. An email belongs to one account.
-- **Email verification** applies only to accounts with a local password (Owner sign-up, and Tenant or Manager activation with a password). Accounts created with Google count as verified. Verification uses a 6-digit code emailed to the account, valid 10 minutes, voided after 5 wrong attempts. A new code can be requested once every 60 seconds; requesting one voids the previous. Until the code is confirmed, the account can log in and use only the endpoints needed to verify the email, read its profile and log out; every other endpoint answers `EMAIL_NOT_VERIFIED`.
+- **Email verification** applies only to accounts with a local password (Owner sign-up, and Tenant or Manager activation with a password). Accounts created with Google count as verified. Verification uses a 6-digit code emailed to the account, valid 10 minutes, voided after 5 wrong attempts. A new code can be requested once every 60 seconds; requesting one voids the previous. Until the code is confirmed, the account can log in and use only the endpoints needed to verify the email, read its profile and log out; every other endpoint answers `EMAIL_NOT_VERIFIED` (403). Error codes of sign-up, login and verification:
+    - `EMAIL_ALREADY_REGISTERED` (409, field `email`): sign-up with an email that belongs to an account;
+    - `INVALID_CREDENTIALS` (401): login with an unknown email, a wrong password or an account without a password, all answered the same way;
+    - `VERIFICATION_CODE_INVALID` (422, field `code`): wrong code, counted toward the 5 attempts;
+    - `VERIFICATION_CODE_EXPIRED` (422, field `code`): no code, an expired code or one voided by 5 wrong attempts;
+    - `VERIFICATION_CODE_TOO_SOON` (429, with `Retry-After`): a new code requested within 60 seconds of the last one;
+    - `EMAIL_ALREADY_VERIFIED` (409): verification asked for an account that is already verified.
+
+  The code is emailed through an email sender; until a real mail service is chosen it only writes the code to the server log.
 - **Google.** The app obtains a Google ID token and sends it; the backend verifies signature, audience and expiry and uses the token's `sub` as the identity. One Google identity belongs to one account. Google login finds the account by that identity, never by email (§7, "never links accounts automatically"). A Google-only account that is asked for a password reset receives nothing. Unlinking Google is not offered.
 - **Login failures.** Failed local logins are counted per email address; after 5 failures the address is locked for 15 minutes and login answers `TOO_MANY_LOGIN_ATTEMPTS` with a `Retry-After` header, even for the right password. A successful login before the limit resets the count.
 - **Password length.** A new password is 8 to 128 characters; login accepts any non-empty password.
@@ -532,7 +540,7 @@ Endpoints:
 | `POST`   | `/me/reauthentication/password`                        | Re-authenticate the current session with the password.         | UC-12 |
 | `POST`   | `/me/reauthentication/google`                          | Re-authenticate the current session with a Google ID token.    | UC-12 |
 
-Every endpoint listed above except `GET /health` and the implemented ones is declared in the contract but not implemented yet; it responds `501 Not Implemented`. Implemented so far: `POST /auth/refresh`, `POST /auth/logout`, `GET /me`.
+Every endpoint listed above except `GET /health` and the implemented ones is declared in the contract but not implemented yet; it responds `501 Not Implemented`. Implemented so far: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/email-verification`, `POST /auth/email-verification/confirmation`, `GET /me`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -580,3 +588,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 18-10-2026 | U-9 narrowed: every error is a single object `{code, field, message}`; validation failures are `VALIDATION_FAILED` on the first invalid field. The code list and OpenAPI declaration stay open. | NKMA-19 |
 | 18-10-2026 | U-19 decided: facility tags are stored as a text-array column on the room. | NKMA-20 |
 | 18-10-2026 | Token handling implemented: failed refresh answers `REFRESH_TOKEN_INVALID`; the 1-year cap counts from login; the session is checked on every request so ending it takes effect at once. Refresh, logout and profile endpoints marked implemented in §9. | NKMA-30 |
+| 18-10-2026 | Owner sign-up, login and email verification implemented: error codes listed in §7, verification code emailed through a sender that only logs it for now. Endpoints marked implemented in §9. | NKMA-31 |
