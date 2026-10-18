@@ -353,7 +353,7 @@ def test_complaint_classification_state_is_string_enum_of_its_states(
 ) -> None:
     _assert_string_enum(
         openapi.component("ComplaintClassificationState"),
-        ["awaitingClassification", "notClassified"],
+        ["awaitingClassification", "notClassified", "classifying"],
     )
 
 
@@ -767,12 +767,16 @@ def test_complaint_category_list_items_is_required_array_of_strings(
 # Runtime: valid requests reach the not-implemented stub
 
 
+@pytest.fixture
+def tenant_headers(make_user, sign_in) -> dict[str, str]:
+    from app.schemas.auth import UserRole
+
+    return sign_in(make_user(role=UserRole.TENANT)).headers
+
+
 @pytest.mark.parametrize(
     ("method", "url", "body"),
     [
-        pytest.param("post", COMPLAINTS_URL, VALID_COMPLAINT_INPUT, id="create"),
-        pytest.param("get", COMPLAINTS_URL, None, id="list"),
-        pytest.param("get", COMPLAINT_URL, None, id="get"),
         pytest.param("get", PHOTO_URL, None, id="get_photo"),
         pytest.param(
             "post", STATUS_CHANGES_URL, VALID_STATUS_CHANGE_INPUT, id="change_status"
@@ -792,7 +796,6 @@ def test_complaint_category_list_items_is_required_array_of_strings(
         pytest.param(
             "put", CLASSIFICATION_URL, VALID_CLASSIFICATION_INPUT, id="classify"
         ),
-        pytest.param("get", CATEGORIES_URL, None, id="list_categories"),
     ],
 )
 def test_valid_complaint_request_responds_not_implemented(
@@ -813,22 +816,6 @@ def test_valid_complaint_photo_upload_responds_not_implemented(
     client, filename: str, content: bytes, content_type: str
 ) -> None:
     response = client.put(PHOTO_URL, files={"file": (filename, content, content_type)})
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize(
-    "description",
-    [
-        pytest.param("1234567890", id="exactly_ten_characters"),
-        pytest.param("   1234567890   ", id="ten_characters_after_trimming"),
-        pytest.param("a" * 2000, id="long_description"),
-        pytest.param("Pintu kamar rusak.\nEngsel lepas.", id="multiline"),
-    ],
-)
-def test_complaint_description_of_enough_characters_is_accepted(
-    client, description: str
-) -> None:
-    response = client.post(COMPLAINTS_URL, json={"description": description})
     assert response.status_code == 501
 
 
@@ -864,9 +851,11 @@ def test_every_complaint_urgency_is_accepted_in_a_classification(
     ],
 )
 def test_too_short_complaint_description_is_rejected_with_validation_error(
-    client, description: str
+    client, tenant_headers: dict[str, str], description: str
 ) -> None:
-    response = client.post(COMPLAINTS_URL, json={"description": description})
+    response = client.post(
+        COMPLAINTS_URL, json={"description": description}, headers=tenant_headers
+    )
     assert response.status_code == 422
 
 
@@ -880,9 +869,9 @@ def test_too_short_complaint_description_is_rejected_with_validation_error(
     ],
 )
 def test_invalid_complaint_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, tenant_headers: dict[str, str], body: dict[str, Any]
 ) -> None:
-    response = client.post(COMPLAINTS_URL, json=body)
+    response = client.post(COMPLAINTS_URL, json=body, headers=tenant_headers)
     assert response.status_code == 422
 
 
@@ -938,10 +927,23 @@ def test_invalid_classification_is_rejected_with_validation_error(
     assert response.status_code == 422
 
 
+def test_complaint_submission_without_body_is_rejected_with_validation_error(
+    client, tenant_headers: dict[str, str]
+) -> None:
+    response = client.post(COMPLAINTS_URL, headers=tenant_headers)
+    assert response.status_code == 422
+
+
+def test_non_uuid_complaint_id_in_detail_is_rejected_with_validation_error(
+    client, tenant_headers: dict[str, str]
+) -> None:
+    response = client.get(f"/complaints/{NOT_A_UUID}", headers=tenant_headers)
+    assert response.status_code == 422
+
+
 @pytest.mark.parametrize(
     ("method", "url"),
     [
-        pytest.param("post", COMPLAINTS_URL, id="create_complaint"),
         pytest.param("post", STATUS_CHANGES_URL, id="change_complaint_status"),
         pytest.param("put", CLASSIFICATION_URL, id="classify_complaint"),
     ],
@@ -987,7 +989,6 @@ def test_non_uuid_complaint_id_in_photo_download_is_rejected_with_validation_err
 @pytest.mark.parametrize(
     ("method", "url", "body"),
     [
-        pytest.param("get", f"/complaints/{NOT_A_UUID}", None, id="get_complaint"),
         pytest.param(
             "post",
             f"/complaints/{NOT_A_UUID}/status-changes",
