@@ -1,6 +1,7 @@
 """Adding, listing, editing and deleting rooms, and facility suggestions."""
 
 import re
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -10,13 +11,15 @@ from sqlalchemy.orm import Session
 
 from app.access import accessible_properties, get_accessible_property
 from app.errors import ApiError
-from app.models import Property, UserAccount
+from app.models import Lease, Property, Tenant, UserAccount
 from app.models import Room as RoomRow
 from app.schemas.rooms import (
     FacilitySuggestionList,
     Occupancy,
     Room,
     RoomInput,
+    RoomLease,
+    RoomLeaseSummary,
     RoomList,
     RoomSummary,
 )
@@ -82,31 +85,63 @@ def _float(value: Decimal | None) -> float | None:
     return None if value is None else float(value)
 
 
-def _detail(row: RoomRow, parent: Property) -> Room:
+def _active_leases(
+    db: Session, room_ids: Iterable[UUID]
+) -> dict[UUID, tuple[Lease, str, str]]:
+    """Map each room id to its active lease, tenant name and tenant phone."""
+    rows = db.execute(
+        select(Lease, UserAccount.name, Tenant.phone)
+        .join(Tenant, Tenant.user_id == Lease.tenant_id)
+        .join(UserAccount, UserAccount.id == Tenant.user_id)
+        .where(Lease.room_id.in_(list(room_ids)), Lease.ended_at.is_(None))
+    )
+    return {lease.room_id: (lease, name, phone) for lease, name, phone in rows}
+
+
+def _detail(
+    row: RoomRow, parent: Property, active: tuple[Lease, str, str] | None
+) -> Room:
+    lease = None
+    if active is not None:
+        found, name, phone = active
+        lease = RoomLease(
+            tenant_id=found.tenant_id,
+            tenant_name=name,
+            tenant_phone=phone,
+            start_date=found.start_date,
+            end_date=found.end_date,
+            rent=found.rent,
+        )
     return Room(
         id=row.id,
         property_id=row.property_id,
         number=row.number,
         base_rate=row.base_rate,
-        occupancy=Occupancy.VACANT,
+        occupancy=Occupancy.VACANT if active is None else Occupancy.OCCUPIED,
         length_m=_float(row.length_m),
         width_m=_float(row.width_m),
         facilities=row.facilities,
-        lease=None,
+        lease=lease,
         editable=_editable(row, parent),
     )
 
 
-def _summary(row: RoomRow, parent: Property) -> RoomSummary:
+def _summary(
+    row: RoomRow, parent: Property, active: tuple[Lease, str, str] | None
+) -> RoomSummary:
+    lease = None
+    if active is not None:
+        found, name, _ = active
+        lease = RoomLeaseSummary(tenant_name=name, end_date=found.end_date)
     return RoomSummary(
         id=row.id,
         number=row.number,
         base_rate=row.base_rate,
-        occupancy=Occupancy.VACANT,
+        occupancy=Occupancy.VACANT if active is None else Occupancy.OCCUPIED,
         length_m=_float(row.length_m),
         width_m=_float(row.width_m),
         facilities=row.facilities,
-        lease=None,
+        lease=lease,
         editable=_editable(row, parent),
     )
 
@@ -169,7 +204,7 @@ def create_room(
     row = RoomRow(property_id=parent.id, **vars(fields))
     db.add(row)
     db.flush()
-    return _detail(row, parent)
+    return _detail(row, parent, None)
 
 
 def list_rooms(db: Session, user: UserAccount, property_id: UUID) -> RoomList:
@@ -180,8 +215,12 @@ def list_rooms(db: Session, user: UserAccount, property_id: UUID) -> RoomList:
             RoomRow.property_id == parent.id, RoomRow.deleted_at.is_(None)
         )
     ).all()
+    active = _active_leases(db, [row.id for row in rows])
     return RoomList(
-        items=[_summary(row, parent) for row in sorted(rows, key=_number_order)]
+        items=[
+            _summary(row, parent, active.get(row.id))
+            for row in sorted(rows, key=_number_order)
+        ]
     )
 
 
@@ -204,7 +243,8 @@ def list_facility_suggestions(
 
 def get_room(db: Session, user: UserAccount, room_id: UUID) -> Room:
     """Return a live room of a property the user may access."""
-    return _detail(*_accessible_room(db, user, room_id))
+    row, parent = _accessible_room(db, user, room_id)
+    return _detail(row, parent, _active_leases(db, [row.id]).get(row.id))
 
 
 def update_room(db: Session, user: UserAccount, room_id: UUID, data: RoomInput) -> Room:
@@ -225,10 +265,16 @@ def update_room(db: Session, user: UserAccount, room_id: UUID, data: RoomInput) 
     for name, value in vars(fields).items():
         setattr(row, name, value)
     db.flush()
-    return _detail(row, parent)
+    return _detail(row, parent, _active_leases(db, [row.id]).get(row.id))
 
 
 def delete_room(db: Session, user: UserAccount, room_id: UUID) -> None:
-    """Soft-delete a room, even a view-only one."""
+    """Soft-delete a room, even a view-only one.
+
+    Raises 404 ROOM_NOT_FOUND without access, then 409 ROOM_HAS_ACTIVE_LEASE
+    while the room has an active lease.
+    """
     row, _ = _accessible_room(db, user, room_id)
+    if row.id in _active_leases(db, [row.id]):
+        raise ApiError(409, "ROOM_HAS_ACTIVE_LEASE")
     row.deleted_at = datetime.now(UTC)

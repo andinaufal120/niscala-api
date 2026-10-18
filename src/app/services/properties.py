@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.access import accessible_properties, get_accessible_property
 from app.errors import ApiError
-from app.models import ManagerAssignment, Property, Room, UserAccount
+from app.models import Lease, ManagerAssignment, Property, Room, UserAccount
 from app.schemas.properties import (
     BankAccount,
     ManagerRef,
@@ -55,10 +55,24 @@ def _room_counts(db: Session, property_ids: Iterable[UUID]) -> dict[UUID, int]:
     return {property_id: count for property_id, count in rows}
 
 
+def _occupied_counts(db: Session, property_ids: Iterable[UUID]) -> dict[UUID, int]:
+    """Count each property's live rooms that have an active lease."""
+    rows = db.execute(
+        select(Room.property_id, func.count())
+        .join(Lease, Lease.room_id == Room.id)
+        .where(
+            Room.property_id.in_(list(property_ids)),
+            Room.deleted_at.is_(None),
+            Lease.ended_at.is_(None),
+        )
+        .group_by(Room.property_id)
+    )
+    return {property_id: count for property_id, count in rows}
+
+
 def _detail(
-    row: Property, managers: list[ManagerRef], room_count: int
+    row: Property, managers: list[ManagerRef], room_count: int, occupied: int
 ) -> PropertyDetail:
-    occupied = 0
     return PropertyDetail(
         id=row.id,
         name=row.name,
@@ -77,6 +91,7 @@ def _present(db: Session, row: Property) -> PropertyDetail:
         row,
         _managers_by_property(db, [row.id])[row.id],
         _room_counts(db, [row.id]).get(row.id, 0),
+        _occupied_counts(db, [row.id]).get(row.id, 0),
     )
 
 
@@ -125,7 +140,7 @@ def create_property(
     _set_fields(row, data)
     db.add(row)
     db.flush()
-    return _detail(row, [], 0)
+    return _detail(row, [], 0, 0)
 
 
 def list_properties(db: Session, user: UserAccount) -> list[PropertySummary]:
@@ -133,13 +148,14 @@ def list_properties(db: Session, user: UserAccount) -> list[PropertySummary]:
     rows = db.scalars(accessible_properties(user)).all()
     managers = _managers_by_property(db, [row.id for row in rows])
     room_counts = _room_counts(db, [row.id for row in rows])
+    occupied_counts = _occupied_counts(db, [row.id for row in rows])
     return [
         PropertySummary(
             id=row.id,
             name=row.name,
             address=row.address,
             room_count=room_counts.get(row.id, 0),
-            occupied_room_count=0,
+            occupied_room_count=occupied_counts.get(row.id, 0),
             managers=managers[row.id],
             editable=not row.view_only,
         )
@@ -178,8 +194,14 @@ def update_property(
 
 
 def delete_property(db: Session, owner: UserAccount, property_id: UUID) -> None:
-    """Soft-delete a property and its rooms, and remove its manager assignments."""
+    """Soft-delete a property and its rooms, and remove its manager assignments.
+
+    Raises 404 PROPERTY_NOT_FOUND without access, then 409
+    PROPERTY_HAS_ACTIVE_LEASE while any live room has an active lease.
+    """
     row = get_accessible_property(db, owner, property_id)
+    if _occupied_counts(db, [row.id]).get(row.id, 0) > 0:
+        raise ApiError(409, "PROPERTY_HAS_ACTIVE_LEASE")
     now = datetime.now(UTC)
     row.deleted_at = now
     db.execute(
