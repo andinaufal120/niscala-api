@@ -18,9 +18,10 @@ Blocks between `<!-- shared:begin -->` and `<!-- shared:end -->` are identical i
 Niscala ("Kelola Kost Tanpa Ribet") helps boarding-house (kos) owners and managers handle properties, rooms, tenants, rent payments and maintenance complaints in one Android app.
 
 - Rent is paid **outside** the app (cash or bank transfer). The app records, verifies and tracks payment status. It never moves rent money.
-- Two AI features set the product apart. Both are available only when the property owner has an active subscription:
+- Two AI features set the product apart. Both are available only when the property owner has an active paid subscription (plan Basic or Pro):
     1. classification of maintenance complaints (category, urgency, suggested action);
     2. a natural-language summary of each tenant's payment pattern.
+- Owners choose a plan: Gratis (1 property, 15 rooms, no AI), Basic (3 properties, unlimited rooms, AI) or Pro (unlimited properties, everything in Basic). Subscriptions are bought and renewed through Google Play Billing in the app; the backend verifies the purchase with Google.
 - An AI failure never blocks saving data.
 - Out of scope for v1.0: in-app rent payment, OAuth providers other than Google, iOS and web apps.
 <!-- shared:end -->
@@ -72,7 +73,9 @@ Markdown docs use the format *Original term (English term)*. Code uses the Engli
 | Masa tenggang (Grace period)                        | `gracePeriodDays`         | Days after the bill date before a payment is late. Default: 0.                     |
 | Jatuh tempo (Due date)                              | `dueDate`                 | Bill date + grace period. Computed by the backend.                                 |
 | Ringkasan pola pembayaran (Payment-pattern summary) | `PaymentPatternSummary`   | AI-written sentence built from rule-computed payment facts.                        |
-| Langganan (Subscription)                            | `Subscription`            | The Owner's paid plan that unlocks AI features.                                    |
+| Langganan (Subscription)                            | `Subscription`            | The Owner's paid plan that unlocks AI features and raises the property limit.     |
+| Paket (Subscription plan)                           | `SubscriptionPlan`        | Gratis (`free`), Basic (`basic`) or Pro (`pro`): property and room limits, AI availability and prices. |
+| Pesanan langganan (Subscription order)              | `SubscriptionOrder`       | One attempt to buy a paid plan through Google Play; tracks the purchase until it succeeds, fails or expires. |
 | Sesi (Session)                                      | `Session`                 | One logged-in device of a user.                                                    |
 | Notifikasi (Notification)                           | `Notification`            | In-app message about an event: bill, payment, complaint or account. Kept even when its push is off. |
 | Pengaturan notifikasi (Notification settings)       | `NotificationSettings`    | Per-user push on/off switch per notification category.                             |
@@ -129,10 +132,15 @@ The API checks every request against this table. `A` means the check includes th
 | Manager account                  | Belum Diaktifkan (Not activated, `notActivated`) · Aktif (Active, `active`)                                                                                                                                           |
 | User account (Admin view)        | Aktif (Active, `active`) · Nonaktif (Suspended, `inactive`) · Dihapus (Deleted, `deleted`)                                                                                                                            |
 | Subscription order / transaction | Menunggu Pembayaran (Awaiting payment, `awaitingPayment`) · Berhasil (Succeeded, `succeeded`) · Gagal (Failed, `failed`) · Kedaluwarsa (Expired, `expired`)                                                           |
+| Subscription                     | Gratis (Free, `free`) · Aktif (Active, `active`) |
+| Subscription plan                | Gratis (Free, `free`) · Basic (Basic, `basic`) · Pro (Pro, `pro`) |
+| Subscription billing period      | Bulanan (Monthly, `monthly`) · Tahunan (Yearly, `yearly`) |
 
 Complaint status moves forward one step at a time: *Baru* → *Diproses* → *Selesai*. Nothing changes after *Selesai*.
 
 Classification state is separate from status. *Menunggu Klasifikasi* = AI was attempted and failed or timed out. *Belum Diklasifikasi* = the Owner had no active subscription when the complaint was saved, so AI was skipped. A classified complaint has neither.
+
+Order status maps to Google Play like this: the order starts as *Menunggu Pembayaran*; a verified purchase in state purchased makes it *Berhasil*; a purchase Google reports as pending (for example pay at a convenience store) keeps it *Menunggu Pembayaran*; a purchase Google reports as failed or canceled makes it *Gagal*; an order whose purchase never completes within its time limit becomes *Kedaluwarsa*. Subscription *Gratis* means no paid period is running; *Aktif* means a paid period is running.
 
 A *Nonaktif* account is suspended: it cannot log in and can be reactivated. A *Dihapus* account is soft-deleted, hidden from the default account list, and can never be reactivated. *Dihapus* is shown, never set, through the edit endpoint.
 
@@ -150,10 +158,11 @@ These apply to every use case below. Use cases do not repeat them.
 3. **Conflict:** a write based on data another user has changed since it was read is rejected with a conflict error and not applied (detection: U-15).
 4. **Failure is atomic:** a request that fails saves nothing, so the user can retry. The only partial outcomes are the ones a use case states (an invitation, a notification or an AI call failing after the main save).
 5. **Empty lists** are a successful response with no items, not an error.
-6. **Subscription gating:** the API decides whether the Owner of the property has an active subscription. Without one, gated content (AI classification, payment-pattern summary) is withheld, and the response says so. The rest of the response is unaffected.
+6. **Subscription gating:** the API decides whether the Owner of the property has an active paid subscription (plan Basic or Pro, paid period running). Without one, gated content (AI classification, payment-pattern summary) is withheld, and the response says so. The rest of the response is unaffected.
 7. **AI failure** (error or timeout) never blocks or rolls back saving data (policy: U-8).
 8. **Soft delete** keeps history. Soft-deleted records are hidden from normal lists but kept for the history the use cases name.
 9. **Transport:** HTTPS only (NFR-08).
+10. **Plan limits:** the Owner's plan sets the maximum number of properties and the maximum number of rooms per property (§8.3, UC-31). Adding past a limit is rejected with an error code (UC-10, UC-14). After a downgrade takes effect, the properties and rooms the Owner did not keep are **view-only**: their data, leases and tenants cannot be changed (error codes `PROPERTY_READ_ONLY`, `ROOM_READ_ONLY`), but bills are still generated and payments and complaints are still processed. Responses carry `editable` on properties and rooms so the app does not compute this.
 
 ## 7. Account access
 
@@ -277,12 +286,13 @@ If notifying the Tenant fails, the status change still stands.
 **UC-09 Change payment status manually** (FR-08, FR-11) · Target status *Belum Bayar*, *Lunas* or *Ditolak*, with a **required** reason. Rejected with a field error if the target equals the current status or the reason is empty. When the target is *Lunas*, the method (*Tunai* or *Transfer*) and the date received are also required, with the same date rule as UC-08. For any other target they MUST be absent; otherwise a field error.
 
 **UC-10 Add property** (FR-12, FR-21) · Owner only. Name and address required. The name MUST be unique within the Owner's account; a duplicate gets a field error. Optional bank account for rent transfers: bank name, account number, account holder name. If any bank-account field is given, all three are required.
+The Owner's plan limits the number of properties (Gratis 1, Basic 3, Pro unlimited). Adding a property when the Owner already has that many (view-only ones included, deleted ones excluded) is rejected with `PROPERTY_LIMIT_REACHED`.
 
 **UC-11 View properties** (FR-12, FR-21) · Accessible properties, each with name, address, room count, occupied room count and assigned managers. Detail adds the vacant room count and the bank account, if set.
 
-**UC-12 Edit property** (FR-12) · Owner only. Edits name, address and bank account.
+**UC-12 Edit property** (FR-12) · Owner only. Edits name, address and bank account. Rejected with `PROPERTY_READ_ONLY` while the property is view-only (§6 rule 10).
 
-**UC-13 Delete property** (FR-12) · Owner only. Rejected if the property has an active lease. On success the property's rooms and manager assignments are removed too.
+**UC-13 Delete property** (FR-12) · Owner only. Rejected if the property has an active lease. On success the property's rooms and manager assignments are removed too. A view-only property can still be deleted, which frees a place under the plan limit.
 
 **UC-14 Add room** (FR-12) · Fields:
 - room number: required, MUST be unique within the property;
@@ -290,28 +300,31 @@ If notifying the Tenant fails, the status change still stands.
 - `lengthM` and `widthM`: optional, in metres, each 0 < x ≤ 20 with at most 2 decimals. Both or neither, otherwise a field error. Area is not stored;
 - facilities: free-form tags. On save each tag is trimmed, lowercased and has repeated spaces collapsed; duplicates are dropped. At most 30 characters per tag and 15 tags per room (storage: U-19).
 
+The Owner's plan limits the number of rooms per property (Gratis 15, Basic and Pro unlimited). Adding a room when the property already has that many (view-only ones included, deleted ones excluded) is rejected with `ROOM_LIMIT_REACHED`. Adding to a view-only property is rejected with `PROPERTY_READ_ONLY`.
+
 A suggestions endpoint returns the distinct facility tags already used on rooms of the same Owner.
 
 **UC-15 View rooms** (FR-12) · Each room with number, base rate, occupancy, dimensions and facilities, plus, if occupied, the Tenant's name and the lease end date. Detail adds the Tenant's phone number, the lease start date and that lease's rent.
 
-**UC-16 Edit room** (FR-12) · Same fields and rules as UC-14. Changing the base rate never changes the rent of existing leases.
+**UC-16 Edit room** (FR-12) · Same fields and rules as UC-14. Changing the base rate never changes the rent of existing leases. Rejected with `ROOM_READ_ONLY` (or `PROPERTY_READ_ONLY` for a view-only property) while the room is view-only.
 
-**UC-17 Delete room** (FR-12) · Rejected if the room has an active lease.
+**UC-17 Delete room** (FR-12) · Rejected if the room has an active lease. A view-only room can still be deleted, which frees a place under the plan limit.
 
 **UC-18 Add tenant** (FR-13) · Required: a room that is *Kosong*, name, phone number. Optional: occupation, emergency contacts, lease dates, billing cycle (default monthly from the lease start date), grace period (default 0), rent.
 - Phone number: MUST be an Indonesian mobile number: after removing spaces and dashes, `08` or `628` followed by 8 to 11 digits. Stored and returned as digits starting with `08`.
 - Emergency contacts: 2 to 4, each with name, relationship and phone (same phone rule). Management may leave them empty while the account is *Belum Diaktifkan*; the Tenant then completes them during activation, which is rejected until there are 2 to 4 (§7). Exactly 1 contact is rejected with a field error.
 - Rent: per billing cycle (the amount of one bill), greater than 0. If omitted on a monthly lease, it is set to the room's base rate; other cycles require it.
 - Email is not set here; the Tenant fills it in during activation.
+- Rejected with `ROOM_READ_ONLY` (or `PROPERTY_READ_ONLY` for a view-only property) while the room is view-only.
 
 On save the room becomes *Terisi* and an invitation link is created and returned. If link creation fails, the Tenant is still saved and the link can be regenerated (UC-20).
 
 **UC-19 View tenants** (FR-13) · Each Tenant with room number, name, account status, billing cycle and lease end date, plus the invitation expiry while the account is *Belum Diaktifkan*. Detail adds phone, email (once set), occupation, emergency contacts, the lease (dates, rent, billing cycle, grace period, next bill date) and, while the account is *Belum Diaktifkan*, the invitation: when it was created, when it expires, whether it has expired and, if not, its link.
 
-**UC-20 Edit tenant** (FR-13) · Editable: name, phone, occupation, emergency contacts, lease dates, rent, billing cycle, grace period; the same rules as UC-18 apply, and an *Aktif* Tenant's emergency contacts cannot be emptied. The room cannot be changed here. Rejects a lease end date before the start date. A rent or billing-cycle change applies **from the next bill onward**.
+**UC-20 Edit tenant** (FR-13) · Editable: name, phone, occupation, emergency contacts, lease dates, rent, billing cycle, grace period; the same rules as UC-18 apply, and an *Aktif* Tenant's emergency contacts cannot be emptied. The room cannot be changed here. Rejects a lease end date before the start date. A rent or billing-cycle change applies **from the next bill onward**. Rejected with `ROOM_READ_ONLY` (or `PROPERTY_READ_ONLY` for a view-only property) while the room is view-only.
 Regenerate invitation link, for an unused or expired invitation (links last 7 days, §7): creates a new link and invalidates the old one. If regeneration fails, the old link stays valid. While an invitation is unused and not expired, its link can be shown again, so the backend keeps it in a form it can return (encrypted, not only hashed).
 
-**UC-21 Delete tenant** (FR-13) · Soft delete: the lease ends, account access is revoked and the room becomes *Kosong*. Payment and complaint history is kept.
+**UC-21 Delete tenant** (FR-13) · Soft delete: the lease ends, account access is revoked and the room becomes *Kosong*. Payment and complaint history is kept. Rejected with `ROOM_READ_ONLY` (or `PROPERTY_READ_ONLY` for a view-only property) while the room is view-only.
 
 **UC-22 Occupancy dashboard** (FR-14) · Per accessible property: room count, occupied count, vacant count, occupancy percentage and each room's number and occupancy, plus a summary across all accessible properties. All figures are computed here; the app computes none of them.
 - A room is *Terisi* when it has an active lease, otherwise *Kosong* (§5).
@@ -357,14 +370,20 @@ Regenerate invitation link: only for a Manager that is not yet *Aktif*; it creat
 
 **UC-30 Delete manager** (FR-22) · Owner only. Revokes this Owner's property assignments for the Manager and keeps the Manager's account. When no assignments from any Owner remain, the account is soft-deleted and its sessions end. The Manager's action history is kept.
 
-**UC-31 Choose subscription plan** (FR-23, FR-25) · Returns the current subscription status and the available plans with features and price (plans and prices: U-11). With an active plan, also its end date. Confirming a plan creates an order *Menunggu Pembayaran*.
+**UC-31 Choose subscription plan** (FR-23, FR-25) · Owner only. Returns the plans and the current subscription.
+- Plans (server data, so prices and limits can change without an app release): Gratis (1 property, 15 rooms per property, no AI features, free), Basic (3 properties, unlimited rooms, AI features, Rp49.000 per month or Rp490.000 per year), Pro (unlimited properties, unlimited rooms, AI features, Rp129.000 per month or Rp1.290.000 per year). Each paid price carries its Google Play product id and base plan id.
+- Current subscription: plan, status (*Gratis* or *Aktif*), billing period and end date while *Aktif*, whether it renews automatically, the number of properties in use, the open order *Menunggu Pembayaran* if any, and the scheduled downgrade if any.
+- **Upgrade or first purchase:** confirming a paid plan and billing period creates an order *Menunggu Pembayaran*. Only a plan higher than the current one is accepted (`SUBSCRIPTION_NOT_AN_UPGRADE` otherwise). A new order expires any earlier open order of the Owner.
+- **Downgrade** (to Basic from Pro, or to Gratis): takes effect at the end of the paid period; until then the current plan stays fully active. The renewal itself is stopped or changed in Google Play. Before that, the Owner confirms which properties stay editable: exactly the target plan's limit, or all of them if the Owner has fewer (`KEPT_PROPERTIES_INVALID`). For Gratis the Owner also confirms which rooms of the kept property stay editable: exactly 15, or all if it has fewer (`KEPT_ROOMS_INVALID`). The confirmation is stored as the scheduled downgrade and can be replaced or cancelled. At the end of the period, everything not kept becomes view-only (§6 rule 10). If the Owner made no confirmation, the backend keeps the earliest-created properties and, for Gratis, the occupied rooms first, then the lowest room numbers. Upgrading again makes everything editable again.
 
-**UC-32 Pay for subscription** (FR-24, FR-25, FR-27) · Starts payment through the gateway (provider: TBD-3).
-- *Berhasil* → the subscription is active;
-- *Gagal* or *Kedaluwarsa* → the Owner may pay again;
-- still pending → stays *Menunggu Pembayaran* and can be re-checked.
-
-If the gateway is unreachable, return an error and create no transaction.
+**UC-32 Pay for subscription** (FR-24, FR-25, FR-27) · Owner only. Payment runs through Google Play Billing. The app performs the purchase on the device and sends the purchase token for the order; the backend never charges money itself.
+- The backend verifies the token with the Google Play Developer API, checks that the purchased product matches the order and that the token is not already used by another Owner, acknowledges the purchase, and sets the subscription from Google's data (plan, billing period, end date, renewal).
+- *Berhasil* (purchase completed) → the order is *Berhasil* and the subscription is *Aktif* at once;
+- pending at Google (for example pay at a convenience store) → stays *Menunggu Pembayaran* and can be re-checked by sending the token again; verification is idempotent;
+- *Gagal* (Google reports the purchase failed or canceled) or *Kedaluwarsa* (the purchase never completed in time) → the Owner may pay again with a new order.
+- A purchase cancelled by the Owner in the Google Play sheet never reaches the backend; its order stays *Menunggu Pembayaran* until it expires or a new order replaces it.
+- If Google Play is unreachable, return an error (`GOOGLE_PLAY_UNREACHABLE`); the order is unchanged and the token can be sent again.
+- Renewal, cancellation, refunds and plan changes happen in Google Play. The backend reflects them from Google's data (how and when: TBD-3).
 
 ### 8.4 Admin
 
@@ -502,10 +521,19 @@ Endpoints:
 | `GET`    | `/user-accounts/{userAccountId}`                | User account detail. Admin only.                          | UC-33                                                     |
 | `PUT`    | `/user-accounts/{userAccountId}`                | Edit name, email and status. A new email stays pending until verified. Admin only. | UC-34                            |
 | `DELETE` | `/user-accounts/{userAccountId}`                | Soft-delete an account. Admin only.                       | UC-35                                                     |
+| `GET`    | `/subscription-plans`                                  | The available plans with limits, AI availability and prices.   | UC-31 |
+| `GET`    | `/subscription`                                        | The Owner's current subscription.                              | UC-31 |
+| `POST`   | `/subscription/orders`                                 | Create an order for a paid plan and billing period.            | UC-31 |
+| `GET`    | `/subscription/orders/{orderId}`                       | An order with its status.                                      | UC-32 |
+| `POST`   | `/subscription/orders/{orderId}/purchase-verification` | Verify the Google Play purchase token of an order.             | UC-32 |
+| `PUT`    | `/subscription/scheduled-downgrade`                    | Confirm a downgrade and the properties and rooms that stay editable. | UC-31 |
+| `DELETE` | `/subscription/scheduled-downgrade`                    | Cancel the scheduled downgrade.                                | UC-31 |
 
 Every endpoint listed above except `GET /health` is declared in the contract but not implemented yet; it responds `501 Not Implemented`.
 
 The response shape of `/health` is undecided (U-1).
+
+Property and room responses carry `editable` (false while view-only after a downgrade, §6 rule 10).
 
 ## 10. Undecided — do not implement by assumption
 
@@ -513,13 +541,12 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 
 | ID    | Item                                                                                                                             | Affects                   |
 |-------|----------------------------------------------------------------------------------------------------------------------------------|---------------------------|
-| TBD-3 | Payment gateway provider and its integration.                                                                                    | UC-32                     |
+| TBD-3 | Google Play server-side integration: how the backend learns of renewals, cancellations, expiry and refunds (real-time developer notifications endpoint, its authentication, scheduled reconciliation), service account, test environment. | UC-31, UC-32 |
 | U-1   | `/health` response shape.                                                                                                        | §9, NKMA-22               |
 | U-4   | Invitation and password-reset link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01, NFR-11 |
 | U-6   | Bill generation (FR-31): when bills are created, how the amount is set, and proration.                                           | UC-04, UC-08, UC-25       |
 | U-8   | AI calls: timeout, retries, fallback, and whether classification runs within the save request or after it.                       | UC-02, UC-26              |
 | U-9   | Error response shape and the list of error codes.                                                                                | §6, §7, all endpoints     |
-| U-11  | Subscription plans, features and prices.                                                                                         | UC-31                     |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 | U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
 | U-19  | Facility tag storage: `TEXT[]` column vs. join tables (proposed: `TEXT[]`).                                                      | UC-14, UC-16              |
@@ -545,3 +572,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | UC-22 extended: room count, occupancy percentage rule (whole number, halves up, 0 without rooms, summary from summed counts), ordering and empty result. Occupancy-dashboard endpoint added to §9. | NKMA-7 |
 | 17-10-2026 | U-12 decided: due-date reminder 3 days before the due date at 07:00 Asia/Jakarta. UC-06 extended to Owner and Manager, with notification types, recipients and creation rules; notification settings (push on/off per category, urgency scope for new complaints) and push token added under UC-06. Notification endpoints added to §9. Push provider decided: Firebase Cloud Messaging. U-23 added for the remaining push delivery questions. | NKMA-63 |
 | 17-10-2026 | Admin account management (UC-33 to UC-35) defined: *Nonaktif* is a reversible suspension, *Dihapus* status added to the Admin account vocabulary, deleted accounts hidden from the default list, delete also rejected for a Tenant with an active lease, an Admin cannot deactivate or delete their own account, an Admin email change stays pending until the new email is verified (link single use, 7 days). `UserAccount` added to the glossary. User-account endpoints added to §9. | NKMA-18 |
+| 17-10-2026 | Subscription decided: plans Gratis, Basic and Pro with limits and prices; billing through Google Play Billing with server-side purchase verification; downgrades at period end with kept properties and rooms; property and room limits added to UC-10 and UC-14; order statuses mapped to Google Play. TBD-3 narrowed, U-11 decided. Subscription endpoints added to §9. | NKMA-17 |

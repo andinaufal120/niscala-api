@@ -46,6 +46,7 @@ class Property(ApiModel):
     occupied_room_count: int
     vacant_room_count: int
     managers: list[ManagerRef]
+    editable: bool = Field(description="False while the property is view-only.")
 
 
 class PropertySummary(ApiModel):
@@ -57,6 +58,7 @@ class PropertySummary(ApiModel):
     room_count: int
     occupied_room_count: int
     managers: list[ManagerRef]
+    editable: bool = Field(description="False while the property is view-only.")
 
 
 class PropertyList(ApiModel):
