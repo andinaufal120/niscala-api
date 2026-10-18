@@ -58,3 +58,4 @@ class UserSession(Base):
         DateTime(timezone=True), default=_now
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reauthenticated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
