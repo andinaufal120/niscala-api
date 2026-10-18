@@ -4,6 +4,17 @@ from functools import cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+COMPLAINT_CATEGORIES = (
+    "Listrik",
+    "Air",
+    "Bangunan",
+    "Perabot",
+    "Kebersihan",
+    "Keamanan",
+    "Internet",
+    "Lainnya",
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", env_file=".env")

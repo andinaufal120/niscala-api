@@ -303,11 +303,11 @@ def make_tenant(database) -> Callable[..., StoredTenant]:
     """Commit a tenant account with an active lease, contacts and an invitation."""
     from datetime import UTC, date, datetime, timedelta
 
-    from app.services.invitations import create_invitation
     from sqlalchemy.orm import Session
 
     from app.models import EmergencyContact, Lease, Tenant, UserAccount
     from app.schemas.auth import UserRole
+    from app.services.invitations import create_invitation
 
     def factory(
         room,
@@ -501,6 +501,156 @@ def register_owner(client, database, sent_emails) -> Callable[..., Any]:
         return client.post("/auth/register", json={**body, **overrides})
 
     return register
+
+
+_tenant_numbers = count(1)
+
+
+@pytest.fixture
+def make_verified_tenant(database, make_tenant) -> Callable[..., StoredTenant]:
+    """Commit an activated tenant with a verified email who can sign in."""
+    from sqlalchemy.orm import Session
+
+    from app.models import UserAccount
+
+    def factory(room, **options: Any) -> StoredTenant:
+        options.setdefault("email", f"tenant{next(_tenant_numbers)}@example.com")
+        options.setdefault("invitation", False)
+        stored = make_tenant(room, activated=True, **options)
+        with Session(database) as db:
+            db.get(UserAccount, stored.id).email_verified = True
+            db.commit()
+        return stored
+
+    return factory
+
+
+@pytest.fixture
+def subscribe_owner(database) -> Callable[..., None]:
+    """Give an owner a running paid plan."""
+    from sqlalchemy.orm import Session
+
+    from app.schemas.subscriptions import PaidPlanCode
+    from app.services.subscriptions import grant_subscription
+
+    def subscribe(owner, plan: str = "basic", days: int = 30) -> None:
+        with Session(database) as db:
+            grant_subscription(db, owner, PaidPlanCode(plan), days)
+            db.commit()
+
+    return subscribe
+
+
+@pytest.fixture
+def expire_subscription(database) -> Callable[..., None]:
+    """End the paid period of an owner who has a subscription row."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Subscription
+
+    def expire(owner) -> None:
+        with Session(database) as db:
+            db.get(Subscription, owner.id).ends_at = datetime.now(UTC) - timedelta(
+                days=1
+            )
+            db.commit()
+
+    return expire
+
+
+@pytest.fixture
+def make_complaint(database) -> Callable[..., Any]:
+    """Commit a `Complaint` with its status history.
+
+    `ai` is an optional `(category, urgency, suggested_action)` tuple. `changes`
+    is a list of `(status, handling_note, changed_at)`; by default one `new`
+    entry at the creation time.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Complaint, ComplaintStatusChange
+
+    def factory(
+        tenant,
+        room,
+        *,
+        description: str = "The tap in the bathroom leaks badly.",
+        status: str = "new",
+        classification_state: str | None = None,
+        ai: tuple[str, str, str] | None = None,
+        created_at: datetime | None = None,
+        changes: list[tuple[str, str | None, datetime]] | None = None,
+    ) -> Complaint:
+        created = created_at or datetime.now(UTC)
+        category, urgency, action = ai or (None, None, None)
+        with Session(database, expire_on_commit=False) as db:
+            row = Complaint(
+                tenant_id=tenant.id,
+                room_id=room.id,
+                description=description,
+                status=status,
+                classification_state=classification_state,
+                ai_category=category,
+                ai_urgency=urgency,
+                ai_suggested_action=action,
+                created_at=created,
+            )
+            db.add(row)
+            db.flush()
+            for change_status, note, changed_at in changes or [("new", None, created)]:
+                db.add(
+                    ComplaintStatusChange(
+                        complaint_id=row.id,
+                        status=change_status,
+                        handling_note=note,
+                        changed_at=changed_at,
+                    )
+                )
+            db.commit()
+            return row
+
+    return factory
+
+
+class FakeClassifier:
+    """A complaint classifier that records calls and can return, raise or stall."""
+
+    def __init__(self) -> None:
+        from app.schemas.complaints import AiComplaintClassification, ComplaintUrgency
+
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+        self.result: Any = AiComplaintClassification(
+            category="Listrik",
+            urgency=ComplaintUrgency.HIGH,
+            suggested_action="Send an electrician today.",
+        )
+        self.error: BaseException | None = None
+        self.delay: float = 0.0
+
+    def classify(self, description: str, categories) -> Any:
+        import time
+
+        self.calls.append((description, tuple(categories)))
+        if self.delay:
+            time.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+@pytest.fixture
+def fake_classifier(app) -> FakeClassifier:
+    """Install a `FakeClassifier` as the complaint classifier for one test."""
+    from app.ai.classifier import get_complaint_classifier
+
+    fake = FakeClassifier()
+    app.dependency_overrides[get_complaint_classifier] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(get_complaint_classifier, None)
 
 
 @pytest.fixture(scope="session")
