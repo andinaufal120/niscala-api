@@ -154,7 +154,7 @@ The allowed transitions are listed with the use case that causes them in §8.
 These apply to every use case below. Use cases do not repeat them.
 
 1. **Session:** every endpoint except `GET /health` and the endpoints marked *public* in §9 requires a valid session, sent as an access token (§7). A missing, expired, revoked or invalid access token gets an authentication error with the code `ACCESS_TOKEN_INVALID`, which the app can tell apart from other errors and answers by refreshing the token.
-2. **Errors** carry a stable error code, the field it belongs to (for validation errors), and an English message for developers and logs. The app shows Indonesian text mapped from the code, so validation errors can be shown next to their field. The codes are part of the OpenAPI document (response shape and code list: U-9).
+2. **Errors** carry a stable error code, the field it belongs to (for validation errors), and an English message for developers and logs. The app shows Indonesian text mapped from the code, so validation errors can be shown next to their field. Every error response is one JSON object `{"code": string, "field": string or null, "message": string}`. `field` is the camelCase path of the offending request field (`bankAccount.accountNumber`, `facilities.0`) and is null when the error is not about one field. A request with several invalid fields reports the first one. A request that fails validation answers `422` with code `VALIDATION_FAILED`; any error not raised by a use case takes its HTTP status phrase as code (`NOT_FOUND`, `METHOD_NOT_ALLOWED`, `NOT_IMPLEMENTED`); an unexpected failure answers `500` with `INTERNAL_ERROR`. Use-case codes are listed with their use case. The codes are part of the OpenAPI document (declaring them there: U-9).
 3. **Conflict:** a write based on data another user has changed since it was read is rejected with a conflict error and not applied (detection: U-15).
 4. **Failure is atomic:** a request that fails saves nothing, so the user can retry. The only partial outcomes are the ones a use case states (an invitation, a notification or an AI call failing after the main save).
 5. **Empty lists** are a successful response with no items, not an error.
@@ -439,7 +439,7 @@ Conventions:
 - Role values are the lower-case code names: `tenant`, `owner`, `manager`, `admin`.
 - A query parameter that filters a list is optional; omitting it means no filter.
 - Authentication: an HTTP bearer scheme named `bearerAuth` (JWT access token) is declared on every operation except `GET /health` and the endpoints marked *public* below.
-- Error responses (U-9) are not declared yet.
+- Error responses have the shape in §6 rule 2. They are not declared in the OpenAPI document yet (U-9).
 
 Endpoints:
 
@@ -549,7 +549,7 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-4   | Invitation and password-reset link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01, NFR-11 |
 | U-6   | Bill generation (FR-31): when bills are created, how the amount is set, and proration.                                           | UC-04, UC-08, UC-25       |
 | U-8   | AI calls: timeout, retries, fallback, and whether classification runs within the save request or after it.                       | UC-02, UC-26              |
-| U-9   | Error response shape and the list of error codes.                                                                                | §6, §7, all endpoints     |
+| U-9   | The complete list of error codes, and declaring error responses in the OpenAPI document. (The response shape is decided, §6 rule 2.) | §6, §7, all endpoints |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 | U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
 | U-19  | Facility tag storage: `TEXT[]` column vs. join tables (proposed: `TEXT[]`).                                                      | UC-14, UC-16              |
@@ -578,3 +578,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | Subscription decided: plans Gratis, Basic and Pro with limits and prices; billing through Google Play Billing with server-side purchase verification; downgrades at period end with kept properties and rooms; property and room limits added to UC-10 and UC-14; order statuses mapped to Google Play. TBD-3 narrowed, U-11 decided. Subscription endpoints added to §9. | NKMA-17 |
 | 18-10-2026 | Session lifetime relaxed: a session ends after 90 days without use or 1 year after the last authentication, instead of a fixed 30 days, so that users are not forced to log in about once a month. | NKMA-15 |
 | 18-10-2026 | Re-authentication added: changing a property's bank account needs the session to have re-authenticated with the password or Google within the last 5 minutes. Re-authentication endpoints added to §9. | NKMA-15 |
+| 18-10-2026 | U-9 narrowed: every error is a single object `{code, field, message}`; validation failures are `VALIDATION_FAILED` on the first invalid field. The code list and OpenAPI declaration stay open. | NKMA-19 |

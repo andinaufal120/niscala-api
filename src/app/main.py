@@ -2,6 +2,7 @@
 
 from fastapi import Depends, FastAPI
 
+from app.errors import register_error_handlers
 from app.routers import (
     account,
     auth,
@@ -26,6 +27,7 @@ app = FastAPI(
     title="Niscala API",
     generate_unique_id_function=lambda route: route.name,
 )
+register_error_handlers(app)
 # Routers whose operations all need a session. The auth and invitations routers
 # declare the requirement per operation because some of their operations are public.
 session = [Depends(bearer_scheme)]
