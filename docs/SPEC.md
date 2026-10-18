@@ -113,6 +113,8 @@ Each role sees only the menus it is allowed to use. The backend enforces permiss
 
 The API checks every request against this table. `A` means the check includes the Manager's current property assignments, so a removed assignment (UC-29) or a deleted Manager (UC-30) loses access immediately. Notifications are filtered the same way for a Manager: only assigned properties.
 
+Checks run in this order: a missing or invalid session answers `ACCESS_TOKEN_INVALID` (401); an unverified email answers `EMAIL_NOT_VERIFIED` (403); a role the endpoint does not allow answers `FORBIDDEN` (403). A property the caller may not access answers `PROPERTY_NOT_FOUND` (404), the same as a property that does not exist or was deleted, so a response never reveals that someone else's property exists. Properties are soft-deleted (they keep a deletion time) and soft-deleted properties are never accessible.
+
 ## 5. Status vocabularies
 
 *Shared with niscala-app.*
@@ -593,3 +595,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 18-10-2026 | Token handling implemented: failed refresh answers `REFRESH_TOKEN_INVALID`; the 1-year cap counts from login; the session is checked on every request so ending it takes effect at once. Refresh, logout and profile endpoints marked implemented in §9. | NKMA-30 |
 | 18-10-2026 | Owner sign-up, login and email verification implemented: error codes listed in §7, verification code emailed through a sender that only logs it for now. Endpoints marked implemented in §9. | NKMA-31 |
 | 18-10-2026 | Password blocklist and login rate limit implemented: runs must cover the whole password, the password is checked before the duplicate email, the failed-login count is kept per email whether or not an account exists, and the 5th failure starts the lock. | NKMA-34 |
+| 18-10-2026 | Access guard defined: order of the 401, email-not-verified and forbidden checks; a property the caller cannot access answers `PROPERTY_NOT_FOUND` like a missing one; properties are soft-deleted. | NKMA-36 |
