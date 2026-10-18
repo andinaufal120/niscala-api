@@ -768,20 +768,25 @@ def test_tenant_list_items_is_required_array_of_tenant_summary(
 # Runtime: valid requests reach the not-implemented stub
 
 
+@pytest.fixture
+def owner_headers(database, make_user, sign_in) -> dict[str, str]:
+    return sign_in(make_user()).headers
+
+
+@pytest.fixture
+def owner_property_id(database, make_user, sign_in, make_property):
+    """The id of a property of the signed-in owner, plus the owner's headers."""
+    owner = make_user()
+    return str(make_property(owner).id), sign_in(owner).headers
+
+
+def _live(url: str, property_id: str) -> str:
+    return url.replace(PROPERTY_ID, property_id)
+
+
 @pytest.mark.parametrize(
     ("method", "url", "body"),
     [
-        pytest.param(
-            "post",
-            CREATE_TENANT_URL,
-            MINIMAL_NEW_TENANT_INPUT,
-            id="create_tenant_minimal",
-        ),
-        pytest.param(
-            "post", CREATE_TENANT_URL, FULL_NEW_TENANT_INPUT, id="create_tenant_full"
-        ),
-        pytest.param("get", CREATE_TENANT_URL, None, id="list_tenants"),
-        pytest.param("get", TENANT_URL, None, id="get_tenant"),
         pytest.param(
             "put", TENANT_URL, MINIMAL_TENANT_INPUT, id="update_tenant_minimal"
         ),
@@ -854,10 +859,19 @@ def test_valid_tenant_request_responds_not_implemented(
     ],
 )
 def test_tenant_input_edge_body_is_accepted(
-    client, method: str, url: str, base: dict[str, Any], extra: dict[str, Any]
+    client,
+    owner_property_id,
+    method: str,
+    url: str,
+    base: dict[str, Any],
+    extra: dict[str, Any],
 ) -> None:
-    response = client.request(method, url, json={**base, **extra})
-    assert response.status_code == 501
+    property_id, headers = owner_property_id
+    response = client.request(
+        method, _live(url, property_id), json={**base, **extra}, headers=headers
+    )
+    # Adding a tenant gets past validation to the unknown room; editing is a stub.
+    assert response.status_code == {"post": 404, "put": 501}[method]
 
 
 # Runtime: invalid requests are rejected with a validation error
@@ -922,9 +936,12 @@ def test_tenant_input_edge_body_is_accepted(
     ],
 )
 def test_invalid_tenant_input_is_rejected_with_validation_error(
-    client, method: str, url: str, base: dict[str, Any], change
+    client, owner_property_id, method: str, url: str, base: dict[str, Any], change
 ) -> None:
-    response = client.request(method, url, json=change(base))
+    property_id, headers = owner_property_id
+    response = client.request(
+        method, _live(url, property_id), json=change(base), headers=headers
+    )
     assert response.status_code == 422
 
 
@@ -941,17 +958,21 @@ def test_invalid_tenant_input_is_rejected_with_validation_error(
     ],
 )
 def test_invalid_room_id_on_create_tenant_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, owner_property_id, body: dict[str, Any]
 ) -> None:
-    response = client.post(CREATE_TENANT_URL, json=body)
+    property_id, headers = owner_property_id
+    response = client.post(
+        _live(CREATE_TENANT_URL, property_id), json=body, headers=headers
+    )
     assert response.status_code == 422
 
 
 @pytest.mark.parametrize(("method", "url", "base"), TENANT_WRITE_REQUESTS)
 def test_tenant_write_without_body_is_rejected_with_validation_error(
-    client, method: str, url: str, base: dict[str, Any]
+    client, owner_property_id, method: str, url: str, base: dict[str, Any]
 ) -> None:
-    response = client.request(method, url)
+    property_id, headers = owner_property_id
+    response = client.request(method, _live(url, property_id), headers=headers)
     assert response.status_code == 422
 
 
@@ -981,7 +1002,7 @@ def test_tenant_write_without_body_is_rejected_with_validation_error(
     ],
 )
 def test_non_uuid_tenant_path_id_is_rejected_with_validation_error(
-    client, method: str, url: str, body: dict[str, Any] | None
+    client, owner_headers, method: str, url: str, body: dict[str, Any] | None
 ) -> None:
-    response = client.request(method, url, json=body)
+    response = client.request(method, url, json=body, headers=owner_headers)
     assert response.status_code == 422

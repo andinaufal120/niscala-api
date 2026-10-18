@@ -172,7 +172,9 @@ def test_malformed_json_body_returns_validation_failed_with_null_field(client):
 
 
 def test_unimplemented_endpoint_returns_not_implemented(client, owner_headers):
-    response = client.get(f"/properties/{PROPERTY_ID}/tenants", headers=owner_headers)
+    response = client.get(
+        f"/properties/{PROPERTY_ID}/payment-overview", headers=owner_headers
+    )
     assert response.status_code == 501
     body = response.json()
     assert_shape(body)

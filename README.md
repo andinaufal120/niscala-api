@@ -34,12 +34,13 @@ Running it again replaces the Owner's current period. It is a development tool, 
 
 ## Configuration
 
-Settings are read from environment variables, or from a `.env` file in the project root. Every variable has a default except `JWT_SECRET`, which MUST be set.
+Settings are read from environment variables, or from a `.env` file in the project root. Every variable has a default except `JWT_SECRET` and `INVITATION_ENCRYPTION_KEY`, which must be set.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | `postgresql+psycopg://niscala:niscala@localhost:5432/niscala` | PostgreSQL connection URL |
 | `JWT_SECRET` | none (required) | Key that signs access tokens; use a long random value |
+| `INVITATION_ENCRYPTION_KEY` | none (required) | Fernet key that encrypts invitation tokens; make one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used for AI features |
 | `GEMINI_API_KEY` | none | Gemini API key |
 | `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |

@@ -1,6 +1,7 @@
 """Settings are read from environment variables."""
 
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
 ENV_NAMES = ("GEMINI_MODEL", "GEMINI_API_KEY", "INVITATION_BASE_URL", "DATABASE_URL")
@@ -10,10 +11,11 @@ ENV_NAMES = ("GEMINI_MODEL", "GEMINI_API_KEY", "INVITATION_BASE_URL", "DATABASE_
 def clean_env(monkeypatch):
     from app.config import get_settings
 
-    for name in (*ENV_NAMES, "JWT_SECRET"):
+    for name in (*ENV_NAMES, "JWT_SECRET", "INVITATION_ENCRYPTION_KEY"):
         monkeypatch.delenv(name, raising=False)
         monkeypatch.delenv(name.lower(), raising=False)
     monkeypatch.setenv("JWT_SECRET", "settings-test-secret-0123456789abcdef")
+    monkeypatch.setenv("INVITATION_ENCRYPTION_KEY", Fernet.generate_key().decode())
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -68,6 +70,18 @@ def test_jwt_secret_is_required(monkeypatch):
 def test_jwt_secret_is_read_from_environment(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "another-secret-0123456789abcdef0123")
     assert make_settings().jwt_secret == "another-secret-0123456789abcdef0123"
+
+
+def test_invitation_encryption_key_is_required(monkeypatch):
+    monkeypatch.delenv("INVITATION_ENCRYPTION_KEY")
+    with pytest.raises(ValidationError):
+        make_settings()
+
+
+def test_invitation_encryption_key_is_read_from_environment(monkeypatch):
+    key = Fernet.generate_key().decode()
+    monkeypatch.setenv("INVITATION_ENCRYPTION_KEY", key)
+    assert make_settings().invitation_encryption_key == key
 
 
 def test_environment_names_are_case_insensitive(monkeypatch):
