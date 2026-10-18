@@ -1,6 +1,7 @@
 """Role checks and property access rules."""
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from app.errors import ApiError
 from app.models import ManagerAssignment, Property, UserAccount
 from app.schemas.auth import UserRole
 from app.security import CurrentUser, get_verified_user
+from app.services.reauthentication import REAUTHENTICATION_WINDOW
 
 
 def require_roles(*roles: UserRole) -> Callable[..., CurrentUser]:
@@ -28,6 +30,19 @@ def require_roles(*roles: UserRole) -> Callable[..., CurrentUser]:
         return current
 
     return dependency
+
+
+def require_recent_reauthentication(
+    current: Annotated[CurrentUser, Depends(get_verified_user)],
+) -> CurrentUser:
+    """Admit verified callers whose session re-authenticated within the window.
+
+    Raises 403 REAUTHENTICATION_REQUIRED otherwise.
+    """
+    at = current.session.reauthenticated_at
+    if at is None or datetime.now(UTC) - at >= REAUTHENTICATION_WINDOW:
+        raise ApiError(403, "REAUTHENTICATION_REQUIRED")
+    return current
 
 
 def accessible_properties(user: UserAccount) -> Select[tuple[Property]]:
