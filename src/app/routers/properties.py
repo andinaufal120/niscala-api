@@ -1,46 +1,66 @@
 """Endpoints under /properties: properties and their rooms, facility suggestions, tenants, payment overview and payment patterns.
 
-Declared in the contract; not implemented yet.
+The property, room, facility-suggestion and tenant endpoints are implemented;
+the others are declared in the contract and answer 501.
 """
 
 import datetime as dt
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Path, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from sqlalchemy.orm import Session
 
+from app.access import has_recent_reauthentication, require_roles
+from app.db import get_session
+from app.schemas.auth import UserRole
 from app.schemas.payments import PaymentOverview, PaymentPatternList
 from app.schemas.properties import Property, PropertyInput, PropertyList
 from app.schemas.rooms import FacilitySuggestionList, Room, RoomInput, RoomList
 from app.schemas.tenants import NewTenantInput, Tenant, TenantList
+from app.security import CurrentUser
+from app.services import properties, rooms, tenants
 
 router = APIRouter(prefix="/properties")
 
 PropertyId = Annotated[UUID, Path(alias="propertyId")]
+Db = Annotated[Session, Depends(get_session)]
+OwnerOnly = Annotated[CurrentUser, Depends(require_roles(UserRole.OWNER))]
+OwnerOrManager = Annotated[
+    CurrentUser, Depends(require_roles(UserRole.OWNER, UserRole.MANAGER))
+]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, tags=["properties"])
-def create_property(body: PropertyInput) -> Property:
+def create_property(body: PropertyInput, owner: OwnerOnly, db: Db) -> Property:
     """Add a property to the Owner's account."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return properties.create_property(db, owner.user, body)
 
 
 @router.get("", tags=["properties"])
-def list_properties() -> PropertyList:
+def list_properties(caller: OwnerOrManager, db: Db) -> PropertyList:
     """List the properties the caller may access."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return PropertyList(items=properties.list_properties(db, caller.user))
 
 
 @router.get("/{propertyId}", tags=["properties"])
-def get_property(property_id: PropertyId) -> Property:
+def get_property(property_id: PropertyId, caller: OwnerOrManager, db: Db) -> Property:
     """Return a property's detail."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return properties.get_property(db, caller.user, property_id)
 
 
 @router.put("/{propertyId}", tags=["properties"])
-def update_property(property_id: PropertyId, body: PropertyInput) -> Property:
+def update_property(
+    property_id: PropertyId, body: PropertyInput, owner: OwnerOnly, db: Db
+) -> Property:
     """Replace a property's name, address and bank account."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return properties.update_property(
+        db,
+        owner.user,
+        property_id,
+        body,
+        reauthenticated=has_recent_reauthentication(owner.session),
+    )
 
 
 @router.delete(
@@ -49,41 +69,47 @@ def update_property(property_id: PropertyId, body: PropertyInput) -> Property:
     response_class=Response,
     tags=["properties"],
 )
-def delete_property(property_id: PropertyId) -> None:
+def delete_property(property_id: PropertyId, owner: OwnerOnly, db: Db) -> None:
     """Delete a property together with its rooms and manager assignments."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    properties.delete_property(db, owner.user, property_id)
 
 
 @router.post("/{propertyId}/rooms", status_code=status.HTTP_201_CREATED, tags=["rooms"])
-def create_room(property_id: PropertyId, body: RoomInput) -> Room:
+def create_room(
+    property_id: PropertyId, body: RoomInput, caller: OwnerOrManager, db: Db
+) -> Room:
     """Add a room to a property."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return rooms.create_room(db, caller.user, property_id, body)
 
 
 @router.get("/{propertyId}/rooms", tags=["rooms"])
-def list_rooms(property_id: PropertyId) -> RoomList:
+def list_rooms(property_id: PropertyId, caller: OwnerOrManager, db: Db) -> RoomList:
     """List a property's rooms."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return rooms.list_rooms(db, caller.user, property_id)
 
 
 @router.get("/{propertyId}/facility-suggestions", tags=["rooms"])
-def list_facility_suggestions(property_id: PropertyId) -> FacilitySuggestionList:
+def list_facility_suggestions(
+    property_id: PropertyId, caller: OwnerOrManager, db: Db
+) -> FacilitySuggestionList:
     """List the distinct facility tags already used on rooms of the property's Owner."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return rooms.list_facility_suggestions(db, caller.user, property_id)
 
 
 @router.post(
     "/{propertyId}/tenants", status_code=status.HTTP_201_CREATED, tags=["tenants"]
 )
-def create_tenant(property_id: PropertyId, body: NewTenantInput) -> Tenant:
+def create_tenant(
+    property_id: PropertyId, body: NewTenantInput, caller: OwnerOrManager, db: Db
+) -> Tenant:
     """Add a tenant to a vacant room of a property and create their invitation."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return tenants.create_tenant(db, caller.user, property_id, body)
 
 
 @router.get("/{propertyId}/tenants", tags=["tenants"])
-def list_tenants(property_id: PropertyId) -> TenantList:
+def list_tenants(property_id: PropertyId, caller: OwnerOrManager, db: Db) -> TenantList:
     """List a property's tenants."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return tenants.list_tenants(db, caller.user, property_id)
 
 
 @router.get("/{propertyId}/payment-overview", tags=["rent-bills"])

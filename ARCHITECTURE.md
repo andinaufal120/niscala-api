@@ -11,11 +11,17 @@ niscala-api/
 │   ├── config.py      # Settings read from environment variables (.env supported)
 │   ├── errors.py      # ApiError and the handlers that give every error one JSON shape
 │   ├── db.py          # SQLAlchemy engine and the per-request session dependency
-│   ├── models/        # SQLAlchemy tables: user_accounts, sessions (declarative Base with a constraint naming convention)
+│   ├── models/        # SQLAlchemy tables: user_accounts, sessions, email_verification_codes (declarative Base with a constraint naming convention)
 │   ├── security.py    # bearerAuth scheme and the get_current_user dependency
-│   ├── services/      # Business rules per area; routers call them (sessions so far)
+│   ├── email.py       # EmailSender protocol; the console sender only logs the code
+│   ├── ai/            # ComplaintClassifier protocol, the Gemini classifier and the dependency that supplies it
+│   ├── plans.py       # Plan limits per subscription plan, as data
+│   ├── cli.py         # `niscala-api` command: grant-subscription (development tool)
+│   ├── access.py      # require_roles and the property access queries (owner: own, manager: assigned)
+│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints)
 │   ├── routers/       # One module per resource: parse the request, return a schema
 │   └── schemas/       # Pydantic request and response models; they define the OpenAPI contract
+├── data/              # common-passwords.txt: the 100,000 most used passwords (SecLists, MIT license)
 ├── migrations/        # Alembic environment and revisions (alembic.ini at the root)
 ├── tests/             # pytest: contract tests against the generated OpenAPI document, and tests against a throwaway PostgreSQL
 ├── docs/SPEC.md       # Requirements, glossary and endpoint table
@@ -23,14 +29,14 @@ niscala-api/
 └── .github/workflows/ # Claude Code review
 ```
 
-*Not built yet:* the other services, `ai/` (Gemini classifier), `email.py` and `cli.py`.
+*Not built yet:* the other services.
 
 ## 2. High-Level System Diagram
 
 ```
 Flutter app --HTTPS/JSON--> FastAPI (routers -> schemas) --> PostgreSQL
                                   |
-                                  +--> Gemini (classification)               (not built yet)
+                                  +--> Gemini (classification)
                                   +--> email sender                          (not built yet)
 ```
 
@@ -54,11 +60,11 @@ Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, A
 
 ## 4. Data Stores
 
-PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts` and `sessions`. Facility tags will be a text-array column on the room.
+PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints` and `complaint_status_changes`. Facility tags are a text-array column on the room.
 
 ## 5. External Integrations / APIs
 
-- **Gemini** (complaint classification, payment-pattern summaries): *not built yet.*
+- **Gemini** (complaint classification, built; payment-pattern summaries, not built yet): `ai/gemini.py` calls the `google-genai` SDK with the model in `GEMINI_MODEL`, asks for a JSON answer restricted to the complaint categories, and turns any SDK error, bad JSON or unknown category into `ClassificationUnavailable`. Without `GEMINI_API_KEY` the unavailable classifier is used. Complaint classification runs through the `ComplaintClassifier` protocol: the complaint is saved and committed first, then a background task of the same request calls the classifier once with a 10 second timeout, in its own database session. Any failure leaves the complaint saved in the state *awaitingClassification*.
 - **Google Play Developer API** (subscription verification) and **Firebase Cloud Messaging** (push): *not built yet.*
 
 ## 6. Deployment & Infrastructure
@@ -68,7 +74,9 @@ Fly.io for the API and Supabase for the database are planned; *not set up yet.* 
 ## 7. Security Considerations
 
 - Authentication: a bearer JWT access token (HS256, 15 minutes, signed with `JWT_SECRET`), declared as `bearerAuth` in the OpenAPI document. `get_current_user` validates it and also loads the session row, so an ended session stops working at once. The refresh token is opaque, stored only as a SHA-256 hash, and rotated on every use; presenting a rotated one ends the session. Sessions end after 90 days idle or 1 year after login.
-- Authorization: role and property access are enforced by the backend (`docs/SPEC.md` §4).
+- Invitation links carry a random token: the database keeps its SHA-256 hash for lookup and a Fernet-encrypted copy (key `INVITATION_ENCRYPTION_KEY`) so the link can be shown again while it is valid.
+- Passwords are hashed with argon2id. New passwords are checked against the common-password list and a few pattern rules (`services/passwords.py`). Failed logins are counted per email and lock it for 15 minutes after 5 failures (`login_failures`). Email verification codes are stored as SHA-256 hashes, valid 10 minutes and voided after 5 wrong attempts. Until the email is verified, `get_verified_user` answers `EMAIL_NOT_VERIFIED`; `get_current_user` is for the few endpoints open to unverified accounts.
+- Authorization: role and property access are enforced by the backend (`docs/SPEC.md` §4). `require_roles` checks the role after the session and email checks, and `require_recent_reauthentication` requires the session to have confirmed the password within the last 5 minutes. `get_accessible_property` and `accessible_properties` (in `access.py`) are the only way to reach a property: an inaccessible one answers `PROPERTY_NOT_FOUND`, the same as a missing one.
 - Transport: HTTPS only.
 
 ## 8. Development & Testing Environment

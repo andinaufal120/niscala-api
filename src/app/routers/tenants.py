@@ -1,21 +1,31 @@
-"""Endpoints under /tenants. Declared in the contract; not implemented yet."""
+"""Endpoints under /tenants. Reading a tenant is implemented; the others answer 501."""
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from sqlalchemy.orm import Session
 
+from app.access import require_roles
+from app.db import get_session
+from app.schemas.auth import UserRole
 from app.schemas.tenants import Tenant, TenantInput, TenantInvitation
+from app.security import CurrentUser
+from app.services import tenants
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
 TenantId = Annotated[UUID, Path(alias="tenantId")]
+Db = Annotated[Session, Depends(get_session)]
+OwnerOrManager = Annotated[
+    CurrentUser, Depends(require_roles(UserRole.OWNER, UserRole.MANAGER))
+]
 
 
 @router.get("/{tenantId}")
-def get_tenant(tenant_id: TenantId) -> Tenant:
+def get_tenant(tenant_id: TenantId, caller: OwnerOrManager, db: Db) -> Tenant:
     """Return a tenant's detail."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return tenants.get_tenant(db, caller.user, tenant_id)
 
 
 @router.put("/{tenantId}")

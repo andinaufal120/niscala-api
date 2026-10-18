@@ -4,6 +4,17 @@ from functools import cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+COMPLAINT_CATEGORIES = (
+    "Listrik",
+    "Air",
+    "Bangunan",
+    "Perabot",
+    "Kebersihan",
+    "Keamanan",
+    "Internet",
+    "Lainnya",
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", env_file=".env")
@@ -13,6 +24,7 @@ class Settings(BaseSettings):
     invitation_base_url: str = "https://niscala.app"
     database_url: str = "postgresql+psycopg://niscala:niscala@localhost:5432/niscala"
     jwt_secret: str
+    invitation_encryption_key: str
 
 
 @cache

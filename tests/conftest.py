@@ -12,10 +12,12 @@ import jwt
 import pytest
 from alembic import command
 from alembic.config import Config
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, text
 
 os.environ.setdefault("JWT_SECRET", "test-secret-0123456789abcdef0123456789abcdef")
+os.environ.setdefault("INVITATION_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
 REF_PREFIX = "#/components/schemas/"
 
@@ -214,6 +216,185 @@ def make_user(database) -> Callable[..., Any]:
 
 
 @pytest.fixture
+def make_property(database) -> Callable[..., Any]:
+    """Create and commit a `Property` owned by the given user."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Property
+
+    def factory(
+        owner,
+        name: str = "Kos Melati",
+        address: str = "Jl. Melati 5",
+        view_only: bool = False,
+        deleted: bool = False,
+    ) -> Property:
+        with Session(database, expire_on_commit=False) as session:
+            row = Property(
+                owner_id=owner.id,
+                name=name,
+                address=address,
+                view_only=view_only,
+                deleted_at=datetime.now(UTC) if deleted else None,
+            )
+            session.add(row)
+            session.commit()
+            return row
+
+    return factory
+
+
+@pytest.fixture
+def make_room(database) -> Callable[..., Any]:
+    """Create and commit a `Room` in a property."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Room
+
+    def factory(
+        property_,
+        number: str = "A1",
+        base_rate: int = 1000000,
+        facilities: list[str] | None = None,
+        length_m=None,
+        width_m=None,
+        view_only: bool = False,
+        deleted: bool = False,
+    ) -> Room:
+        with Session(database, expire_on_commit=False) as db:
+            row = Room(
+                property_id=property_.id,
+                number=number,
+                base_rate=base_rate,
+                facilities=facilities or [],
+                length_m=length_m,
+                width_m=width_m,
+                view_only=view_only,
+                deleted_at=datetime.now(UTC) if deleted else None,
+            )
+            db.add(row)
+            db.commit()
+            return row
+
+    return factory
+
+
+@dataclass(frozen=True)
+class StoredTenant:
+    """Rows committed by `make_tenant`."""
+
+    user: Any
+    tenant: Any
+    lease: Any
+    invitation: Any
+    token: str | None
+
+    @property
+    def id(self) -> UUID:
+        return self.user.id
+
+
+@pytest.fixture
+def make_tenant(database) -> Callable[..., StoredTenant]:
+    """Commit a tenant account with an active lease, contacts and an invitation."""
+    from datetime import UTC, date, datetime, timedelta
+
+    from sqlalchemy.orm import Session
+
+    from app.models import EmergencyContact, Lease, Tenant, UserAccount
+    from app.schemas.auth import UserRole
+    from app.services.invitations import create_invitation
+
+    def factory(
+        room,
+        *,
+        name: str = "Budi Tenant",
+        phone: str = "081234567890",
+        occupation: str | None = None,
+        email: str | None = None,
+        activated: bool = False,
+        deleted: bool = False,
+        contacts: list[tuple[str, str, str]] | None = None,
+        start_date: date | None = date(2099, 1, 10),
+        end_date: date | None = None,
+        billing_cycle: str = "monthly",
+        rent: int = 1000000,
+        grace_period_days: int = 0,
+        lease_ended: bool = False,
+        invitation: bool = True,
+        expired: bool = False,
+    ) -> StoredTenant:
+        with Session(database, expire_on_commit=False) as db:
+            user = UserAccount(
+                name=name, email=email, password_hash=None, role=UserRole.TENANT
+            )
+            db.add(user)
+            db.flush()
+            now = datetime.now(UTC)
+            tenant = Tenant(
+                user_id=user.id,
+                phone=phone,
+                occupation=occupation,
+                activated_at=now if activated else None,
+                deleted_at=now if deleted else None,
+            )
+            db.add(tenant)
+            db.flush()
+            for position, (c_name, relationship, c_phone) in enumerate(contacts or []):
+                db.add(
+                    EmergencyContact(
+                        tenant_id=user.id,
+                        name=c_name,
+                        relationship=relationship,
+                        phone=c_phone,
+                        position=position,
+                    )
+                )
+            lease = Lease(
+                tenant_id=user.id,
+                room_id=room.id,
+                start_date=start_date,
+                end_date=end_date,
+                billing_cycle=billing_cycle,
+                rent=rent,
+                grace_period_days=grace_period_days,
+                ended_at=now if lease_ended else None,
+            )
+            db.add(lease)
+            db.flush()
+            row, token = None, None
+            if invitation:
+                row, token = create_invitation(db, user.id)
+                if expired:
+                    row.expires_at = now - timedelta(days=1)
+            db.commit()
+            return StoredTenant(user, tenant, lease, row, token)
+
+    return factory
+
+
+@pytest.fixture
+def assign_manager(database) -> Callable[..., None]:
+    """Commit a `ManagerAssignment` of a manager to a property."""
+    from sqlalchemy.orm import Session
+
+    from app.models import ManagerAssignment
+
+    def assign(manager, property) -> None:
+        with Session(database) as session:
+            session.add(
+                ManagerAssignment(manager_id=manager.id, property_id=property.id)
+            )
+            session.commit()
+
+    return assign
+
+
+@pytest.fixture
 def sign_in(database) -> Callable[..., SignedIn]:
     """Start and commit a session for a user and return its tokens."""
     from sqlalchemy.orm import Session
@@ -256,6 +437,220 @@ def read_session(database) -> Callable[[UUID], Any]:
             return session.get(UserSession, session_id)
 
     return read
+
+
+@pytest.fixture
+def sent_emails(app) -> list[tuple[str, str]]:
+    """Replace the email sender with one that records `(to, code)` tuples."""
+    from app.email import get_email_sender
+
+    sent: list[tuple[str, str]] = []
+
+    class RecordingSender:
+        def send_verification_code(self, to: str, code: str) -> None:
+            sent.append((to, code))
+
+    sender = RecordingSender()
+    app.dependency_overrides[get_email_sender] = lambda: sender
+    yield sent
+    app.dependency_overrides.pop(get_email_sender, None)
+
+
+@pytest.fixture
+def read_verification_code(database) -> Callable[[UUID | str], Any]:
+    """Read the `EmailVerificationCode` row of a user fresh from the database."""
+    from sqlalchemy.orm import Session
+
+    from app.models import EmailVerificationCode
+
+    def read(user_id: UUID | str):
+        with Session(database, expire_on_commit=False) as session:
+            return session.get(EmailVerificationCode, UUID(str(user_id)))
+
+    return read
+
+
+@pytest.fixture
+def edit_verification_code(database) -> Callable[..., None]:
+    """Overwrite columns of the `EmailVerificationCode` row of a user."""
+    from sqlalchemy.orm import Session
+
+    from app.models import EmailVerificationCode
+
+    def edit(user_id: UUID | str, **columns: Any) -> None:
+        with Session(database) as session:
+            row = session.get(EmailVerificationCode, UUID(str(user_id)))
+            for name, value in columns.items():
+                setattr(row, name, value)
+            session.commit()
+
+    return edit
+
+
+@pytest.fixture
+def register_owner(client, database, sent_emails) -> Callable[..., Any]:
+    """Register an owner through the API; keyword arguments override the body."""
+
+    def register(**overrides: Any):
+        body = {
+            "name": "Rina Owner",
+            "email": "rina@example.com",
+            "password": "correct horse battery",
+            "device": {"name": "Pixel 8", "platform": "Android 14"},
+        }
+        return client.post("/auth/register", json={**body, **overrides})
+
+    return register
+
+
+_tenant_numbers = count(1)
+
+
+@pytest.fixture
+def make_verified_tenant(database, make_tenant) -> Callable[..., StoredTenant]:
+    """Commit an activated tenant with a verified email who can sign in."""
+    from sqlalchemy.orm import Session
+
+    from app.models import UserAccount
+
+    def factory(room, **options: Any) -> StoredTenant:
+        options.setdefault("email", f"tenant{next(_tenant_numbers)}@example.com")
+        options.setdefault("invitation", False)
+        stored = make_tenant(room, activated=True, **options)
+        with Session(database) as db:
+            db.get(UserAccount, stored.id).email_verified = True
+            db.commit()
+        return stored
+
+    return factory
+
+
+@pytest.fixture
+def subscribe_owner(database) -> Callable[..., None]:
+    """Give an owner a running paid plan."""
+    from sqlalchemy.orm import Session
+
+    from app.schemas.subscriptions import PaidPlanCode
+    from app.services.subscriptions import grant_subscription
+
+    def subscribe(owner, plan: str = "basic", days: int = 30) -> None:
+        with Session(database) as db:
+            grant_subscription(db, owner, PaidPlanCode(plan), days)
+            db.commit()
+
+    return subscribe
+
+
+@pytest.fixture
+def expire_subscription(database) -> Callable[..., None]:
+    """End the paid period of an owner who has a subscription row."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Subscription
+
+    def expire(owner) -> None:
+        with Session(database) as db:
+            db.get(Subscription, owner.id).ends_at = datetime.now(UTC) - timedelta(
+                days=1
+            )
+            db.commit()
+
+    return expire
+
+
+@pytest.fixture
+def make_complaint(database) -> Callable[..., Any]:
+    """Commit a `Complaint` with its status history.
+
+    `ai` is an optional `(category, urgency, suggested_action)` tuple. `changes`
+    is a list of `(status, handling_note, changed_at)`; by default one `new`
+    entry at the creation time.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Complaint, ComplaintStatusChange
+
+    def factory(
+        tenant,
+        room,
+        *,
+        description: str = "The tap in the bathroom leaks badly.",
+        status: str = "new",
+        classification_state: str | None = None,
+        ai: tuple[str, str, str] | None = None,
+        created_at: datetime | None = None,
+        changes: list[tuple[str, str | None, datetime]] | None = None,
+    ) -> Complaint:
+        created = created_at or datetime.now(UTC)
+        category, urgency, action = ai or (None, None, None)
+        with Session(database, expire_on_commit=False) as db:
+            row = Complaint(
+                tenant_id=tenant.id,
+                room_id=room.id,
+                description=description,
+                status=status,
+                classification_state=classification_state,
+                ai_category=category,
+                ai_urgency=urgency,
+                ai_suggested_action=action,
+                created_at=created,
+            )
+            db.add(row)
+            db.flush()
+            for change_status, note, changed_at in changes or [("new", None, created)]:
+                db.add(
+                    ComplaintStatusChange(
+                        complaint_id=row.id,
+                        status=change_status,
+                        handling_note=note,
+                        changed_at=changed_at,
+                    )
+                )
+            db.commit()
+            return row
+
+    return factory
+
+
+class FakeClassifier:
+    """A complaint classifier that records calls and can return, raise or stall."""
+
+    def __init__(self) -> None:
+        from app.schemas.complaints import AiComplaintClassification, ComplaintUrgency
+
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+        self.result: Any = AiComplaintClassification(
+            category="Listrik",
+            urgency=ComplaintUrgency.HIGH,
+            suggested_action="Send an electrician today.",
+        )
+        self.error: BaseException | None = None
+        self.delay: float = 0.0
+
+    def classify(self, description: str, categories) -> Any:
+        import time
+
+        self.calls.append((description, tuple(categories)))
+        if self.delay:
+            time.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+@pytest.fixture
+def fake_classifier(app) -> FakeClassifier:
+    """Install a `FakeClassifier` as the complaint classifier for one test."""
+    from app.ai.classifier import get_complaint_classifier
+
+    fake = FakeClassifier()
+    app.dependency_overrides[get_complaint_classifier] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(get_complaint_classifier, None)
 
 
 @pytest.fixture(scope="session")

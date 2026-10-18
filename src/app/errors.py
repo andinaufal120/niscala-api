@@ -22,11 +22,13 @@ class ApiError(Exception):
         code: str,
         message: str | None = None,
         field: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         self.status_code = status_code
         self.code = code
         self.message = message or code.replace("_", " ").capitalize()
         self.field = field
+        self.headers = headers
         super().__init__(self.message)
 
 
@@ -45,7 +47,7 @@ def _response(
 
 
 def _api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
-    return _response(exc.status_code, exc.code, exc.message, exc.field)
+    return _response(exc.status_code, exc.code, exc.message, exc.field, exc.headers)
 
 
 def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

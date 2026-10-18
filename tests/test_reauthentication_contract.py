@@ -186,19 +186,16 @@ def test_property_input_has_no_reauthentication_field(openapi: OpenApiDoc) -> No
 # Runtime: valid requests reach the not-implemented stub
 
 
-@pytest.mark.parametrize("url", REAUTHENTICATION_PATHS)
-def test_valid_reauthentication_request_responds_not_implemented(
-    client, url: str
+def test_valid_google_reauthentication_request_responds_not_implemented(
+    client,
 ) -> None:
-    assert client.post(url, json=VALID_BODIES[url]).status_code == 501
+    assert client.post(GOOGLE_URL, json=VALID_BODIES[GOOGLE_URL]).status_code == 501
 
 
-@pytest.mark.parametrize("password", ["a" * 200, " ", "x"])
-def test_any_non_empty_password_is_accepted_untrimmed_and_unbounded(
-    client, password: str
-) -> None:
-    response = client.post(PASSWORD_URL, json={"password": password})
-    assert response.status_code == 501
+@pytest.fixture
+def auth_headers(make_user, sign_in) -> dict[str, str]:
+    """Headers of a signed-in caller, so validation runs behind authentication."""
+    return sign_in(make_user()).headers
 
 
 # Runtime: invalid requests are rejected with a validation error
@@ -206,16 +203,16 @@ def test_any_non_empty_password_is_accepted_untrimmed_and_unbounded(
 
 @pytest.mark.parametrize("url", REAUTHENTICATION_PATHS)
 def test_reauthentication_without_body_is_rejected_with_validation_error(
-    client, url: str
+    client, auth_headers, url: str
 ) -> None:
-    assert client.post(url).status_code == 422
+    assert client.post(url, headers=auth_headers).status_code == 422
 
 
 @pytest.mark.parametrize("url", REAUTHENTICATION_PATHS)
 def test_reauthentication_with_empty_object_is_rejected_with_validation_error(
-    client, url: str
+    client, auth_headers, url: str
 ) -> None:
-    assert client.post(url, json={}).status_code == 422
+    assert client.post(url, json={}, headers=auth_headers).status_code == 422
 
 
 @pytest.mark.parametrize(
@@ -227,17 +224,24 @@ def test_reauthentication_with_empty_object_is_rejected_with_validation_error(
     ],
 )
 def test_reauthentication_with_invalid_credential_value_is_rejected(
-    client, url: str, value: Any
+    client, auth_headers, url: str, value: Any
 ) -> None:
     field = next(f for u, _, _, f in REAUTHENTICATION_OPERATIONS if u == url)
-    assert client.post(url, json={field: value}).status_code == 422
+    response = client.post(url, json={field: value}, headers=auth_headers)
+    assert response.status_code == 422
 
 
 def test_password_reauthentication_with_snake_case_or_wrong_field_is_rejected(
-    client,
+    client, auth_headers
 ) -> None:
-    assert client.post(PASSWORD_URL, json={"Password": "secret"}).status_code == 422
-    assert client.post(PASSWORD_URL, json={"idToken": "secret"}).status_code == 422
+    wrong = {"Password": "secret"}
+    assert (
+        client.post(PASSWORD_URL, json=wrong, headers=auth_headers).status_code == 422
+    )
+    wrong = {"idToken": "secret"}
+    assert (
+        client.post(PASSWORD_URL, json=wrong, headers=auth_headers).status_code == 422
+    )
 
 
 def test_google_reauthentication_with_snake_case_field_name_is_rejected(

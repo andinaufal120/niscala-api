@@ -1,10 +1,13 @@
 """Schemas for properties and their bank accounts."""
 
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from app.schemas.base import ApiModel
+
+TrimmedText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class BankAccount(ApiModel):
@@ -18,10 +21,8 @@ class BankAccount(ApiModel):
 class PropertyInput(ApiModel):
     """Fields an Owner sets when adding or editing a property."""
 
-    name: str = Field(
-        min_length=1, description="Must be unique within the Owner's account."
-    )
-    address: str = Field(min_length=1)
+    name: TrimmedText = Field(description="Must be unique within the Owner's account.")
+    address: TrimmedText
     bank_account: BankAccount | None = Field(
         default=None,
         description="Optional; when given, all of its fields are required.",

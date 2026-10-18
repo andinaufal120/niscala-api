@@ -30,6 +30,7 @@ class ComplaintUrgency(StrEnum):
 class ComplaintClassificationState(StrEnum):
     """Why a complaint has no classification."""
 
+    CLASSIFYING = "classifying"
     AWAITING_CLASSIFICATION = "awaitingClassification"
     NOT_CLASSIFIED = "notClassified"
 

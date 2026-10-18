@@ -1,7 +1,16 @@
-"""Endpoints under /invitations. Declared in the contract; not implemented yet."""
+"""Endpoints under /invitations.
+
+The preview and the password activation of a Tenant invitation are implemented;
+the others are declared in the contract and answer 501.
+"""
+
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.orm import Session
 
+from app.db import get_session
+from app.email import EmailSender, get_email_sender
 from app.schemas.auth import AuthSession, TokenInput
 from app.schemas.invitations import (
     InvitationAcceptancePreview,
@@ -10,22 +19,27 @@ from app.schemas.invitations import (
     InvitationPreview,
 )
 from app.security import bearer_scheme
+from app.services import activation
 
 router = APIRouter(prefix="/invitations", tags=["invitations"])
 
 
 @router.post("/previews")
-def preview_invitation(body: TokenInput) -> InvitationPreview:
+def preview_invitation(
+    body: TokenInput, db: Annotated[Session, Depends(get_session)]
+) -> InvitationPreview:
     """Report what an invitation link is for and whether it is still valid."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return activation.preview_invitation(db, body.token)
 
 
 @router.post("/activations/password", status_code=status.HTTP_201_CREATED)
 def activate_invitation_with_password(
     body: InvitationPasswordActivationInput,
+    db: Annotated[Session, Depends(get_session)],
+    sender: Annotated[EmailSender, Depends(get_email_sender)],
 ) -> AuthSession:
     """Consume an invitation link, create the account with a password and start a session."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return activation.activate_with_password(db, body, sender)
 
 
 @router.post("/activations/google", status_code=status.HTTP_201_CREATED)

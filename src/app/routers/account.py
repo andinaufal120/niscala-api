@@ -15,16 +15,7 @@ def get_my_account(
     current: Annotated[CurrentUser, Depends(get_current_user)],
 ) -> Account:
     """Return the caller's account and sign-in methods."""
-    user = current.user
-    return Account(
-        id=user.id,
-        name=user.name,
-        email=user.email,
-        role=user.role,
-        email_verified=user.email_verified,
-        has_password=user.password_hash is not None,
-        google_email=None,
-    )
+    return Account.from_user(current.user)
 
 
 @router.post("/local-password")

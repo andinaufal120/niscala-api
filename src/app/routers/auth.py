@@ -6,6 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.db import get_session
+from app.email import EmailSender, get_email_sender
+from app.errors import ApiError
+from app.models import UserAccount
 from app.schemas.auth import (
     Account,
     AuthSession,
@@ -21,16 +24,36 @@ from app.schemas.auth import (
     RegisterOwnerInput,
     TokenInput,
 )
+from app.schemas.sessions import LoginMethod
 from app.security import CurrentUser, bearer_scheme, get_current_user
-from app.services.sessions import end_session, refresh_session
+from app.services.accounts import authenticate, create_owner
+from app.services.email_verification import RESEND_INTERVAL, confirm_code, send_code
+from app.services.login_attempts import (
+    clear_failures,
+    ensure_not_locked,
+    record_failure,
+)
+from app.services.sessions import end_session, refresh_session, start_session
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _require_unverified(user: UserAccount) -> None:
+    if user.email_verified:
+        raise ApiError(409, "EMAIL_ALREADY_VERIFIED")
+
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def register_owner(body: RegisterOwnerInput) -> AuthSession:
+def register_owner(
+    body: RegisterOwnerInput,
+    db: Annotated[Session, Depends(get_session)],
+    sender: Annotated[EmailSender, Depends(get_email_sender)],
+) -> AuthSession:
     """Sign up an Owner with a password and start a session."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    user = create_owner(db, body)
+    tokens = start_session(db, user, body.device, LoginMethod.PASSWORD)
+    send_code(db, user, sender)
+    return AuthSession(**tokens.model_dump(), account=Account.from_user(user))
 
 
 @router.post("/register/google", status_code=status.HTTP_201_CREATED)
@@ -40,9 +63,22 @@ def register_owner_with_google(body: GoogleAuthInput) -> AuthSession:
 
 
 @router.post("/login")
-def login(body: LoginInput) -> AuthSession:
+def login(
+    body: LoginInput, db: Annotated[Session, Depends(get_session)]
+) -> AuthSession:
     """Log in with email and password and start a session."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    email = body.email.strip().lower()
+    ensure_not_locked(db, email)
+    try:
+        user = authenticate(db, body)
+    except ApiError as error:
+        if error.code == "INVALID_CREDENTIALS":
+            record_failure(db, email)
+            db.commit()
+        raise
+    clear_failures(db, email)
+    tokens = start_session(db, user, body.device, LoginMethod.PASSWORD)
+    return AuthSession(**tokens.model_dump(), account=Account.from_user(user))
 
 
 @router.post("/login/google")
@@ -78,15 +114,27 @@ def logout(
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(bearer_scheme)],
 )
-def send_email_verification() -> EmailVerificationSent:
+def send_email_verification(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_session)],
+    sender: Annotated[EmailSender, Depends(get_email_sender)],
+) -> EmailVerificationSent:
     """Email a new 6-digit verification code to the caller's account."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    _require_unverified(current.user)
+    row = send_code(db, current.user, sender)
+    return EmailVerificationSent(resend_available_at=row.created_at + RESEND_INTERVAL)
 
 
 @router.post("/email-verification/confirmation", dependencies=[Depends(bearer_scheme)])
-def confirm_email(body: EmailConfirmationInput) -> Account:
+def confirm_email(
+    body: EmailConfirmationInput,
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_session)],
+) -> Account:
     """Confirm the caller's email with the code that was sent."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    _require_unverified(current.user)
+    confirm_code(db, current.user, body.code)
+    return Account.from_user(current.user)
 
 
 @router.post(

@@ -55,3 +55,12 @@ def get_current_user(
     if session is None or session.revoked_at is not None or user is None:
         raise invalid
     return CurrentUser(user=user, session=session)
+
+
+def get_verified_user(
+    current: Annotated[CurrentUser, Depends(get_current_user)],
+) -> CurrentUser:
+    """Like `get_current_user`, but raises 403 EMAIL_NOT_VERIFIED for an unverified email."""
+    if not current.user.email_verified:
+        raise ApiError(403, "EMAIL_NOT_VERIFIED")
+    return current
