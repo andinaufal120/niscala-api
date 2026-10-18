@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey
+from sqlalchemy import DateTime, ForeignKey, Index, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -24,6 +24,9 @@ class Property(Base):
     name: Mapped[str]
     address: Mapped[str]
     view_only: Mapped[bool]
+    bank_name: Mapped[str | None]
+    bank_account_number: Mapped[str | None]
+    bank_account_holder_name: Mapped[str | None]
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -32,6 +35,16 @@ class Property(Base):
         # the database and violates NOT NULL.
         fields.setdefault("view_only", False)
         super().__init__(**fields)
+
+
+# An owner's live properties have distinct names, ignoring case.
+Index(
+    "uq_properties_owner_name",
+    Property.owner_id,
+    func.lower(Property.name),
+    unique=True,
+    postgresql_where=Property.deleted_at.is_(None),
+)
 
 
 class ManagerAssignment(Base):
