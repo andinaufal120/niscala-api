@@ -28,6 +28,11 @@ from app.schemas.sessions import LoginMethod
 from app.security import CurrentUser, bearer_scheme, get_current_user
 from app.services.accounts import authenticate, create_owner
 from app.services.email_verification import RESEND_INTERVAL, confirm_code, send_code
+from app.services.login_attempts import (
+    clear_failures,
+    ensure_not_locked,
+    record_failure,
+)
 from app.services.sessions import end_session, refresh_session, start_session
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -62,7 +67,16 @@ def login(
     body: LoginInput, db: Annotated[Session, Depends(get_session)]
 ) -> AuthSession:
     """Log in with email and password and start a session."""
-    user = authenticate(db, body)
+    email = body.email.strip().lower()
+    ensure_not_locked(db, email)
+    try:
+        user = authenticate(db, body)
+    except ApiError as error:
+        if error.code == "INVALID_CREDENTIALS":
+            record_failure(db, email)
+            db.commit()
+        raise
+    clear_failures(db, email)
     tokens = start_session(db, user, body.device, LoginMethod.PASSWORD)
     return AuthSession(**tokens.model_dump(), account=Account.from_user(user))
 
