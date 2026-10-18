@@ -55,6 +55,7 @@ The Flutter Android app lives in `andinaufal120/niscala-app`. It generates its D
 - **Errors** (`errors.py`): every error response is `{"code", "field", "message"}`. Services raise `ApiError(status_code, code, message, field)`. Request validation errors become `VALIDATION_FAILED` with the first failing field. Any other `HTTPException` gets its status phrase as code (`NOT_FOUND`), and an unexpected exception becomes `INTERNAL_ERROR` without leaking its text.
 - **Settings** (`config.py`): `get_settings()` returns a cached `Settings` read from the environment.
 - **Database** (`db.py`): `get_session()` is a request dependency that yields a SQLAlchemy `Session`. It commits when the handler returns and rolls back when it raises, so a failed request saves nothing. The database enforces structural integrity only; business rules live in code.
+- **Logging** (`main.py`): logs go to stderr; INFO records from the `app` loggers are shown, including the verification codes the console email sender prints in development.
 
 Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, Alembic, psycopg 3, managed with uv.
 
