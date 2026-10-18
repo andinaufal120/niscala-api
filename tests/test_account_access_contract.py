@@ -1024,7 +1024,10 @@ def test_active_lease_summary_end_date_is_nullable_date_string(
 # Runtime: valid requests reach the not-implemented stub
 
 
-@pytest.mark.parametrize(("url", "body"), JSON_BODY_ENDPOINTS)
+@pytest.mark.parametrize(
+    ("url", "body"),
+    [param for param in JSON_BODY_ENDPOINTS if param.values[0] != REFRESH_URL],
+)
 def test_valid_account_access_request_responds_not_implemented(
     client, url: str, body: dict[str, Any]
 ) -> None:
@@ -1035,9 +1038,7 @@ def test_valid_account_access_request_responds_not_implemented(
 @pytest.mark.parametrize(
     ("method", "url"),
     [
-        pytest.param("post", LOGOUT_URL, id="logout"),
         pytest.param("post", EMAIL_VERIFICATION_URL, id="send_email_verification"),
-        pytest.param("get", ME_URL, id="get_my_account"),
     ],
 )
 def test_valid_bodiless_account_access_request_responds_not_implemented(

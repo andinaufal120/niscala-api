@@ -1,13 +1,21 @@
 """Shared fixtures for API contract tests."""
 
+import os
+from collections.abc import Callable
+from dataclasses import dataclass
+from itertools import count
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
+import jwt
 import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, text
+
+os.environ.setdefault("JWT_SECRET", "test-secret-0123456789abcdef0123456789abcdef")
 
 REF_PREFIX = "#/components/schemas/"
 
@@ -126,10 +134,9 @@ def db_engine(postgres_url):
 @pytest.fixture
 def database(postgres_url, db_engine, monkeypatch):
     """Point the application at a migrated Postgres container and clean up after."""
+    from app.config import get_settings
     from app.db import get_engine
     from app.models import Base
-
-    from app.config import get_settings
 
     monkeypatch.setenv("DATABASE_URL", postgres_url)
     get_settings.cache_clear()
@@ -150,6 +157,105 @@ def database(postgres_url, db_engine, monkeypatch):
                 connection.execute(text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
     get_settings.cache_clear()
     get_engine.cache_clear()
+
+
+@pytest.fixture
+def db_session(database):
+    """A SQLAlchemy session on the test database, closed after the test."""
+    from sqlalchemy.orm import Session
+
+    with Session(database) as session:
+        yield session
+
+
+@dataclass(frozen=True)
+class SignedIn:
+    """The result of signing a user in through `sign_in`."""
+
+    tokens: Any
+    headers: dict[str, str]
+    session_id: UUID
+
+
+_user_numbers = count(1)
+
+
+@pytest.fixture
+def make_user(database) -> Callable[..., Any]:
+    """Create and commit a `UserAccount`."""
+    from sqlalchemy.orm import Session
+
+    from app.models import UserAccount
+    from app.schemas.auth import UserRole
+
+    def factory(
+        *,
+        name: str = "Rina Owner",
+        email: str | None = None,
+        password_hash: str | None = None,
+        role: UserRole = UserRole.OWNER,
+        email_verified: bool = True,
+    ) -> UserAccount:
+        if email is None:
+            email = f"user{next(_user_numbers)}@example.com"
+        with Session(database, expire_on_commit=False) as session:
+            user = UserAccount(
+                name=name,
+                email=email,
+                password_hash=password_hash,
+                role=role,
+                email_verified=email_verified,
+            )
+            session.add(user)
+            session.commit()
+            return user
+
+    return factory
+
+
+@pytest.fixture
+def sign_in(database) -> Callable[..., SignedIn]:
+    """Start and commit a session for a user and return its tokens."""
+    from sqlalchemy.orm import Session
+
+    from app.schemas.auth import DeviceInfo
+    from app.schemas.sessions import LoginMethod
+
+    def factory(
+        user,
+        device_name: str = "Pixel 8",
+        platform: str = "Android 14",
+        login_method=LoginMethod.PASSWORD,
+    ) -> SignedIn:
+        device = DeviceInfo(name=device_name, platform=platform)
+        from app.services.sessions import start_session
+
+        with Session(database) as session:
+            tokens = start_session(session, user, device, login_method)
+            session.commit()
+        claims = jwt.decode(tokens.access_token, options={"verify_signature": False})
+        session_id = UUID(claims["sid"])
+        return SignedIn(
+            tokens=tokens,
+            headers={"Authorization": f"Bearer {tokens.access_token}"},
+            session_id=session_id,
+        )
+
+    return factory
+
+
+@pytest.fixture
+def read_session(database) -> Callable[[UUID], Any]:
+    """Read a `UserSession` row fresh from the database."""
+    from sqlalchemy.orm import Session
+
+    from app.models import UserSession
+
+    def read(session_id: UUID):
+        with Session(database, expire_on_commit=False) as session:
+            return session.get(UserSession, session_id)
+
+    return read
 
 
 @pytest.fixture(scope="session")
