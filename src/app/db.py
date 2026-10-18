@@ -2,7 +2,9 @@
 
 from collections.abc import Iterator
 from functools import cache
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 
@@ -20,6 +22,9 @@ def get_session() -> Iterator[Session]:
 
     Commits when the handler returns normally. On any exception the session is
     rolled back and the exception propagates. The session is always closed.
+    Declare it through `SessionDep` so this cleanup runs before the response is
+    sent; a failed commit then becomes an error response instead of coming
+    after a success.
     """
     session = Session(get_engine())
     try:
@@ -30,3 +35,6 @@ def get_session() -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+SessionDep = Annotated[Session, Depends(get_session, scope="function")]

@@ -7,10 +7,9 @@ from uuid import UUID
 import jwt
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db import get_session
+from app.db import SessionDep
 from app.errors import ApiError
 from app.models import UserAccount, UserSession
 
@@ -29,7 +28,7 @@ class CurrentUser:
 
 def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
-    db: Annotated[Session, Depends(get_session)],
+    db: SessionDep,
 ) -> CurrentUser:
     """Resolve a bearer access token to its user and an unrevoked session.
 

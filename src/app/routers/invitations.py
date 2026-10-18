@@ -7,9 +7,8 @@ the others are declared in the contract and answer 501.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import SessionDep
 from app.email import EmailSender, get_email_sender
 from app.schemas.auth import AuthSession, TokenInput
 from app.schemas.invitations import (
@@ -25,9 +24,7 @@ router = APIRouter(prefix="/invitations", tags=["invitations"])
 
 
 @router.post("/previews")
-def preview_invitation(
-    body: TokenInput, db: Annotated[Session, Depends(get_session)]
-) -> InvitationPreview:
+def preview_invitation(body: TokenInput, db: SessionDep) -> InvitationPreview:
     """Report what an invitation link is for and whether it is still valid."""
     return activation.preview_invitation(db, body.token)
 
@@ -35,7 +32,7 @@ def preview_invitation(
 @router.post("/activations/password", status_code=status.HTTP_201_CREATED)
 def activate_invitation_with_password(
     body: InvitationPasswordActivationInput,
-    db: Annotated[Session, Depends(get_session)],
+    db: SessionDep,
     sender: Annotated[EmailSender, Depends(get_email_sender)],
 ) -> AuthSession:
     """Consume an invitation link, create the account with a password and start a session."""
