@@ -329,10 +329,14 @@ def test_listing_is_ordered_by_name(db_session, make_user, make_property):
     assert [row.name for row in listed(db_session, owner)] == sorted(names)
 
 
-def test_listing_orders_equal_names_by_id(db_session, make_user, make_property):
-    owner = make_user(role=role("owner"))
-    rows = [make_property(owner) for _ in range(4)]
-    assert listed_ids(db_session, owner) == sorted(row.id for row in rows)
+def test_listing_orders_equal_names_by_id(
+    db_session, make_user, make_property, assign_manager
+):
+    manager = make_user(role=role("manager"))
+    rows = [make_property(make_user(role=role("owner"))) for _ in range(4)]
+    for row in rows:
+        assign_manager(manager, row)
+    assert listed_ids(db_session, manager) == sorted(row.id for row in rows)
 
 
 def test_manager_listing_is_ordered_by_name(
@@ -352,9 +356,9 @@ def test_manager_listing_is_ordered_by_name(
 def test_accessible_properties_is_a_select_that_can_be_narrowed(
     db_session, make_user, make_property
 ):
-    from app.access import accessible_properties
     from sqlalchemy import select
 
+    from app.access import accessible_properties
     from app.models import Property
 
     owner = make_user(role=role("owner"))
