@@ -311,10 +311,13 @@ def test_a_later_submission_works_after_a_failed_one(
 
 
 def test_the_default_classifier_leaves_a_subscribed_owners_complaint_awaiting(
-    client, database, headers, app
+    client, database, headers, app, monkeypatch
 ):
     from app.ai.classifier import get_complaint_classifier
+    from app.config import get_settings
 
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    get_settings.cache_clear()
     assert get_complaint_classifier not in app.dependency_overrides
     assert_awaiting(client, database, headers, submit(client, headers))
 
