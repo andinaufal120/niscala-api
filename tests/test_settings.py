@@ -2,7 +2,7 @@
 
 import pytest
 
-ENV_NAMES = ("GEMINI_MODEL", "GEMINI_API_KEY", "INVITATION_BASE_URL")
+ENV_NAMES = ("GEMINI_MODEL", "GEMINI_API_KEY", "INVITATION_BASE_URL", "DATABASE_URL")
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +43,18 @@ def test_gemini_api_key_is_read_from_environment(monkeypatch):
 def test_invitation_base_url_is_overridden_by_environment(monkeypatch):
     monkeypatch.setenv("INVITATION_BASE_URL", "https://example.test")
     assert make_settings().invitation_base_url == "https://example.test"
+
+
+def test_database_url_defaults_to_local_postgres():
+    assert (
+        make_settings().database_url
+        == "postgresql+psycopg://niscala:niscala@localhost:5432/niscala"
+    )
+
+
+def test_database_url_is_overridden_by_environment(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@db:5433/other")
+    assert make_settings().database_url == "postgresql+psycopg://u:p@db:5433/other"
 
 
 def test_environment_names_are_case_insensitive(monkeypatch):
