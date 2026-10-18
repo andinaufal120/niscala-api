@@ -39,7 +39,18 @@ def test_classification_unavailable_is_an_exception():
     assert issubclass(ClassificationUnavailable, Exception)
 
 
-def test_default_classifier_is_always_unavailable():
+@pytest.fixture
+def no_api_key(monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    get_settings.cache_clear()
+    yield
+    monkeypatch.undo()
+    get_settings.cache_clear()
+
+
+def test_default_classifier_without_an_api_key_is_always_unavailable(no_api_key):
     from app.ai.classifier import ClassificationUnavailable, get_complaint_classifier
 
     classifier = get_complaint_classifier()
@@ -47,7 +58,9 @@ def test_default_classifier_is_always_unavailable():
         classifier.classify("The tap leaks badly.", CATEGORIES)
 
 
-def test_default_classifier_is_unavailable_for_every_description():
+def test_default_classifier_without_an_api_key_is_unavailable_for_every_description(
+    no_api_key,
+):
     from app.ai.classifier import ClassificationUnavailable, get_complaint_classifier
 
     classifier = get_complaint_classifier()

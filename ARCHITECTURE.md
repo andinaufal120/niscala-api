@@ -14,7 +14,7 @@ niscala-api/
 │   ├── models/        # SQLAlchemy tables: user_accounts, sessions, email_verification_codes (declarative Base with a constraint naming convention)
 │   ├── security.py    # bearerAuth scheme and the get_current_user dependency
 │   ├── email.py       # EmailSender protocol; the console sender only logs the code
-│   ├── ai/            # ComplaintClassifier protocol and the dependency that supplies it
+│   ├── ai/            # ComplaintClassifier protocol, the Gemini classifier and the dependency that supplies it
 │   ├── plans.py       # Plan limits per subscription plan, as data
 │   ├── cli.py         # `niscala-api` command: grant-subscription (development tool)
 │   ├── access.py      # require_roles and the property access queries (owner: own, manager: assigned)
@@ -29,14 +29,14 @@ niscala-api/
 └── .github/workflows/ # Claude Code review
 ```
 
-*Not built yet:* the other services and the Gemini classifier (`ai/` only has the protocol and an unavailable default).
+*Not built yet:* the other services.
 
 ## 2. High-Level System Diagram
 
 ```
 Flutter app --HTTPS/JSON--> FastAPI (routers -> schemas) --> PostgreSQL
                                   |
-                                  +--> Gemini (classification)               (not built yet)
+                                  +--> Gemini (classification)
                                   +--> email sender                          (not built yet)
 ```
 
@@ -64,7 +64,7 @@ PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema chan
 
 ## 5. External Integrations / APIs
 
-- **Gemini** (complaint classification, payment-pattern summaries): *not built yet.* Complaint classification already runs through the `ComplaintClassifier` protocol: the complaint is saved and committed first, then a background task of the same request calls the classifier once with a 10 second timeout, in its own database session. Any failure leaves the complaint saved in the state *awaitingClassification*.
+- **Gemini** (complaint classification, built; payment-pattern summaries, not built yet): `ai/gemini.py` calls the `google-genai` SDK with the model in `GEMINI_MODEL`, asks for a JSON answer restricted to the complaint categories, and turns any SDK error, bad JSON or unknown category into `ClassificationUnavailable`. Without `GEMINI_API_KEY` the unavailable classifier is used. Complaint classification runs through the `ComplaintClassifier` protocol: the complaint is saved and committed first, then a background task of the same request calls the classifier once with a 10 second timeout, in its own database session. Any failure leaves the complaint saved in the state *awaitingClassification*.
 - **Google Play Developer API** (subscription verification) and **Firebase Cloud Messaging** (push): *not built yet.*
 
 ## 6. Deployment & Infrastructure
