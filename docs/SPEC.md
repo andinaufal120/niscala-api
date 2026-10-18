@@ -301,12 +301,12 @@ If notifying the Tenant fails, the status change still stands.
 
 **UC-09 Change payment status manually** (FR-08, FR-11) · Target status *Belum Bayar*, *Lunas* or *Ditolak*, with a **required** reason. Rejected with a field error if the target equals the current status or the reason is empty. When the target is *Lunas*, the method (*Tunai* or *Transfer*) and the date received are also required, with the same date rule as UC-08. For any other target they MUST be absent; otherwise a field error.
 
-**UC-10 Add property** (FR-12, FR-21) · Owner only. Name and address required. The name MUST be unique within the Owner's account; a duplicate gets a field error. Optional bank account for rent transfers: bank name, account number, account holder name. If any bank-account field is given, all three are required.
-The Owner's plan limits the number of properties (Gratis 1, Basic 3, Pro unlimited). Adding a property when the Owner already has that many (view-only ones included, deleted ones excluded) is rejected with `PROPERTY_LIMIT_REACHED`.
+**UC-10 Add property** (FR-12, FR-21) · Owner only. Name and address required. The name MUST be unique within the Owner's account, ignoring case and surrounding spaces; a duplicate gets `PROPERTY_NAME_TAKEN` on the field `name`. The name of a deleted property can be used again. Optional bank account for rent transfers: bank name, account number, account holder name. If any bank-account field is given, all three are required.
+The Owner's plan limits the number of properties (Gratis 1, Basic 3, Pro unlimited). Adding a property when the Owner already has that many (view-only ones included, deleted ones excluded) is rejected with `PROPERTY_LIMIT_REACHED` (403).
 
 **UC-11 View properties** (FR-12, FR-21) · Accessible properties, each with name, address, room count, occupied room count and assigned managers. Detail adds the vacant room count and the bank account, if set.
 
-**UC-12 Edit property** (FR-12) · Owner only. Edits name, address and bank account. Rejected with `PROPERTY_READ_ONLY` while the property is view-only (§6 rule 10). Changing the bank account (adding, replacing or removing it) needs a recent re-authentication of the session (§7); otherwise the request is rejected with `REAUTHENTICATION_REQUIRED` and nothing is saved. Editing the name or address does not.
+**UC-12 Edit property** (FR-12) · Owner only. Edits name, address and bank account. Rejected with `PROPERTY_READ_ONLY` while the property is view-only (§6 rule 10). Changing the bank account (adding, replacing or removing it) needs a recent re-authentication of the session (§7); otherwise the request is rejected with `REAUTHENTICATION_REQUIRED` and nothing is saved. Editing the name or address does not, and neither does sending the bank account unchanged. Checks run in this order: role, access, view-only, re-authentication, name already taken (the property's own name never counts).
 
 **UC-13 Delete property** (FR-12) · Owner only. Rejected if the property has an active lease. On success the property's rooms and manager assignments are removed too. A view-only property can still be deleted, which frees a place under the plan limit.
 
@@ -549,7 +549,7 @@ Endpoints:
 | `POST`   | `/me/reauthentication/password`                        | Re-authenticate the current session with the password.         | UC-12 |
 | `POST`   | `/me/reauthentication/google`                          | Re-authenticate the current session with a Google ID token.    | UC-12 |
 
-Every endpoint listed above except `GET /health` and the implemented ones is declared in the contract but not implemented yet; it responds `501 Not Implemented`. Implemented so far: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/email-verification`, `POST /auth/email-verification/confirmation`, `GET /me`, `POST /me/reauthentication/password`.
+Every endpoint listed above except `GET /health` and the implemented ones is declared in the contract but not implemented yet; it responds `501 Not Implemented`. Implemented so far: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/email-verification`, `POST /auth/email-verification/confirmation`, `GET /me`, `POST /me/reauthentication/password`, `POST /properties`, `GET /properties`, `GET /properties/{propertyId}`, `PUT /properties/{propertyId}`, `DELETE /properties/{propertyId}`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -602,3 +602,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 18-10-2026 | Access guard defined: order of the 401, email-not-verified and forbidden checks; a property the caller cannot access answers `PROPERTY_NOT_FOUND` like a missing one; properties are soft-deleted. | NKMA-36 |
 | 18-10-2026 | Effective plan defined (paid plan while its period runs, else Gratis); a development command grants a paid period until Google Play billing exists. | NKMA-76 |
 | 18-10-2026 | Re-authentication with the password implemented: per session, valid 5 minutes, shares the failed-login lock, error codes `PASSWORD_INCORRECT`, `PASSWORD_NOT_SET` and `REAUTHENTICATION_REQUIRED`. | NKMA-15 |
+| 18-10-2026 | Property endpoints (UC-10 to UC-13) implemented: names are unique ignoring case and surrounding spaces and reusable after deletion, `PROPERTY_NAME_TAKEN`, `PROPERTY_LIMIT_REACHED` answers 403, order of the edit checks, an unchanged bank account needs no re-authentication. Property endpoints marked implemented in §9. | NKMA-37 |
