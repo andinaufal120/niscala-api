@@ -14,10 +14,11 @@ niscala-api/
 │   ├── models/        # SQLAlchemy tables: user_accounts, sessions, email_verification_codes (declarative Base with a constraint naming convention)
 │   ├── security.py    # bearerAuth scheme and the get_current_user dependency
 │   ├── email.py       # EmailSender protocol; the console sender only logs the code
+│   ├── ai/            # ComplaintClassifier protocol and the dependency that supplies it
 │   ├── plans.py       # Plan limits per subscription plan, as data
 │   ├── cli.py         # `niscala-api` command: grant-subscription (development tool)
 │   ├── access.py      # require_roles and the property access queries (owner: own, manager: assigned)
-│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation)
+│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints)
 │   ├── routers/       # One module per resource: parse the request, return a schema
 │   └── schemas/       # Pydantic request and response models; they define the OpenAPI contract
 ├── data/              # common-passwords.txt: the 100,000 most used passwords (SecLists, MIT license)
@@ -28,7 +29,7 @@ niscala-api/
 └── .github/workflows/ # Claude Code review
 ```
 
-*Not built yet:* the other services and `ai/` (Gemini classifier).
+*Not built yet:* the other services and the Gemini classifier (`ai/` only has the protocol and an unavailable default).
 
 ## 2. High-Level System Diagram
 
@@ -59,11 +60,11 @@ Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, A
 
 ## 4. Data Stores
 
-PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases` and `invitations`. Facility tags are a text-array column on the room.
+PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints` and `complaint_status_changes`. Facility tags are a text-array column on the room.
 
 ## 5. External Integrations / APIs
 
-- **Gemini** (complaint classification, payment-pattern summaries): *not built yet.*
+- **Gemini** (complaint classification, payment-pattern summaries): *not built yet.* Complaint classification already runs through the `ComplaintClassifier` protocol: the complaint is saved and committed first, then a background task of the same request calls the classifier once with a 10 second timeout, in its own database session. Any failure leaves the complaint saved in the state *awaitingClassification*.
 - **Google Play Developer API** (subscription verification) and **Firebase Cloud Messaging** (push): *not built yet.*
 
 ## 6. Deployment & Infrastructure

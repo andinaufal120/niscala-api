@@ -128,7 +128,7 @@ Checks run in this order: a missing or invalid session answers `ACCESS_TOKEN_INV
 | Login method                     | Google (Google, `google`) · Kata sandi (Password, `password`)                                                                                                                                                         |
 | Billing cycle                    | Mingguan (Weekly, `weekly`) · Bulanan (Monthly, `monthly`) · 3 Bulan (Quarterly, `quarterly`) · 6 Bulan (Semiannual, `semiannual`) · 12 Bulan (Annual, `annual`) |
 | Complaint                        | Baru (New, `new_`) · Diproses (In progress, `inProgress`) · Selesai (Done, `done`) |
-| Complaint classification         | Menunggu Klasifikasi (Awaiting classification, `awaitingClassification`) · Belum Diklasifikasi (Not classified, `notClassified`) |
+| Complaint classification         | Sedang Diklasifikasi (Classifying, `classifying`) · Menunggu Klasifikasi (Awaiting classification, `awaitingClassification`) · Belum Diklasifikasi (Not classified, `notClassified`) |
 | Complaint urgency                | Rendah (Low, `low`) · Sedang (Medium, `medium`) · Tinggi (High, `high`) |
 | Tenant account                   | Belum Diaktifkan (Not activated, `notActivated`) · Aktif (Active, `active`)                                                                                                                                           |
 | Manager account                  | Belum Diaktifkan (Not activated, `notActivated`) · Aktif (Active, `active`)                                                                                                                                           |
@@ -140,7 +140,7 @@ Checks run in this order: a missing or invalid session answers `ACCESS_TOKEN_INV
 
 Complaint status moves forward one step at a time: *Baru* → *Diproses* → *Selesai*. Nothing changes after *Selesai*.
 
-Classification state is separate from status. *Menunggu Klasifikasi* = AI was attempted and failed or timed out. *Belum Diklasifikasi* = the Owner had no active subscription when the complaint was saved, so AI was skipped. A classified complaint has neither.
+Classification state is separate from status. *Sedang Diklasifikasi* = the complaint is saved and the AI is still working on it; it ends as a classification or as *Menunggu Klasifikasi*. *Menunggu Klasifikasi* = AI was attempted and failed or timed out. *Belum Diklasifikasi* = the Owner had no active subscription when the complaint was saved, so AI was skipped. A classified complaint has neither.
 
 Order status maps to Google Play like this: the order starts as *Menunggu Pembayaran*; a verified purchase in state purchased makes it *Berhasil*; a purchase Google reports as pending (for example pay at a convenience store) keeps it *Menunggu Pembayaran*; a purchase Google reports as failed or canceled makes it *Gagal*; an order whose purchase never completes within its time limit becomes *Kedaluwarsa*. Subscription *Gratis* means no paid period is running; *Aktif* means a paid period is running.
 
@@ -242,9 +242,12 @@ Same IDs and order as the app's use cases. Only what the backend must enforce or
 **UC-01 View room and lease** (FR-02) · Returns the Tenant's room number, facilities, and lease start and end dates, or a result the app can recognise as "no room or lease".
 
 **UC-02 Submit maintenance complaint** (FR-03, FR-04, FR-25, FR-28) · Tenant with an active lease only. Rejects an empty or too-short description with a field error (at least 10 characters after trimming). Saving the complaint MUST NOT depend on the AI result. After saving, the complaint is *Baru* and its classification state is exactly one of:
+- *Sedang Diklasifikasi*: the Owner has an active subscription and the AI is working on the complaint (see below);
 - a classification (category, urgency, suggested action);
 - *Menunggu Klasifikasi*: the AI was attempted and failed or timed out;
 - *Belum Diklasifikasi*: the Owner had no active subscription when the complaint was saved, so the AI was skipped.
+
+The classification runs after the complaint is saved and committed, not inside the save: the response to the Tenant shows *Sedang Diklasifikasi*, and the state then changes to the classification or to *Menunggu Klasifikasi*. One attempt, no retry, at most 10 seconds; an error, a timeout, or an answer whose category is not in the category list counts as a failure. A failure never undoes or blocks the saved complaint. A Tenant without an active lease is rejected with `NO_ACTIVE_LEASE` (403). Whether the Owner has an active subscription is decided when the complaint is saved.
 
 Optionally, one photo of the problem: JPG or PNG, at most 5 MB; anything else gets a field error. It is attached after the complaint is saved, and the Tenant may attach or replace it while the complaint is *Baru*. A failed upload leaves the complaint saved, and the Tenant can retry.
 
@@ -359,7 +362,7 @@ Regenerate invitation link, for an unused or expired invitation (links last 7 da
 - No accessible property gives a summary of zeros and an empty `items` list, not an error.
 - Subscription state does not change this response.
 
-**UC-23 Complaint list with AI classification** (FR-15, FR-25) · Complaints across accessible properties, sorted by urgency, then time. Includes category, urgency and suggested action when available; otherwise the classification state. Without an active subscription, AI classification results are withheld (§6 rule 6); manual classifications (UC-36) are not. A withheld AI result is flagged as withheld, so the app can tell it apart from an unclassified complaint. A manual classification also returns who set it and the original AI result it replaced, if any. The original AI result is withheld like any AI result.
+**UC-23 Complaint list with AI classification** (FR-15, FR-25) · Complaints across accessible properties, sorted by urgency (high, medium, low, then complaints without a visible classification), then newest first. A complaint that does not exist or that the caller cannot see answers `COMPLAINT_NOT_FOUND` (404). Includes category, urgency and suggested action when available; otherwise the classification state. Without an active subscription, AI classification results are withheld (§6 rule 6); manual classifications (UC-36) are not. A withheld AI result is flagged as withheld, so the app can tell it apart from an unclassified complaint. A manual classification also returns who set it and the original AI result it replaced, if any. The original AI result is withheld like any AI result.
 
 **UC-24 Change complaint status** (FR-16) · The target MUST be the next status: *Baru* → *Diproses*, or *Diproses* → *Selesai*. Any other target is rejected, and so is any change once the complaint is *Selesai*. An optional handling note is stored with the change and returned to the Tenant (UC-03).
 
@@ -559,7 +562,7 @@ Endpoints:
 | `POST`   | `/me/reauthentication/password`                        | Re-authenticate the current session with the password.         | UC-12 |
 | `POST`   | `/me/reauthentication/google`                          | Re-authenticate the current session with a Google ID token.    | UC-12 |
 
-Every endpoint listed above except `GET /health` and the implemented ones is declared in the contract but not implemented yet; it responds `501 Not Implemented`. Implemented so far: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/email-verification`, `POST /auth/email-verification/confirmation`, `GET /me`, `POST /me/reauthentication/password`, `POST /properties`, `GET /properties`, `GET /properties/{propertyId}`, `PUT /properties/{propertyId}`, `DELETE /properties/{propertyId}`, `POST /properties/{propertyId}/rooms`, `GET /properties/{propertyId}/rooms`, `GET /properties/{propertyId}/facility-suggestions`, `GET /rooms/{roomId}`, `PUT /rooms/{roomId}`, `DELETE /rooms/{roomId}`, `POST /properties/{propertyId}/tenants`, `GET /properties/{propertyId}/tenants`, `GET /tenants/{tenantId}`, `POST /invitations/previews` and `POST /invitations/activations/password` (Tenant invitations only).
+Every endpoint listed above except `GET /health` and the implemented ones is declared in the contract but not implemented yet; it responds `501 Not Implemented`. Implemented so far: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/email-verification`, `POST /auth/email-verification/confirmation`, `GET /me`, `POST /me/reauthentication/password`, `POST /properties`, `GET /properties`, `GET /properties/{propertyId}`, `PUT /properties/{propertyId}`, `DELETE /properties/{propertyId}`, `POST /properties/{propertyId}/rooms`, `GET /properties/{propertyId}/rooms`, `GET /properties/{propertyId}/facility-suggestions`, `GET /rooms/{roomId}`, `PUT /rooms/{roomId}`, `DELETE /rooms/{roomId}`, `POST /properties/{propertyId}/tenants`, `GET /properties/{propertyId}/tenants`, `GET /tenants/{tenantId}`, `POST /invitations/previews` and `POST /invitations/activations/password` (Tenant invitations only), `POST /complaints`, `GET /complaints`, `GET /complaints/{complaintId}`, `GET /complaint-categories`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -575,7 +578,7 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-1   | `/health` response shape.                                                                                                        | §9, NKMA-22               |
 | U-4   | Invitation and password-reset link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01, NFR-11 |
 | U-6   | Bill generation (FR-31): when bills are created, how the amount is set, and proration.                                           | UC-04, UC-08, UC-25       |
-| U-8   | AI calls: timeout, retries, fallback, and whether classification runs within the save request or after it.                       | UC-02, UC-26              |
+| U-8   | AI calls for the payment-pattern summary (UC-26): timeout, retries, fallback, and when it runs. (Decided for complaint classification, UC-02.) | UC-26 |
 | U-9   | The complete list of error codes, and declaring error responses in the OpenAPI document. (The response shape is decided, §6 rule 2.) | §6, §7, all endpoints |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 | U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
@@ -617,3 +620,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 18-10-2026 | Adding and viewing Tenants (UC-18, UC-19) implemented: `ROOM_NOT_VACANT`, `TENANT_NOT_FOUND`, order of the checks, field errors of the lease, invitation links stored hashed and encrypted, the next bill date rule (display value only; U-6 stays undecided). Endpoints marked implemented in §9. | NKMA-52 |
 | 18-10-2026 | Leases wired into rooms and properties: a room is occupied while it has an active lease, property occupied counts follow, and deleting a room or a property with an active lease answers `ROOM_HAS_ACTIVE_LEASE` or `PROPERTY_HAS_ACTIVE_LEASE`. | NKMA-42 |
 | 18-10-2026 | Tenant invitation preview and password activation implemented: link states (a replaced link counts as used), `INVITATION_NOT_FOUND`, `INVITATION_USED`, `INVITATION_EXPIRED`, contacts sent at activation ignored when management already entered them, name may be corrected. Endpoints marked implemented in §9. | NKMA-33 |
+| 18-10-2026 | Complaint submission and viewing implemented. New classification state *Sedang Diklasifikasi* (`classifying`): the complaint is saved first and classified afterwards. U-8 decided for complaint classification (one attempt, 10 seconds, after the save; failure leaves *Menunggu Klasifikasi*); U-8 stays open for the payment-pattern summary. `NO_ACTIVE_LEASE`, `COMPLAINT_NOT_FOUND`, management list order. Complaint categories are a placeholder list (U-16 stays open). | NKMA-64 |
