@@ -1,7 +1,7 @@
 """Endpoints under /properties: properties and their rooms, facility suggestions, tenants, payment overview and payment patterns.
 
-Only the property endpoints are implemented; the others are declared in the
-contract and answer 501.
+The property, room and facility-suggestion endpoints are implemented; the
+others are declared in the contract and answer 501.
 """
 
 import datetime as dt
@@ -19,7 +19,7 @@ from app.schemas.properties import Property, PropertyInput, PropertyList
 from app.schemas.rooms import FacilitySuggestionList, Room, RoomInput, RoomList
 from app.schemas.tenants import NewTenantInput, Tenant, TenantList
 from app.security import CurrentUser
-from app.services import properties
+from app.services import properties, rooms
 
 router = APIRouter(prefix="/properties")
 
@@ -75,21 +75,25 @@ def delete_property(property_id: PropertyId, owner: OwnerOnly, db: Db) -> None:
 
 
 @router.post("/{propertyId}/rooms", status_code=status.HTTP_201_CREATED, tags=["rooms"])
-def create_room(property_id: PropertyId, body: RoomInput) -> Room:
+def create_room(
+    property_id: PropertyId, body: RoomInput, caller: OwnerOrManager, db: Db
+) -> Room:
     """Add a room to a property."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return rooms.create_room(db, caller.user, property_id, body)
 
 
 @router.get("/{propertyId}/rooms", tags=["rooms"])
-def list_rooms(property_id: PropertyId) -> RoomList:
+def list_rooms(property_id: PropertyId, caller: OwnerOrManager, db: Db) -> RoomList:
     """List a property's rooms."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return rooms.list_rooms(db, caller.user, property_id)
 
 
 @router.get("/{propertyId}/facility-suggestions", tags=["rooms"])
-def list_facility_suggestions(property_id: PropertyId) -> FacilitySuggestionList:
+def list_facility_suggestions(
+    property_id: PropertyId, caller: OwnerOrManager, db: Db
+) -> FacilitySuggestionList:
     """List the distinct facility tags already used on rooms of the property's Owner."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return rooms.list_facility_suggestions(db, caller.user, property_id)
 
 
 @router.post(

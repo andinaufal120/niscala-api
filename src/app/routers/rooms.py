@@ -1,27 +1,39 @@
-"""Endpoints under /rooms. Declared in the contract; not implemented yet."""
+"""Endpoints under /rooms."""
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, Path, Response, status
+from sqlalchemy.orm import Session
 
+from app.access import require_roles
+from app.db import get_session
+from app.schemas.auth import UserRole
 from app.schemas.rooms import Room, RoomInput
+from app.security import CurrentUser
+from app.services import rooms
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 RoomId = Annotated[UUID, Path(alias="roomId")]
+Db = Annotated[Session, Depends(get_session)]
+OwnerOrManager = Annotated[
+    CurrentUser, Depends(require_roles(UserRole.OWNER, UserRole.MANAGER))
+]
 
 
 @router.get("/{roomId}")
-def get_room(room_id: RoomId) -> Room:
+def get_room(room_id: RoomId, caller: OwnerOrManager, db: Db) -> Room:
     """Return a room's detail."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return rooms.get_room(db, caller.user, room_id)
 
 
 @router.put("/{roomId}")
-def update_room(room_id: RoomId, body: RoomInput) -> Room:
+def update_room(
+    room_id: RoomId, body: RoomInput, caller: OwnerOrManager, db: Db
+) -> Room:
     """Replace a room's fields."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return rooms.update_room(db, caller.user, room_id, body)
 
 
 @router.delete(
@@ -29,6 +41,6 @@ def update_room(room_id: RoomId, body: RoomInput) -> Room:
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def delete_room(room_id: RoomId) -> None:
+def delete_room(room_id: RoomId, caller: OwnerOrManager, db: Db) -> None:
     """Delete a room."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    rooms.delete_room(db, caller.user, room_id)

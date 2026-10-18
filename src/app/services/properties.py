@@ -5,12 +5,12 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.access import accessible_properties, get_accessible_property
 from app.errors import ApiError
-from app.models import ManagerAssignment, Property, UserAccount
+from app.models import ManagerAssignment, Property, Room, UserAccount
 from app.schemas.properties import (
     BankAccount,
     ManagerRef,
@@ -46,22 +46,38 @@ def _managers_by_property(
     return found
 
 
-def _detail(row: Property, managers: list[ManagerRef]) -> PropertyDetail:
+def _room_counts(db: Session, property_ids: Iterable[UUID]) -> dict[UUID, int]:
+    rows = db.execute(
+        select(Room.property_id, func.count())
+        .where(Room.property_id.in_(list(property_ids)), Room.deleted_at.is_(None))
+        .group_by(Room.property_id)
+    )
+    return {property_id: count for property_id, count in rows}
+
+
+def _detail(
+    row: Property, managers: list[ManagerRef], room_count: int
+) -> PropertyDetail:
+    occupied = 0
     return PropertyDetail(
         id=row.id,
         name=row.name,
         address=row.address,
         bank_account=_bank_account(row),
-        room_count=0,
-        occupied_room_count=0,
-        vacant_room_count=0,
+        room_count=room_count,
+        occupied_room_count=occupied,
+        vacant_room_count=room_count - occupied,
         managers=managers,
         editable=not row.view_only,
     )
 
 
 def _present(db: Session, row: Property) -> PropertyDetail:
-    return _detail(row, _managers_by_property(db, [row.id])[row.id])
+    return _detail(
+        row,
+        _managers_by_property(db, [row.id])[row.id],
+        _room_counts(db, [row.id]).get(row.id, 0),
+    )
 
 
 def _ensure_name_free(
@@ -109,19 +125,20 @@ def create_property(
     _set_fields(row, data)
     db.add(row)
     db.flush()
-    return _detail(row, [])
+    return _detail(row, [], 0)
 
 
 def list_properties(db: Session, user: UserAccount) -> list[PropertySummary]:
     """List the properties the user may access, ordered by name."""
     rows = db.scalars(accessible_properties(user)).all()
     managers = _managers_by_property(db, [row.id for row in rows])
+    room_counts = _room_counts(db, [row.id for row in rows])
     return [
         PropertySummary(
             id=row.id,
             name=row.name,
             address=row.address,
-            room_count=0,
+            room_count=room_counts.get(row.id, 0),
             occupied_room_count=0,
             managers=managers[row.id],
             editable=not row.view_only,
@@ -161,7 +178,13 @@ def update_property(
 
 
 def delete_property(db: Session, owner: UserAccount, property_id: UUID) -> None:
-    """Soft-delete a property and remove its manager assignments."""
+    """Soft-delete a property and its rooms, and remove its manager assignments."""
     row = get_accessible_property(db, owner, property_id)
-    row.deleted_at = datetime.now(UTC)
+    now = datetime.now(UTC)
+    row.deleted_at = now
+    db.execute(
+        update(Room)
+        .where(Room.property_id == row.id, Room.deleted_at.is_(None))
+        .values(deleted_at=now)
+    )
     db.execute(delete(ManagerAssignment).where(ManagerAssignment.property_id == row.id))
