@@ -18,9 +18,20 @@ uv run ruff check    # lint
 uv run ruff format   # format
 ```
 
+## Configuration
+
+Settings are read from environment variables, or from a `.env` file in the project root. Defaults exist for all of them today.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used for AI features |
+| `GEMINI_API_KEY` | none | Gemini API key |
+| `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |
+
 ## Docs
 
 - `docs/SPEC.md`: what the backend has to do
+- `ARCHITECTURE.md`: how the backend is built
 - `CLAUDE.md`: conventions for coding agents (and a good summary for people)
 - `REVIEW.md`: what code review checks
 

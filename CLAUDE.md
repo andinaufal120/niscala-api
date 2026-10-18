@@ -69,7 +69,7 @@ Jira automation links work by the issue key (`NKMA-xx`). When the work has a Jir
 ## Project docs
 
 - `docs/SPEC.md`: what the backend has to do: glossary, roles, statuses, server-side rules per use case (UC-xx), open decisions. Agents MUST read the relevant section before planning any feature. It is the only source of requirements; agents MUST NOT look for requirements anywhere else.
-- `ARCHITECTURE.md`: how the backend is built. *(Not written yet.)*
+- `ARCHITECTURE.md`: how the backend is built.
 - `README.md`: for humans. It MUST NOT be treated as a source of requirements.
 - `REVIEW.md`: what code review flags and at what severity. See "Code review" below.
 
@@ -100,7 +100,7 @@ Agents maintain the project docs (`docs/SPEC.md`, `ARCHITECTURE.md`, `README.md`
 - **Code:** identifiers MUST be English only, using the "Code name" column of the `docs/SPEC.md` glossary and status tables, in PEP 8 form: classes keep the name (`Tenant`, `RentBill`), attributes and functions use snake_case (`grace_period_days`), enum members use UPPER_SNAKE_CASE (`PaymentStatus.AWAITING_VERIFICATION`). On the wire, fields are camelCase and enum values are the codeNames (`docs/SPEC.md` §9).
 - **Writing:** em-dashes (—) MUST NOT be used in docs written for humans (`README.md`), code comments, commits, or PRs. Docs written for agents (`CLAUDE.md`, `REVIEW.md`, `docs/SPEC.md`, `ARCHITECTURE.md`, `.claude/agents/`) MAY use them.
 - **Markdown docs:** domain terms MUST use the format *Original term (English term)*, e.g. *Penyewa (Tenant)*.
-- **API messages:** MUST be English. Every error MUST carry an error code. The app's Indonesian text is keyed on the code, so a released code MUST NOT be renamed, removed, or change meaning. The response shape and code list are undecided (U-9 in `docs/SPEC.md` §10).
+- **API messages:** MUST be English. Every error MUST carry an error code. The app's Indonesian text is keyed on the code, so a released code MUST NOT be renamed, removed, or change meaning. The response shape is `{code, field, message}` (`docs/SPEC.md` §6 rule 2); the full code list is undecided (U-9 in `docs/SPEC.md` §10).
 - **Commits, PRs and issue references:** MUST be in English, and SHOULD cite IDs (`UC-05`, `FR-13`, `NKMA-22`) where relevant.
 
 ## Boundaries
