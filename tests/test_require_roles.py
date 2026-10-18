@@ -17,7 +17,6 @@ ROUTES = {
 
 def build_client() -> TestClient:
     from app.access import require_roles
-
     from app.errors import register_error_handlers
     from app.schemas.auth import UserRole
     from app.security import CurrentUser

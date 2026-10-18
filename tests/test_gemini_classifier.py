@@ -284,8 +284,9 @@ def test_a_classification_unavailable_from_the_client_is_re_raised_as_is():
 
 
 def test_create_client_returns_an_sdk_client():
-    from app.ai.gemini import create_client
     from google import genai
+
+    from app.ai.gemini import create_client
 
     assert isinstance(create_client("dummy-key"), genai.Client)
 
@@ -337,9 +338,8 @@ def created_clients(monkeypatch):
 
 
 def test_a_configured_key_selects_the_gemini_classifier(gemini_env, created_clients):
-    from app.ai.gemini import GeminiComplaintClassifier
-
     from app.ai.classifier import get_complaint_classifier
+    from app.ai.gemini import GeminiComplaintClassifier
 
     gemini_env(key="secret-key")
     assert isinstance(get_complaint_classifier(), GeminiComplaintClassifier)
