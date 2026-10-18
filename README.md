@@ -8,14 +8,17 @@ This repository holds the FastAPI service. It owns the business rules and the AP
 
 - [uv](https://docs.astral.sh/uv/)
 - Python 3.14 (uv installs it if missing)
+- Docker, for the tests that use a database (they start a throwaway PostgreSQL container)
+- A PostgreSQL database to run the API against (see `DATABASE_URL` below)
 
 ## Development
 
 ```sh
-uv sync              # install dependencies
-uv run pytest        # run tests
-uv run ruff check    # lint
-uv run ruff format   # format
+uv sync                    # install dependencies
+uv run pytest              # run tests
+uv run ruff check          # lint
+uv run ruff format         # format
+uv run alembic upgrade head   # apply database migrations to DATABASE_URL
 ```
 
 ## Configuration
@@ -24,6 +27,7 @@ Settings are read from environment variables, or from a `.env` file in the proje
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `DATABASE_URL` | `postgresql+psycopg://niscala:niscala@localhost:5432/niscala` | PostgreSQL connection URL |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used for AI features |
 | `GEMINI_API_KEY` | none | Gemini API key |
 | `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |
