@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from typing import Protocol
 
+from app.config import get_settings
 from app.schemas.complaints import AiComplaintClassification
 
 
@@ -34,4 +35,12 @@ class UnavailableClassifier:
 
 def get_complaint_classifier() -> ComplaintClassifier:
     """Return the classifier complaints are classified with."""
+    from app.ai import gemini
+
+    settings = get_settings()
+    key = settings.gemini_api_key
+    if key and key.strip():
+        return gemini.GeminiComplaintClassifier(
+            gemini.create_client(key), settings.gemini_model
+        )
     return UnavailableClassifier()
