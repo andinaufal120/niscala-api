@@ -58,9 +58,8 @@ def count_invitations(db_session) -> int:
 
 
 def test_create_invitation_returns_the_row_and_the_raw_token(db_session, tenant_id):
-    from app.services.invitations import create_invitation
-
     from app.models import Invitation
+    from app.services.invitations import create_invitation
 
     row, token = create_invitation(db_session, tenant_id)
     assert isinstance(row, Invitation)
@@ -108,9 +107,8 @@ def test_the_raw_token_is_not_stored_in_the_row(db_session, tenant_id):
 
 
 def test_the_encrypted_token_decrypts_with_the_configured_key(db_session, tenant_id):
-    from app.services.invitations import create_invitation
-
     from app.config import get_settings
+    from app.services.invitations import create_invitation
 
     row, token = create_invitation(db_session, tenant_id)
     fernet = Fernet(get_settings().invitation_encryption_key.encode())
@@ -125,8 +123,9 @@ def test_the_encrypted_token_differs_from_the_token(db_session, tenant_id):
 
 
 def test_the_token_cannot_be_decrypted_with_another_key(db_session, tenant_id):
-    from app.services.invitations import create_invitation
     from cryptography.fernet import InvalidToken
+
+    from app.services.invitations import create_invitation
 
     row, _ = create_invitation(db_session, tenant_id)
     with pytest.raises(InvalidToken):
@@ -155,9 +154,8 @@ def test_a_new_invitation_is_unused_and_valid(db_session, tenant_id):
 def test_the_invitation_is_flushed_so_it_has_an_id_and_is_queryable(
     db_session, tenant_id
 ):
-    from app.services.invitations import create_invitation
-
     from app.models import Invitation
+    from app.services.invitations import create_invitation
 
     row, _ = create_invitation(db_session, tenant_id)
     assert row.id is not None
@@ -263,9 +261,8 @@ def test_reveal_token_returns_the_original_token(db_session, tenant_id):
 def test_reveal_token_works_after_a_round_trip_through_the_database(
     db_session, tenant_id
 ):
-    from app.services.invitations import create_invitation, reveal_token
-
     from app.models import Invitation
+    from app.services.invitations import create_invitation, reveal_token
 
     row, token = create_invitation(db_session, tenant_id)
     db_session.commit()
@@ -274,8 +271,9 @@ def test_reveal_token_works_after_a_round_trip_through_the_database(
 
 
 def test_reveal_token_fails_for_a_tampered_token(db_session, tenant_id):
-    from app.services.invitations import create_invitation, reveal_token
     from cryptography.fernet import InvalidToken
+
+    from app.services.invitations import create_invitation, reveal_token
 
     row, _ = create_invitation(db_session, tenant_id)
     row.token_encrypted = "garbage"

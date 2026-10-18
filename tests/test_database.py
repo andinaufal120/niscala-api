@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 def build_client(engine) -> TestClient:
     from app.db import get_session
-
     from app.errors import ApiError, register_error_handlers
 
     session_dep = Annotated[Session, Depends(get_session)]
