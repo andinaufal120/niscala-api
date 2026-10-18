@@ -12,6 +12,7 @@ from app.routers import (
     me,
     notifications,
     properties,
+    reauthentication,
     rent_bills,
     rooms,
     sessions,
@@ -32,6 +33,7 @@ app.include_router(auth.router)
 app.include_router(invitations.router)
 app.include_router(account.router, dependencies=session)
 app.include_router(sessions.router, dependencies=session)
+app.include_router(reauthentication.router, dependencies=session)
 app.include_router(properties.router, dependencies=session)
 app.include_router(rooms.router, dependencies=session)
 app.include_router(tenants.router, dependencies=session)
