@@ -1023,56 +1023,27 @@ def test_active_lease_summary_end_date_is_nullable_date_string(
 
 # Runtime: valid requests reach the not-implemented stub
 
+IMPLEMENTED_URLS = {REGISTER_URL, LOGIN_URL, REFRESH_URL, EMAIL_CONFIRMATION_URL}
+# Implemented endpoints that need a signed-in caller before the body is read.
+SIGNED_IN_URLS = {EMAIL_CONFIRMATION_URL}
+
+
+def _auth_headers(request, url: str) -> dict[str, str]:
+    """Headers of an unverified signed-in user when the endpoint requires one."""
+    if url not in SIGNED_IN_URLS:
+        return {}
+    user = request.getfixturevalue("make_user")(email_verified=False)
+    return request.getfixturevalue("sign_in")(user).headers
+
 
 @pytest.mark.parametrize(
     ("url", "body"),
-    [param for param in JSON_BODY_ENDPOINTS if param.values[0] != REFRESH_URL],
+    [param for param in JSON_BODY_ENDPOINTS if param.values[0] not in IMPLEMENTED_URLS],
 )
 def test_valid_account_access_request_responds_not_implemented(
     client, url: str, body: dict[str, Any]
 ) -> None:
     response = client.post(url, json=body)
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize(
-    ("method", "url"),
-    [
-        pytest.param("post", EMAIL_VERIFICATION_URL, id="send_email_verification"),
-    ],
-)
-def test_valid_bodiless_account_access_request_responds_not_implemented(
-    client, method: str, url: str
-) -> None:
-    response = client.request(method, url)
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize("password", ["12345678", "a" * 128, "pässwörd with spaces"])
-def test_register_password_of_8_to_128_characters_is_accepted(
-    client, password: str
-) -> None:
-    body = {**VALID_REGISTER_INPUT, "password": password}
-    assert client.post(REGISTER_URL, json=body).status_code == 501
-
-
-@pytest.mark.parametrize("password", ["x", " ", "a" * 200])
-def test_login_accepts_any_non_empty_password(client, password: str) -> None:
-    body = {**VALID_LOGIN_INPUT, "password": password}
-    assert client.post(LOGIN_URL, json=body).status_code == 501
-
-
-@pytest.mark.parametrize("platform", ["a", "Android 14", "p" * 50])
-def test_device_platform_of_1_to_50_characters_is_accepted(
-    client, platform: str
-) -> None:
-    body = {**VALID_LOGIN_INPUT, "device": {**VALID_DEVICE, "platform": platform}}
-    assert client.post(LOGIN_URL, json=body).status_code == 501
-
-
-@pytest.mark.parametrize("code", ["000000", "123456", "999999"])
-def test_six_digit_email_code_is_accepted(client, code: str) -> None:
-    response = client.post(EMAIL_CONFIRMATION_URL, json={"code": code})
     assert response.status_code == 501
 
 
@@ -1119,22 +1090,25 @@ def test_password_activation_accepts_an_optional_email(
 
 @pytest.mark.parametrize(("url", "body"), JSON_BODY_ENDPOINTS)
 def test_account_access_write_without_body_is_rejected_with_validation_error(
-    client, url: str, body: dict[str, Any]
+    client, request, url: str, body: dict[str, Any]
 ) -> None:
-    assert client.post(url).status_code == 422
+    headers = _auth_headers(request, url)
+    assert client.post(url, headers=headers).status_code == 422
 
 
 @pytest.mark.parametrize(("url", "body"), JSON_BODY_ENDPOINTS)
 def test_account_access_write_with_empty_object_is_rejected_with_validation_error(
-    client, url: str, body: dict[str, Any]
+    client, request, url: str, body: dict[str, Any]
 ) -> None:
-    assert client.post(url, json={}).status_code == 422
+    headers = _auth_headers(request, url)
+    assert client.post(url, json={}, headers=headers).status_code == 422
 
 
 @pytest.mark.parametrize(("url", "body"), JSON_BODY_ENDPOINTS)
 def test_account_access_write_with_each_required_field_missing_is_rejected(
-    client, url: str, body: dict[str, Any]
+    client, request, url: str, body: dict[str, Any]
 ) -> None:
+    headers = _auth_headers(request, url)
     from_schema = {
         REGISTER_URL: {"name", "email", "password", "device"},
         REGISTER_GOOGLE_URL: {"idToken", "device"},
@@ -1154,7 +1128,7 @@ def test_account_access_write_with_each_required_field_missing_is_rejected(
         GOOGLE_LINK_URL: {"idToken"},
     }[url]
     statuses = {
-        field: client.post(url, json=_without(body, field)).status_code
+        field: client.post(url, json=_without(body, field), headers=headers).status_code
         for field in from_schema
     }
     assert statuses == dict.fromkeys(from_schema, 422)
@@ -1253,9 +1227,10 @@ def test_invalid_refresh_token_is_rejected_with_validation_error(
     ],
 )
 def test_invalid_email_confirmation_code_is_rejected_with_validation_error(
-    client, code: Any
+    client, request, code: Any
 ) -> None:
-    response = client.post(EMAIL_CONFIRMATION_URL, json={"code": code})
+    headers = _auth_headers(request, EMAIL_CONFIRMATION_URL)
+    response = client.post(EMAIL_CONFIRMATION_URL, json={"code": code}, headers=headers)
     assert response.status_code == 422
 
 

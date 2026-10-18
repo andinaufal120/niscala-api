@@ -258,6 +258,70 @@ def read_session(database) -> Callable[[UUID], Any]:
     return read
 
 
+@pytest.fixture
+def sent_emails(app) -> list[tuple[str, str]]:
+    """Replace the email sender with one that records `(to, code)` tuples."""
+    from app.email import get_email_sender
+
+    sent: list[tuple[str, str]] = []
+
+    class RecordingSender:
+        def send_verification_code(self, to: str, code: str) -> None:
+            sent.append((to, code))
+
+    sender = RecordingSender()
+    app.dependency_overrides[get_email_sender] = lambda: sender
+    yield sent
+    app.dependency_overrides.pop(get_email_sender, None)
+
+
+@pytest.fixture
+def read_verification_code(database) -> Callable[[UUID | str], Any]:
+    """Read the `EmailVerificationCode` row of a user fresh from the database."""
+    from sqlalchemy.orm import Session
+
+    from app.models import EmailVerificationCode
+
+    def read(user_id: UUID | str):
+        with Session(database, expire_on_commit=False) as session:
+            return session.get(EmailVerificationCode, UUID(str(user_id)))
+
+    return read
+
+
+@pytest.fixture
+def edit_verification_code(database) -> Callable[..., None]:
+    """Overwrite columns of the `EmailVerificationCode` row of a user."""
+    from sqlalchemy.orm import Session
+
+    from app.models import EmailVerificationCode
+
+    def edit(user_id: UUID | str, **columns: Any) -> None:
+        with Session(database) as session:
+            row = session.get(EmailVerificationCode, UUID(str(user_id)))
+            for name, value in columns.items():
+                setattr(row, name, value)
+            session.commit()
+
+    return edit
+
+
+@pytest.fixture
+def register_owner(client, database, sent_emails) -> Callable[..., Any]:
+    """Register an owner through the API; keyword arguments override the body."""
+
+    def register(**overrides: Any):
+        body = {
+            "name": "Rina Owner",
+            "email": "rina@example.com",
+            "password": "correct horse battery",
+            "device": {"name": "Pixel 8", "platform": "Android 14"},
+        }
+        return client.post("/auth/register", json={**body, **overrides})
+
+    return register
+
+
 @pytest.fixture(scope="session")
 def app():
     from app.main import app as fastapi_app
