@@ -274,7 +274,12 @@ Regenerate invitation link, for an unused or expired invitation (links last 7 da
 
 **UC-21 Delete tenant** (FR-13) · Soft delete: the lease ends, account access is revoked and the room becomes *Kosong*. Payment and complaint history is kept.
 
-**UC-22 Occupancy dashboard** (FR-14) · Per property: occupied count, vacant count, occupancy percentage and each room's status, plus a summary across all accessible properties. All figures are computed here.
+**UC-22 Occupancy dashboard** (FR-14) · Per accessible property: room count, occupied count, vacant count, occupancy percentage and each room's number and occupancy, plus a summary across all accessible properties. All figures are computed here; the app computes none of them.
+- A room is *Terisi* when it has an active lease, otherwise *Kosong* (§5).
+- Occupancy percentage = occupied rooms ÷ rooms × 100, rounded to the nearest whole number (halves round up). It is 0 when there are no rooms. The summary percentage is computed from the summed counts, never as an average of the properties' percentages.
+- Properties are ordered by name and rooms by room number (natural order, so "2" comes before "10").
+- No accessible property gives a summary of zeros and an empty `items` list, not an error.
+- Subscription state does not change this response.
 
 **UC-23 Complaint list with AI classification** (FR-15, FR-25) · Complaints across accessible properties, sorted by urgency, then time. Includes category, urgency and suggested action when available; otherwise the classification state. Without an active subscription, AI classification results are withheld (§6 rule 6); manual classifications (UC-36) are not. A withheld AI result is flagged as withheld, so the app can tell it apart from an unclassified complaint. A manual classification also returns who set it and the original AI result it replaced, if any. The original AI result is withheld like any AI result.
 
@@ -435,6 +440,7 @@ Endpoints:
 | `DELETE` | `/me/sessions/{sessionId}`                      | End the session of one other device.                      | UC-37                                                     |
 | `DELETE` | `/me/sessions`                                  | End the sessions of all other devices.                    | UC-37                                                     |
 | `POST`   | `/me/password-changes`                          | Change the caller's password; says whether other sessions exist. | UC-38                                                     |
+| `GET`    | `/occupancy-dashboard`                          | Occupancy figures per accessible property and across all of them. | UC-22                                                     |
 
 Every endpoint listed above except `GET /health` is declared in the contract but not implemented yet; it responds `501 Not Implemented`.
 
@@ -475,3 +481,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | U-13 decided: invitation links last 7 days, password-reset links 30 minutes, both single-use. U-14 decided: JWT access token (15 minutes), opaque rotating refresh token, bearer transport, both in JSON bodies. Email verification by 6-digit code for local-password accounts, gating other endpoints until confirmed. Failed logins lock an email for 15 minutes after 5 failures. Passwords are 8 to 128 characters. Invitation activation takes the person's own email for Tenant and Manager; an existing Manager account may accept a Manager invitation. U-4 extended to password-reset links. Account-access endpoints added to §9. | NKMA-15 |
 | 17-10-2026 | UC-37 and UC-38 detailed: session list fields and order, not-found and current-session errors, password change errors and `hasOtherSessions`. Login method values added to §5. Session and password endpoints added to §9. | NKMA-15 |
 | 17-10-2026 | Manager use cases UC-27 to UC-30 detailed: managers are added with name, phone and properties and join through a shared invitation link (nothing is emailed); statuses reduced to *Belum Diaktifkan* and *Aktif*; an existing Manager account can accept; invitation regeneration; delete revokes this Owner's assignments and keeps the account. Manager endpoints added to §9. | NKMA-7 |
+| 17-10-2026 | UC-22 extended: room count, occupancy percentage rule (whole number, halves up, 0 without rooms, summary from summed counts), ordering and empty result. Occupancy-dashboard endpoint added to §9. | NKMA-7 |
