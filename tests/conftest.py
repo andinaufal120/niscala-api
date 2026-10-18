@@ -12,10 +12,12 @@ import jwt
 import pytest
 from alembic import command
 from alembic.config import Config
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, text
 
 os.environ.setdefault("JWT_SECRET", "test-secret-0123456789abcdef0123456789abcdef")
+os.environ.setdefault("INVITATION_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
 REF_PREFIX = "#/components/schemas/"
 
@@ -240,6 +242,137 @@ def make_property(database) -> Callable[..., Any]:
             session.add(row)
             session.commit()
             return row
+
+    return factory
+
+
+@pytest.fixture
+def make_room(database) -> Callable[..., Any]:
+    """Create and commit a `Room` in a property."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy.orm import Session
+
+    from app.models import Room
+
+    def factory(
+        property_,
+        number: str = "A1",
+        base_rate: int = 1000000,
+        facilities: list[str] | None = None,
+        length_m=None,
+        width_m=None,
+        view_only: bool = False,
+        deleted: bool = False,
+    ) -> Room:
+        with Session(database, expire_on_commit=False) as db:
+            row = Room(
+                property_id=property_.id,
+                number=number,
+                base_rate=base_rate,
+                facilities=facilities or [],
+                length_m=length_m,
+                width_m=width_m,
+                view_only=view_only,
+                deleted_at=datetime.now(UTC) if deleted else None,
+            )
+            db.add(row)
+            db.commit()
+            return row
+
+    return factory
+
+
+@dataclass(frozen=True)
+class StoredTenant:
+    """Rows committed by `make_tenant`."""
+
+    user: Any
+    tenant: Any
+    lease: Any
+    invitation: Any
+    token: str | None
+
+    @property
+    def id(self) -> UUID:
+        return self.user.id
+
+
+@pytest.fixture
+def make_tenant(database) -> Callable[..., StoredTenant]:
+    """Commit a tenant account with an active lease, contacts and an invitation."""
+    from datetime import UTC, date, datetime, timedelta
+
+    from app.services.invitations import create_invitation
+    from sqlalchemy.orm import Session
+
+    from app.models import EmergencyContact, Lease, Tenant, UserAccount
+    from app.schemas.auth import UserRole
+
+    def factory(
+        room,
+        *,
+        name: str = "Budi Tenant",
+        phone: str = "081234567890",
+        occupation: str | None = None,
+        email: str | None = None,
+        activated: bool = False,
+        deleted: bool = False,
+        contacts: list[tuple[str, str, str]] | None = None,
+        start_date: date | None = date(2099, 1, 10),
+        end_date: date | None = None,
+        billing_cycle: str = "monthly",
+        rent: int = 1000000,
+        grace_period_days: int = 0,
+        lease_ended: bool = False,
+        invitation: bool = True,
+        expired: bool = False,
+    ) -> StoredTenant:
+        with Session(database, expire_on_commit=False) as db:
+            user = UserAccount(
+                name=name, email=email, password_hash=None, role=UserRole.TENANT
+            )
+            db.add(user)
+            db.flush()
+            now = datetime.now(UTC)
+            tenant = Tenant(
+                user_id=user.id,
+                phone=phone,
+                occupation=occupation,
+                activated_at=now if activated else None,
+                deleted_at=now if deleted else None,
+            )
+            db.add(tenant)
+            db.flush()
+            for position, (c_name, relationship, c_phone) in enumerate(contacts or []):
+                db.add(
+                    EmergencyContact(
+                        tenant_id=user.id,
+                        name=c_name,
+                        relationship=relationship,
+                        phone=c_phone,
+                        position=position,
+                    )
+                )
+            lease = Lease(
+                tenant_id=user.id,
+                room_id=room.id,
+                start_date=start_date,
+                end_date=end_date,
+                billing_cycle=billing_cycle,
+                rent=rent,
+                grace_period_days=grace_period_days,
+                ended_at=now if lease_ended else None,
+            )
+            db.add(lease)
+            db.flush()
+            row, token = None, None
+            if invitation:
+                row, token = create_invitation(db, user.id)
+                if expired:
+                    row.expires_at = now - timedelta(days=1)
+            db.commit()
+            return StoredTenant(user, tenant, lease, row, token)
 
     return factory
 
