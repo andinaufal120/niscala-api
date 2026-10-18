@@ -62,11 +62,12 @@ def _text(value: str, field: str) -> str:
     return text
 
 
-def _contacts(data: NewTenantInput) -> list[EmergencyContact]:
-    if len(data.emergency_contacts) == 1:
+def clean_contacts(submitted: list[EmergencyContact]) -> list[EmergencyContact]:
+    """Trim texts and normalize phones; a single contact is refused."""
+    if len(submitted) == 1:
         raise _invalid("emergencyContacts")
     contacts = []
-    for index, contact in enumerate(data.emergency_contacts):
+    for index, contact in enumerate(submitted):
         prefix = f"emergencyContacts.{index}"
         contacts.append(
             EmergencyContact(
@@ -219,7 +220,7 @@ def create_tenant(
     name = _text(data.name, "name")
     phone = _phone(data.phone, "phone")
     occupation = (data.occupation or "").strip() or None
-    contacts = _contacts(data)
+    contacts = clean_contacts(data.emergency_contacts)
     lease = data.lease
     if (
         lease.start_date is not None
