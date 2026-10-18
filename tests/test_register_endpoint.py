@@ -264,11 +264,12 @@ def test_register_with_the_email_of_an_existing_account_is_rejected(
 
 @pytest.mark.parametrize("length", [8, 64, 128])
 def test_register_accepts_passwords_of_8_to_128_characters(register_owner, length):
-    assert register_owner(password="a" * length).status_code == 201
+    password = ("T7#vq9-lorem-ipsum-" * 10)[:length]
+    assert register_owner(password=password).status_code == 201
 
 
 def test_register_accepts_a_128_character_multibyte_password(register_owner):
-    assert register_owner(password="é" * 128).status_code == 201
+    assert register_owner(password="é" * 127 + "x").status_code == 201
 
 
 @pytest.mark.parametrize("length", [0, 7, 129, 200])
@@ -306,7 +307,6 @@ def test_register_saves_nothing_when_sending_the_email_fails(
     app, database, sent_emails, monkeypatch
 ):
     from app.email import get_email_sender
-
     from app.models import EmailVerificationCode, UserAccount, UserSession
 
     class BrokenSender:
