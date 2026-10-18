@@ -104,8 +104,13 @@ def test_unexpected_exception_returns_internal_error_without_leaking_details():
     assert "boom" not in body["message"]
 
 
-def test_missing_body_field_reports_first_missing_field_only(client):
-    response = client.post("/properties", json={})
+@pytest.fixture
+def owner_headers(database, make_user, sign_in) -> dict[str, str]:
+    return sign_in(make_user()).headers
+
+
+def test_missing_body_field_reports_first_missing_field_only(client, owner_headers):
+    response = client.post("/properties", json={}, headers=owner_headers)
     assert response.status_code == 422
     body = response.json()
     assert_shape(body)
@@ -114,7 +119,7 @@ def test_missing_body_field_reports_first_missing_field_only(client):
     assert "detail" not in body
 
 
-def test_nested_field_path_is_camel_case_and_dotted(client):
+def test_nested_field_path_is_camel_case_and_dotted(client, owner_headers):
     response = client.post(
         "/properties",
         json={
@@ -122,6 +127,7 @@ def test_nested_field_path_is_camel_case_and_dotted(client):
             "address": "Jl. A",
             "bankAccount": {"bankName": "BCA"},
         },
+        headers=owner_headers,
     )
     assert response.status_code == 422
     body = response.json()
@@ -142,8 +148,8 @@ def test_list_index_appears_as_number_segment_in_field_path(client):
     assert body["field"] == "facilities.0"
 
 
-def test_invalid_path_parameter_reports_parameter_name(client):
-    response = client.get("/properties/not-a-uuid")
+def test_invalid_path_parameter_reports_parameter_name(client, owner_headers):
+    response = client.get("/properties/not-a-uuid", headers=owner_headers)
     assert response.status_code == 422
     body = response.json()
     assert_shape(body)
@@ -164,8 +170,8 @@ def test_malformed_json_body_returns_validation_failed_with_null_field(client):
     assert body["field"] is None
 
 
-def test_unimplemented_endpoint_returns_not_implemented(client):
-    response = client.get("/properties")
+def test_unimplemented_endpoint_returns_not_implemented(client, owner_headers):
+    response = client.get(f"/properties/{PROPERTY_ID}/rooms", headers=owner_headers)
     assert response.status_code == 501
     body = response.json()
     assert_shape(body)

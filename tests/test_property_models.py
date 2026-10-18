@@ -73,7 +73,8 @@ def test_property_gets_defaults_on_insert(db_session):
 
 def test_property_ids_are_unique_per_row(db_session):
     owner = saved_user(db_session)
-    first, second = new_property(owner.id), new_property(owner.id)
+    first = new_property(owner.id, name="Kos Melati")
+    second = new_property(owner.id, name="Kos Mawar")
     db_session.add_all([first, second])
     db_session.flush()
     assert first.id != second.id
@@ -114,10 +115,121 @@ def test_property_requires_its_mandatory_columns(db_session, field):
         db_session.flush()
 
 
-def test_owner_can_have_properties_with_the_same_name(db_session):
+def test_bank_account_columns_default_to_null(db_session):
+    row = saved_property(db_session)
+    db_session.refresh(row)
+    assert row.bank_name is None
+    assert row.bank_account_number is None
+    assert row.bank_account_holder_name is None
+
+
+def test_bank_account_columns_round_trip(db_session):
     owner = saved_user(db_session)
-    db_session.add_all([new_property(owner.id), new_property(owner.id)])
+    row = new_property(
+        owner.id,
+        bank_name="BCA",
+        bank_account_number="1234567890",
+        bank_account_holder_name="Budi Santoso",
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.expire_all()
+    stored = db_session.get(type(row), row.id)
+    assert stored.bank_name == "BCA"
+    assert stored.bank_account_number == "1234567890"
+    assert stored.bank_account_holder_name == "Budi Santoso"
+
+
+def test_owner_cannot_have_two_properties_with_the_same_name(db_session):
+    owner = saved_user(db_session)
+    db_session.add(new_property(owner.id, name="Kos Melati"))
     db_session.flush()
+    db_session.add(new_property(owner.id, name="Kos Melati"))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("Kos Melati", "kos melati"),
+        ("kos melati", "KOS MELATI"),
+        ("KOS MELATI", "Kos Melati"),
+    ],
+)
+def test_property_names_are_compared_ignoring_case(db_session, first, second):
+    owner = saved_user(db_session)
+    db_session.add(new_property(owner.id, name=first))
+    db_session.flush()
+    db_session.add(new_property(owner.id, name=second))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
+def test_different_names_of_one_owner_do_not_conflict(db_session):
+    owner = saved_user(db_session)
+    db_session.add_all(
+        [
+            new_property(owner.id, name="Kos Melati"),
+            new_property(owner.id, name="Kos 2"),
+        ]
+    )
+    db_session.flush()
+
+
+def test_different_owners_may_use_the_same_name(db_session):
+    first, second = saved_user(db_session), saved_user(db_session)
+    db_session.add_all(
+        [
+            new_property(first.id, name="Kos Melati"),
+            new_property(second.id, name="kos melati"),
+        ]
+    )
+    db_session.flush()
+
+
+def test_a_deleted_property_does_not_block_its_name(db_session):
+    owner = saved_user(db_session)
+    db_session.add(
+        new_property(owner.id, name="Kos Melati", deleted_at=datetime.now(UTC))
+    )
+    db_session.flush()
+    db_session.add(new_property(owner.id, name="kos melati"))
+    db_session.flush()
+
+
+def test_several_deleted_properties_may_share_a_name(db_session):
+    owner = saved_user(db_session)
+    db_session.add_all(
+        [
+            new_property(owner.id, name="Kos Melati", deleted_at=datetime.now(UTC)),
+            new_property(owner.id, name="Kos Melati", deleted_at=datetime.now(UTC)),
+        ]
+    )
+    db_session.flush()
+
+
+def test_a_live_property_still_blocks_the_name_of_a_deleted_one_being_restored(
+    db_session,
+):
+    owner = saved_user(db_session)
+    gone = new_property(owner.id, name="Kos Melati", deleted_at=datetime.now(UTC))
+    db_session.add_all([gone, new_property(owner.id, name="Kos Melati")])
+    db_session.flush()
+    gone.deleted_at = None
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
+def test_renaming_a_property_to_a_taken_name_is_refused(db_session):
+    owner = saved_user(db_session)
+    db_session.add(new_property(owner.id, name="Kos Melati"))
+    other = new_property(owner.id, name="Kos Mawar")
+    db_session.add(other)
+    db_session.flush()
+    other.name = "KOS MELATI"
+    with pytest.raises(IntegrityError):
+        db_session.flush()
 
 
 def test_manager_assignment_round_trips_with_a_creation_time(db_session):

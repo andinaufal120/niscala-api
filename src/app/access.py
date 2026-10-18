@@ -10,7 +10,7 @@ from sqlalchemy import Select, false, select
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
-from app.models import ManagerAssignment, Property, UserAccount
+from app.models import ManagerAssignment, Property, UserAccount, UserSession
 from app.schemas.auth import UserRole
 from app.security import CurrentUser, get_verified_user
 from app.services.reauthentication import REAUTHENTICATION_WINDOW
@@ -32,6 +32,12 @@ def require_roles(*roles: UserRole) -> Callable[..., CurrentUser]:
     return dependency
 
 
+def has_recent_reauthentication(session: UserSession) -> bool:
+    """Return whether the session re-authenticated within the window."""
+    at = session.reauthenticated_at
+    return at is not None and datetime.now(UTC) - at < REAUTHENTICATION_WINDOW
+
+
 def require_recent_reauthentication(
     current: Annotated[CurrentUser, Depends(get_verified_user)],
 ) -> CurrentUser:
@@ -39,8 +45,7 @@ def require_recent_reauthentication(
 
     Raises 403 REAUTHENTICATION_REQUIRED otherwise.
     """
-    at = current.session.reauthenticated_at
-    if at is None or datetime.now(UTC) - at >= REAUTHENTICATION_WINDOW:
+    if not has_recent_reauthentication(current.session):
         raise ApiError(403, "REAUTHENTICATION_REQUIRED")
     return current
 

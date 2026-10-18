@@ -499,31 +499,12 @@ def test_no_parameter_name_contains_underscore(openapi: OpenApiDoc) -> None:
     assert offenders == []
 
 
-# Runtime: valid requests reach the not-implemented stub
+# Runtime: request validation
 
 
-@pytest.mark.parametrize(
-    ("method", "url", "body"),
-    [
-        pytest.param("post", "/properties", VALID_PROPERTY_INPUT, id="create_property"),
-        pytest.param("get", "/properties", None, id="list_properties"),
-        pytest.param("get", f"/properties/{PROPERTY_ID}", None, id="get_property"),
-        pytest.param(
-            "put",
-            f"/properties/{PROPERTY_ID}",
-            VALID_PROPERTY_INPUT,
-            id="update_property",
-        ),
-        pytest.param(
-            "delete", f"/properties/{PROPERTY_ID}", None, id="delete_property"
-        ),
-    ],
-)
-def test_valid_property_request_responds_not_implemented(
-    client, method: str, url: str, body: dict[str, Any] | None
-) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 501
+@pytest.fixture
+def owner_headers(make_user, sign_in) -> dict[str, str]:
+    return sign_in(make_user()).headers
 
 
 @pytest.mark.parametrize(("method", "url"), PROPERTY_WRITE_REQUESTS)
@@ -551,10 +532,10 @@ def test_valid_property_request_responds_not_implemented(
     ],
 )
 def test_property_input_edge_body_is_accepted(
-    client, method: str, url: str, body: dict[str, Any]
+    client, owner_headers, method: str, url: str, body: dict[str, Any]
 ) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 501
+    response = client.request(method, url, json=body, headers=owner_headers)
+    assert response.status_code != 422
 
 
 # Runtime: invalid requests are rejected with a validation error
@@ -607,17 +588,17 @@ def test_property_input_edge_body_is_accepted(
     ],
 )
 def test_invalid_property_input_is_rejected_with_validation_error(
-    client, method: str, url: str, body: dict[str, Any]
+    client, owner_headers, method: str, url: str, body: dict[str, Any]
 ) -> None:
-    response = client.request(method, url, json=body)
+    response = client.request(method, url, json=body, headers=owner_headers)
     assert response.status_code == 422
 
 
 @pytest.mark.parametrize(("method", "url"), PROPERTY_WRITE_REQUESTS)
 def test_property_write_without_body_is_rejected_with_validation_error(
-    client, method: str, url: str
+    client, owner_headers, method: str, url: str
 ) -> None:
-    response = client.request(method, url)
+    response = client.request(method, url, headers=owner_headers)
     assert response.status_code == 422
 
 
@@ -630,7 +611,9 @@ def test_property_write_without_body_is_rejected_with_validation_error(
     ],
 )
 def test_non_uuid_property_id_is_rejected_with_validation_error(
-    client, method: str, body: dict[str, Any] | None
+    client, owner_headers, method: str, body: dict[str, Any] | None
 ) -> None:
-    response = client.request(method, f"/properties/{NOT_A_UUID}", json=body)
+    response = client.request(
+        method, f"/properties/{NOT_A_UUID}", json=body, headers=owner_headers
+    )
     assert response.status_code == 422
