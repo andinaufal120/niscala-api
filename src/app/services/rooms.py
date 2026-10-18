@@ -64,9 +64,14 @@ def _facilities(tags: list[str]) -> list[str]:
     return kept
 
 
+def natural_number_key(number: str) -> list[int | str]:
+    """Sort key ordering room numbers naturally: "A2" before "A10", ignoring case."""
+    parts = re.split(r"(\d+)", number.lower())
+    return [int(part) if part.isdigit() else part for part in parts]
+
+
 def _number_order(row: RoomRow) -> tuple[list[int | str], UUID]:
-    parts = re.split(r"(\d+)", row.number.lower())
-    return [int(part) if part.isdigit() else part for part in parts], row.id
+    return natural_number_key(row.number), row.id
 
 
 def _editable(row: RoomRow, parent: Property) -> bool:

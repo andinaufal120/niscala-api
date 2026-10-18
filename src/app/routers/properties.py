@@ -1,7 +1,7 @@
 """Endpoints under /properties: properties and their rooms, facility suggestions, tenants, payment overview and payment patterns.
 
-The property, room and facility-suggestion endpoints are implemented; the
-others are declared in the contract and answer 501.
+The property, room, facility-suggestion and tenant endpoints are implemented;
+the others are declared in the contract and answer 501.
 """
 
 import datetime as dt
@@ -19,7 +19,7 @@ from app.schemas.properties import Property, PropertyInput, PropertyList
 from app.schemas.rooms import FacilitySuggestionList, Room, RoomInput, RoomList
 from app.schemas.tenants import NewTenantInput, Tenant, TenantList
 from app.security import CurrentUser
-from app.services import properties, rooms
+from app.services import properties, rooms, tenants
 
 router = APIRouter(prefix="/properties")
 
@@ -99,15 +99,17 @@ def list_facility_suggestions(
 @router.post(
     "/{propertyId}/tenants", status_code=status.HTTP_201_CREATED, tags=["tenants"]
 )
-def create_tenant(property_id: PropertyId, body: NewTenantInput) -> Tenant:
+def create_tenant(
+    property_id: PropertyId, body: NewTenantInput, caller: OwnerOrManager, db: Db
+) -> Tenant:
     """Add a tenant to a vacant room of a property and create their invitation."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return tenants.create_tenant(db, caller.user, property_id, body)
 
 
 @router.get("/{propertyId}/tenants", tags=["tenants"])
-def list_tenants(property_id: PropertyId) -> TenantList:
+def list_tenants(property_id: PropertyId, caller: OwnerOrManager, db: Db) -> TenantList:
     """List a property's tenants."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return tenants.list_tenants(db, caller.user, property_id)
 
 
 @router.get("/{propertyId}/payment-overview", tags=["rent-bills"])

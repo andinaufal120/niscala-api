@@ -6,16 +6,21 @@ from app.models.login_failure import LoginFailure
 from app.models.properties import ManagerAssignment, Property
 from app.models.rooms import Room
 from app.models.subscriptions import Subscription
+from app.models.tenants import EmergencyContact, Invitation, Lease, Tenant
 from app.models.users import UserAccount, UserSession
 
 __all__ = [
     "Base",
     "EmailVerificationCode",
+    "EmergencyContact",
+    "Invitation",
+    "Lease",
     "LoginFailure",
     "ManagerAssignment",
     "Property",
     "Room",
     "Subscription",
+    "Tenant",
     "UserAccount",
     "UserSession",
 ]
