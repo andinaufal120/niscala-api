@@ -199,7 +199,7 @@ Additional backend rules:
 
   The error code is `PASSWORD_TOO_COMMON`.
 - **Sessions.** One `sessions` row per device, holding the hashed refresh token, device name, platform, login method, `last_active_at`, `reauthenticated_at` and `revoked_at`. Revoking a session sets `revoked_at`. Access tokens live 15 minutes at most, so a revoked session stops working within 15 minutes. No IP address or location is stored. A session may hold one push token, removed with the session.
-- **Tokens.** The access token is a signed JWT valid for 15 minutes at most, sent as `Authorization: Bearer <token>`, and identifies the session. The refresh token is opaque, stored hashed on the `sessions` row, and rotated on every use: the old one stops working at once. Presenting an already-rotated or revoked refresh token ends that session. Refreshing restarts the 90-day idle window and never extends the 1-year cap; a refresh after either limit fails and the session is ended. Sign-up, login, activation and refresh return both tokens in the JSON body.
+- **Tokens.** The access token is a signed JWT valid for 15 minutes at most, sent as `Authorization: Bearer <token>`, and identifies the session. The refresh token is opaque, stored hashed on the `sessions` row, and rotated on every use: the old one stops working at once. Presenting an already-rotated or revoked refresh token ends that session. Refreshing restarts the 90-day idle window and never extends the 1-year cap; a refresh after either limit fails and the session is ended. A failed refresh answers `401` with `REFRESH_TOKEN_INVALID`; the 1-year cap counts from the login that started the session. The backend also checks the session on every request, so an ended session stops working at once, not only after the access token expires. Sign-up, login, activation and refresh return both tokens in the JSON body.
 - **Re-authentication.** Some changes need a recent re-authentication of the session. The caller proves they hold the account with their password or, for an account that signs in with Google, a fresh Google ID token of the linked account; the session is then marked re-authenticated for 5 minutes. Failed attempts count toward the same per-email lock as login failures. Changing a property's bank account is the only such change for now.
 - **Single-use links.** Invitation links last 7 days. Password-reset links last 30 minutes. Both can be used once. Creating a new invitation link or a new reset link invalidates the previous one.
 - **Email.** Emails are trimmed and compared case-insensitively. An email belongs to one account.
@@ -532,7 +532,7 @@ Endpoints:
 | `POST`   | `/me/reauthentication/password`                        | Re-authenticate the current session with the password.         | UC-12 |
 | `POST`   | `/me/reauthentication/google`                          | Re-authenticate the current session with a Google ID token.    | UC-12 |
 
-Every endpoint listed above except `GET /health` is declared in the contract but not implemented yet; it responds `501 Not Implemented`.
+Every endpoint listed above except `GET /health` and the implemented ones is declared in the contract but not implemented yet; it responds `501 Not Implemented`. Implemented so far: `POST /auth/refresh`, `POST /auth/logout`, `GET /me`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -579,3 +579,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 18-10-2026 | Re-authentication added: changing a property's bank account needs the session to have re-authenticated with the password or Google within the last 5 minutes. Re-authentication endpoints added to §9. | NKMA-15 |
 | 18-10-2026 | U-9 narrowed: every error is a single object `{code, field, message}`; validation failures are `VALIDATION_FAILED` on the first invalid field. The code list and OpenAPI declaration stay open. | NKMA-19 |
 | 18-10-2026 | U-19 decided: facility tags are stored as a text-array column on the room. | NKMA-20 |
+| 18-10-2026 | Token handling implemented: failed refresh answers `REFRESH_TOKEN_INVALID`; the 1-year cap counts from login; the session is checked on every request so ending it takes effect at once. Refresh, logout and profile endpoints marked implemented in §9. | NKMA-30 |
