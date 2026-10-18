@@ -7,6 +7,7 @@ from app.routers import (
     auth,
     complaints,
     invitations,
+    managers,
     me,
     properties,
     rent_bills,
@@ -30,6 +31,7 @@ app.include_router(sessions.router, dependencies=session)
 app.include_router(properties.router, dependencies=session)
 app.include_router(rooms.router, dependencies=session)
 app.include_router(tenants.router, dependencies=session)
+app.include_router(managers.router, dependencies=session)
 app.include_router(complaints.router, dependencies=session)
 app.include_router(complaints.categories_router, dependencies=session)
 app.include_router(rent_bills.router, dependencies=session)
