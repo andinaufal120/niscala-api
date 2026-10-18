@@ -45,3 +45,5 @@ Until a mail service is set up, email verification codes are written to the serv
 ## License
 
 [MIT](LICENSE)
+
+`data/common-passwords.txt` is the 100,000 most used passwords from [SecLists](https://github.com/danielmiessler/SecLists) (MIT license). New passwords are checked against it.

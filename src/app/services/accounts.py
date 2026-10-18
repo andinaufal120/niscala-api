@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session
 from app.errors import ApiError
 from app.models import UserAccount
 from app.schemas.auth import LoginInput, RegisterOwnerInput, UserRole
-from app.services.passwords import hash_password, verify_password
+from app.services.passwords import (
+    check_password_allowed,
+    hash_password,
+    verify_password,
+)
 
 
 def find_by_email(db: Session, email: str) -> UserAccount | None:
@@ -19,8 +23,10 @@ def find_by_email(db: Session, email: str) -> UserAccount | None:
 def create_owner(db: Session, data: RegisterOwnerInput) -> UserAccount:
     """Create an owner with an unverified email; flushes, never commits.
 
-    Raises 409 EMAIL_ALREADY_REGISTERED when the email is taken.
+    Raises 422 PASSWORD_TOO_COMMON for a guessable password, then 409
+    EMAIL_ALREADY_REGISTERED when the email is taken.
     """
+    check_password_allowed(data.password, name=data.name, email=data.email)
     if find_by_email(db, data.email) is not None:
         raise ApiError(409, "EMAIL_ALREADY_REGISTERED", field="email")
     user = UserAccount(
