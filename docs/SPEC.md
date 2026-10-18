@@ -138,7 +138,7 @@ The allowed transitions are listed with the use case that causes them in §8.
 
 These apply to every use case below. Use cases do not repeat them.
 
-1. **Session:** every endpoint except `GET /health` requires a valid session. An expired or invalid session gets an authentication error the app can tell apart from other errors (mechanism: U-14).
+1. **Session:** every endpoint except `GET /health` and the endpoints marked *public* in §9 requires a valid session, sent as an access token (§7). A missing, expired, revoked or invalid access token gets an authentication error with the code `ACCESS_TOKEN_INVALID`, which the app can tell apart from other errors and answers by refreshing the token.
 2. **Errors** carry a stable error code, the field it belongs to (for validation errors), and an English message for developers and logs. The app shows Indonesian text mapped from the code, so validation errors can be shown next to their field. The codes are part of the OpenAPI document (response shape and code list: U-9).
 3. **Conflict:** a write based on data another user has changed since it was read is rejected with a conflict error and not applied (detection: U-15).
 4. **Failure is atomic:** a request that fails saves nothing, so the user can retry. The only partial outcomes are the ones a use case states (an invitation, a notification or an AI call failing after the main save).
@@ -183,6 +183,19 @@ Additional backend rules:
 
   The error code is `PASSWORD_TOO_COMMON`.
 - **Sessions.** One `sessions` row per device, holding the hashed refresh token, device name, platform, login method, `last_active_at` and `revoked_at`. Revoking a session sets `revoked_at`. Access tokens live 15 minutes at most, so a revoked session stops working within 15 minutes. No IP address or location is stored.
+- **Tokens.** The access token is a signed JWT valid for 15 minutes at most, sent as `Authorization: Bearer <token>`, and identifies the session. The refresh token is opaque, stored hashed on the `sessions` row, and rotated on every use: the old one stops working at once. Presenting an already-rotated or revoked refresh token ends that session. Refreshing never extends the 30-day cap. Sign-up, login, activation and refresh return both tokens in the JSON body.
+- **Single-use links.** Invitation links last 7 days. Password-reset links last 30 minutes. Both can be used once. Creating a new invitation link or a new reset link invalidates the previous one.
+- **Email.** Emails are trimmed and compared case-insensitively. An email belongs to one account.
+- **Email verification** applies only to accounts with a local password (Owner sign-up, and Tenant or Manager activation with a password). Accounts created with Google count as verified. Verification uses a 6-digit code emailed to the account, valid 10 minutes, voided after 5 wrong attempts. A new code can be requested once every 60 seconds; requesting one voids the previous. Until the code is confirmed, the account can log in and use only the endpoints needed to verify the email, read its profile and log out; every other endpoint answers `EMAIL_NOT_VERIFIED`.
+- **Google.** The app obtains a Google ID token and sends it; the backend verifies signature, audience and expiry and uses the token's `sub` as the identity. One Google identity belongs to one account. Google login finds the account by that identity, never by email (§7, "never links accounts automatically"). A Google-only account that is asked for a password reset receives nothing. Unlinking Google is not offered.
+- **Login failures.** Failed local logins are counted per email address; after 5 failures the address is locked for 15 minutes and login answers `TOO_MANY_LOGIN_ATTEMPTS` with a `Retry-After` header, even for the right password. A successful login before the limit resets the count.
+- **Password length.** A new password is 8 to 128 characters; login accepts any non-empty password.
+- **Password reset.** Requesting a reset answers the same way whether or not the email is registered. Completing a reset sets the new password (checked against the password rules) and ends every session of the account.
+- **Invitation activation.** A public preview endpoint reports the link's state (`valid`, `expired`, `used`) with what the activation screen shows. Activation consumes the link, creates the account, starts a session and, for a local password, requires email verification. On the password path the person types their own email, for a Tenant and a Manager alike; a Google activation uses the Google account's email. The email MUST NOT already belong to another account, except when the person accepts with an existing account (next bullet). For a Tenant whose emergency contacts are still missing, activation MUST receive 2 to 4 contacts.
+- **Accepting an invitation with an existing account** needs a session. One account has one role, so an invitation for another role is refused. A Tenant with an active lease cannot accept a Tenant invitation. A logged-in Manager account may accept a Manager invitation; it keeps the assignments from other Owners and gains the new ones. Accepting consumes the link and notifies the inviting Owner. Declining is not a server action: the link stays valid until it expires.
+- **Add a local password (profile).** For a Google-only account. The request carries a fresh Google ID token whose identity MUST be the one linked to the account.
+- **Link Google (profile).** For an account with a local password. The current session MUST come from a password login (`PASSWORD_LOGIN_REQUIRED` otherwise).
+- **Profile.** The profile is read-only for its owner; only an Admin edits an account (UC-34).
 
 ## 8. Server-side rules per use case
 
@@ -256,7 +269,7 @@ On save the room becomes *Terisi* and an invitation link is created and returned
 **UC-19 View tenants** (FR-13) · Each Tenant with room number, name, account status, billing cycle and lease end date, plus the invitation expiry while the account is *Belum Diaktifkan*. Detail adds phone, email (once set), occupation, emergency contacts, the lease (dates, rent, billing cycle, grace period, next bill date) and, while the account is *Belum Diaktifkan*, the invitation: when it was created, when it expires, whether it has expired and, if not, its link.
 
 **UC-20 Edit tenant** (FR-13) · Editable: name, phone, occupation, emergency contacts, lease dates, rent, billing cycle, grace period; the same rules as UC-18 apply, and an *Aktif* Tenant's emergency contacts cannot be emptied. The room cannot be changed here. Rejects a lease end date before the start date. A rent or billing-cycle change applies **from the next bill onward**.
-Regenerate invitation link, for an unused or expired invitation (expiry: U-13): creates a new link and invalidates the old one. If regeneration fails, the old link stays valid. While an invitation is unused and not expired, its link can be shown again, so the backend keeps it in a form it can return (encrypted, not only hashed).
+Regenerate invitation link, for an unused or expired invitation (links last 7 days, §7): creates a new link and invalidates the old one. If regeneration fails, the old link stays valid. While an invitation is unused and not expired, its link can be shown again, so the backend keeps it in a form it can return (encrypted, not only hashed).
 
 **UC-21 Delete tenant** (FR-13) · Soft delete: the lease ends, account access is revoked and the room becomes *Kosong*. Payment and complaint history is kept.
 
@@ -331,7 +344,8 @@ Conventions:
 - IDs are UUID strings.
 - A list response is an object with an `items` array, so pagination or totals can be added without a breaking change.
 - An edit is a `PUT` of the full resource.
-- Error responses (U-9) and the authentication scheme (U-14) are not declared yet.
+- Authentication: an HTTP bearer scheme named `bearerAuth` (JWT access token) is declared on every operation except `GET /health` and the endpoints marked *public* below.
+- Error responses (U-9) are not declared yet.
 
 Endpoints:
 
@@ -374,8 +388,27 @@ Endpoints:
 | `POST`   | `/rent-bills/{rentBillId}/status-changes`       | Change the payment status manually, with a required reason. | UC-09                                                   |
 | `GET`    | `/properties/{propertyId}/payment-overview`     | Each Tenant's bill covering a date (`date`, default today). | UC-25                                                   |
 | `GET`    | `/properties/{propertyId}/payment-patterns`     | Each Tenant's payment-pattern facts, at-risk flag and AI summary. | UC-26                                             |
+| `POST`   | `/auth/register`                                | Public. Owner sign-up with a local password; starts a session. | FR-20                                                     |
+| `POST`   | `/auth/register/google`                         | Public. Owner sign-up with Google; starts a session.      | FR-20                                                     |
+| `POST`   | `/auth/login`                                   | Public. Log in with email and password; starts a session. | FR-20, FR-26, FR-01                                       |
+| `POST`   | `/auth/login/google`                            | Public. Log in with Google; starts a session.             | FR-20, FR-26, FR-01                                       |
+| `POST`   | `/auth/refresh`                                 | Public. Exchange a refresh token for a new token pair.    | NFR-18                                                    |
+| `POST`   | `/auth/logout`                                  | End the current session.                                  | FR-33                                                     |
+| `POST`   | `/auth/email-verification`                      | Send, or resend, the email verification code.             | FR-20, FR-26, FR-01                                       |
+| `POST`   | `/auth/email-verification/confirmation`         | Confirm the email with the 6-digit code.                  | FR-20, FR-26, FR-01                                       |
+| `POST`   | `/auth/password-reset-requests`                 | Public. Email a password-reset link.                      | NFR-11                                                    |
+| `POST`   | `/auth/password-reset-previews`                 | Public. Check a reset link and return the account email.  | NFR-11                                                    |
+| `POST`   | `/auth/password-resets`                         | Public. Set a new password with a reset link; ends all sessions. | NFR-11                                                    |
+| `POST`   | `/invitations/previews`                         | Public. What an invitation link is for and whether it is still valid. | FR-01, FR-26                                              |
+| `POST`   | `/invitations/activations/password`             | Public. Activate an invitation with a local password; starts a session. | FR-01, FR-26                                              |
+| `POST`   | `/invitations/activations/google`               | Public. Activate an invitation with Google; starts a session. | FR-01, FR-26                                              |
+| `POST`   | `/invitations/acceptance-previews`              | Check whether the caller's account can accept an invitation. | FR-01, FR-26                                              |
+| `POST`   | `/invitations/acceptances`                      | Accept an invitation with the caller's existing account.  | FR-01, FR-26                                              |
+| `GET`    | `/me`                                           | The caller's account and sign-in methods.                 | FR-30                                                     |
+| `POST`   | `/me/local-password`                            | Add a local password to a Google account.                 | FR-30                                                     |
+| `POST`   | `/me/google-link`                               | Link a Google account to a password account.              | FR-30                                                     |
 
-The property, room, tenant, complaint, lease, rent-bill and payment-pattern endpoints are declared in the contract but not implemented yet; they respond `501 Not Implemented`.
+Every endpoint listed above except `GET /health` is declared in the contract but not implemented yet; it responds `501 Not Implemented`.
 
 The response shape of `/health` is undecided (U-1).
 
@@ -387,14 +420,12 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 |-------|----------------------------------------------------------------------------------------------------------------------------------|---------------------------|
 | TBD-3 | Payment gateway provider and its integration.                                                                                    | UC-32                     |
 | U-1   | `/health` response shape.                                                                                                        | §9, NKMA-22               |
-| U-4   | Invitation link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01       |
+| U-4   | Invitation and password-reset link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01, NFR-11 |
 | U-6   | Bill generation (FR-31): when bills are created, how the amount is set, and proration.                                           | UC-04, UC-08, UC-25       |
 | U-8   | AI calls: timeout, retries, fallback, and whether classification runs within the save request or after it.                       | UC-02, UC-26              |
 | U-9   | Error response shape and the list of error codes.                                                                                | §6, §7, all endpoints     |
 | U-11  | Subscription plans, features and prices.                                                                                         | UC-31                     |
 | U-12  | Due-date reminder timing.                                                                                                        | UC-06                     |
-| U-13  | Invitation expiry.                                                                                                               | UC-18, UC-20, UC-27       |
-| U-14  | Token format and transport. Session lifetime and revocation are decided (§7).                                                    | §6, §7                    |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 | U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
 | U-19  | Facility tag storage: `TEXT[]` column vs. join tables (proposed: `TEXT[]`).                                                      | UC-14, UC-16              |
@@ -413,3 +444,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-10-2026 | Optional complaint photo added (UC-02, UC-03). Manual classifications return the actor and the original AI result (UC-23). Complaint photo endpoints added to §9. | NKMA-16 |
 | 17-10-2026 | U-7 decided: payment-pattern facts and at-risk threshold (UC-26). Bills carry days overdue and a status history; a manual *Lunas* takes a method and a date; payment dates cannot be after today. Payment-pattern endpoint added to §9. | NKMA-8 |
 | 17-10-2026 | UC-26 average days late includes overdue counted bills. §9 lists the payment-pattern endpoint as not implemented. | NKMA-8 |
+| 17-10-2026 | U-13 decided: invitation links last 7 days, password-reset links 30 minutes, both single-use. U-14 decided: JWT access token (15 minutes), opaque rotating refresh token, bearer transport, both in JSON bodies. Email verification by 6-digit code for local-password accounts, gating other endpoints until confirmed. Failed logins lock an email for 15 minutes after 5 failures. Passwords are 8 to 128 characters. Invitation activation takes the person's own email for Tenant and Manager; an existing Manager account may accept a Manager invitation. U-4 extended to password-reset links. Account-access endpoints added to §9. | NKMA-15 |
