@@ -1023,7 +1023,14 @@ def test_active_lease_summary_end_date_is_nullable_date_string(
 
 # Runtime: valid requests reach the not-implemented stub
 
-IMPLEMENTED_URLS = {REGISTER_URL, LOGIN_URL, REFRESH_URL, EMAIL_CONFIRMATION_URL}
+IMPLEMENTED_URLS = {
+    REGISTER_URL,
+    LOGIN_URL,
+    REFRESH_URL,
+    EMAIL_CONFIRMATION_URL,
+    INVITATION_PREVIEWS_URL,
+    PASSWORD_ACTIVATION_URL,
+}
 # Implemented endpoints that need a signed-in caller before the body is read.
 SIGNED_IN_URLS = {EMAIL_CONFIRMATION_URL}
 
@@ -1048,41 +1055,53 @@ def test_valid_account_access_request_responds_not_implemented(
 
 
 @pytest.mark.parametrize("count", [2, 3, 4])
-@pytest.mark.parametrize(
-    ("url", "base"),
-    [
-        pytest.param(PASSWORD_ACTIVATION_URL, VALID_PASSWORD_ACTIVATION_INPUT, id="pw"),
-        pytest.param(GOOGLE_ACTIVATION_URL, VALID_GOOGLE_ACTIVATION_INPUT, id="google"),
-    ],
-)
-def test_activation_with_2_to_4_emergency_contacts_is_accepted(
-    client, url: str, base: dict[str, Any], count: int
+def test_google_activation_with_2_to_4_emergency_contacts_is_accepted(
+    client, count: int
 ) -> None:
     contacts = [{**VALID_CONTACT, "name": f"Contact {i}"} for i in range(count)]
-    response = client.post(url, json={**base, "emergencyContacts": contacts})
-    assert response.status_code == 501
+    body = {**VALID_GOOGLE_ACTIVATION_INPUT, "emergencyContacts": contacts}
+    assert client.post(GOOGLE_ACTIVATION_URL, json=body).status_code == 501
 
 
-@pytest.mark.parametrize(
-    ("url", "base"),
-    [
-        pytest.param(PASSWORD_ACTIVATION_URL, VALID_PASSWORD_ACTIVATION_INPUT, id="pw"),
-        pytest.param(GOOGLE_ACTIVATION_URL, VALID_GOOGLE_ACTIVATION_INPUT, id="google"),
-    ],
-)
-def test_activation_with_null_emergency_contacts_is_accepted(
-    client, url: str, base: dict[str, Any]
+def test_google_activation_with_null_emergency_contacts_is_accepted(client) -> None:
+    body = {**VALID_GOOGLE_ACTIVATION_INPUT, "emergencyContacts": None}
+    assert client.post(GOOGLE_ACTIVATION_URL, json=body).status_code == 501
+
+
+@pytest.mark.parametrize("count", [2, 3, 4])
+def test_password_activation_with_2_to_4_emergency_contacts_passes_validation(
+    client, database, count: int
 ) -> None:
-    response = client.post(url, json={**base, "emergencyContacts": None})
-    assert response.status_code == 501
+    contacts = [{**VALID_CONTACT, "name": f"Contact {i}"} for i in range(count)]
+    body = {**VALID_PASSWORD_ACTIVATION_INPUT, "emergencyContacts": contacts}
+    response = client.post(PASSWORD_ACTIVATION_URL, json=body)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
+
+
+def test_password_activation_with_null_emergency_contacts_passes_validation(
+    client, database
+) -> None:
+    body = {**VALID_PASSWORD_ACTIVATION_INPUT, "emergencyContacts": None}
+    response = client.post(PASSWORD_ACTIVATION_URL, json=body)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
 
 
 @pytest.mark.parametrize("email", [None, "tenant@example.com"])
-def test_password_activation_accepts_an_optional_email(
-    client, email: str | None
+def test_password_activation_accepts_an_optional_email_in_the_schema(
+    client, database, email: str | None
 ) -> None:
     body = {**VALID_PASSWORD_ACTIVATION_INPUT, "email": email}
-    assert client.post(PASSWORD_ACTIVATION_URL, json=body).status_code == 501
+    response = client.post(PASSWORD_ACTIVATION_URL, json=body)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
+
+
+def test_invitation_preview_of_an_unknown_token_is_not_found(client, database) -> None:
+    response = client.post(INVITATION_PREVIEWS_URL, json=VALID_TOKEN_INPUT)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
 
 
 # Runtime: invalid requests are rejected with a validation error
