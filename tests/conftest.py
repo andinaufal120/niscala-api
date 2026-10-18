@@ -1,9 +1,13 @@
 """Shared fixtures for API contract tests."""
 
+from pathlib import Path
 from typing import Any
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, inspect, text
 
 REF_PREFIX = "#/components/schemas/"
 
@@ -88,6 +92,64 @@ def nullable_inner(schema: dict[str, Any]) -> dict[str, Any]:
     assert sorted(types) == sorted([*(t for t in types if t != "null"), "null"])
     (non_null,) = [t for t in types if t != "null"]
     return {**schema, "type": non_null}
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRATCH_PREFIX = "scratch_"
+_migrated_urls: set[str] = set()
+
+
+def alembic_config(url: str | None = None) -> Config:
+    """Build an Alembic config for the repository, optionally overriding the URL."""
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(REPO_ROOT / "migrations"))
+    if url is not None:
+        config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+    return config
+
+
+@pytest.fixture(scope="session")
+def postgres_url():
+    from testcontainers.postgres import PostgresContainer
+
+    with PostgresContainer("postgres:17", driver="psycopg") as container:
+        yield container.get_connection_url()
+
+
+@pytest.fixture(scope="session")
+def db_engine(postgres_url):
+    engine = create_engine(postgres_url)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def database(postgres_url, db_engine, monkeypatch):
+    """Point the application at a migrated Postgres container and clean up after."""
+    from app.db import get_engine
+    from app.models import Base
+
+    from app.config import get_settings
+
+    monkeypatch.setenv("DATABASE_URL", postgres_url)
+    get_settings.cache_clear()
+    get_engine.cache_clear()
+    if postgres_url not in _migrated_urls:
+        command.upgrade(alembic_config(postgres_url), "head")
+        _migrated_urls.add(postgres_url)
+    engine = get_engine()
+    yield engine
+    engine.dispose()
+    with db_engine.begin() as connection:
+        for table in reversed(Base.metadata.sorted_tables):
+            connection.execute(
+                text(f'TRUNCATE TABLE "{table.name}" RESTART IDENTITY CASCADE')
+            )
+        for name in inspect(connection).get_table_names():
+            if name.startswith(SCRATCH_PREFIX):
+                connection.execute(text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
+    get_settings.cache_clear()
+    get_engine.cache_clear()
 
 
 @pytest.fixture(scope="session")

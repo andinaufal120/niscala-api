@@ -10,21 +10,24 @@ niscala-api/
 │   ├── main.py        # FastAPI app: includes the routers, registers the error handlers
 │   ├── config.py      # Settings read from environment variables (.env supported)
 │   ├── errors.py      # ApiError and the handlers that give every error one JSON shape
+│   ├── db.py          # SQLAlchemy engine and the per-request session dependency
+│   ├── models/        # SQLAlchemy tables (declarative Base with a constraint naming convention)
 │   ├── security.py    # bearerAuth scheme declared on operations that need a session
 │   ├── routers/       # One module per resource: parse the request, return a schema
 │   └── schemas/       # Pydantic request and response models; they define the OpenAPI contract
-├── tests/             # pytest: contract tests against the generated OpenAPI document
+├── migrations/        # Alembic environment and revisions (alembic.ini at the root)
+├── tests/             # pytest: contract tests against the generated OpenAPI document, and tests against a throwaway PostgreSQL
 ├── docs/SPEC.md       # Requirements, glossary and endpoint table
 ├── .claude/           # Agent definitions and hooks for the test-first workflow
 └── .github/workflows/ # Claude Code review
 ```
 
-*Not built yet:* `services/` (business rules per area), `models/` and `db.py` (SQLAlchemy tables), `ai/` (Gemini classifier), `email.py`, `cli.py` and `migrations/` (Alembic).
+*Not built yet:* `services/` (business rules per area), `ai/` (Gemini classifier), `email.py` and `cli.py`. There are no tables or revisions yet.
 
 ## 2. High-Level System Diagram
 
 ```
-Flutter app --HTTPS/JSON--> FastAPI (routers -> schemas) --> PostgreSQL     (not built yet)
+Flutter app --HTTPS/JSON--> FastAPI (routers -> schemas) --> PostgreSQL
                                   |
                                   +--> Gemini (classification)               (not built yet)
                                   +--> email sender                          (not built yet)
@@ -44,12 +47,13 @@ The Flutter Android app lives in `andinaufal120/niscala-app`. It generates its D
 - **Schemas** (`schemas/`): Pydantic models on `ApiModel`, which exposes snake_case attributes as camelCase fields.
 - **Errors** (`errors.py`): every error response is `{"code", "field", "message"}`. Services raise `ApiError(status_code, code, message, field)`. Request validation errors become `VALIDATION_FAILED` with the first failing field. Any other `HTTPException` gets its status phrase as code (`NOT_FOUND`), and an unexpected exception becomes `INTERNAL_ERROR` without leaking its text.
 - **Settings** (`config.py`): `get_settings()` returns a cached `Settings` read from the environment.
+- **Database** (`db.py`): `get_session()` is a request dependency that yields a SQLAlchemy `Session`. It commits when the handler returns and rolls back when it raises, so a failed request saves nothing. The database enforces structural integrity only; business rules live in code.
 
-Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, managed with uv.
+Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, Alembic, psycopg 3, managed with uv.
 
 ## 4. Data Stores
 
-PostgreSQL (Supabase in production) with SQLAlchemy and Alembic. *Not built yet.*
+PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables: none yet. Facility tags will be a text-array column on the room.
 
 ## 5. External Integrations / APIs
 
@@ -69,6 +73,8 @@ Fly.io for the API and Supabase for the database are planned; *not set up yet.* 
 ## 8. Development & Testing Environment
 
 - `uv sync` installs dependencies; `uv run pytest` runs the tests; `uv run ruff check` and `uv run ruff format` lint and format.
+- Tests that touch the database start a throwaway PostgreSQL container (testcontainers), so Docker must be running. Tests that don't need it run without Docker. Tables are emptied after each test.
+- `uv run alembic upgrade head` applies migrations to the database in `DATABASE_URL`.
 - Tests come first: `test-writer` and `implementer` subagents (`.claude/agents/`) work in two steps, as described in `CLAUDE.md`.
 
 ## 9. Future Considerations

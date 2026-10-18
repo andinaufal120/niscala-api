@@ -299,7 +299,7 @@ The Owner's plan limits the number of properties (Gratis 1, Basic 3, Pro unlimit
 - room number: required, MUST be unique within the property;
 - base rate: required, per month, greater than 0;
 - `lengthM` and `widthM`: optional, in metres, each 0 < x ≤ 20 with at most 2 decimals. Both or neither, otherwise a field error. Area is not stored;
-- facilities: free-form tags. On save each tag is trimmed, lowercased and has repeated spaces collapsed; duplicates are dropped. At most 30 characters per tag and 15 tags per room (storage: U-19).
+- facilities: free-form tags. On save each tag is trimmed, lowercased and has repeated spaces collapsed; duplicates are dropped. At most 30 characters per tag and 15 tags per room. They are stored as one text-array column on the room.
 
 The Owner's plan limits the number of rooms per property (Gratis 15, Basic and Pro unlimited). Adding a room when the property already has that many (view-only ones included, deleted ones excluded) is rejected with `ROOM_LIMIT_REACHED`. Adding to a view-only property is rejected with `PROPERTY_READ_ONLY`.
 
@@ -552,7 +552,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-9   | The complete list of error codes, and declaring error responses in the OpenAPI document. (The response shape is decided, §6 rule 2.) | §6, §7, all endpoints |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 | U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
-| U-19  | Facility tag storage: `TEXT[]` column vs. join tables (proposed: `TEXT[]`).                                                      | UC-14, UC-16              |
 | U-23  | Push delivery through Firebase Cloud Messaging: retry policy and removal of invalid tokens. The contract carries an opaque token string, so it does not depend on this. | UC-06 |
 
 ## 11. Changelog
@@ -579,3 +578,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 18-10-2026 | Session lifetime relaxed: a session ends after 90 days without use or 1 year after the last authentication, instead of a fixed 30 days, so that users are not forced to log in about once a month. | NKMA-15 |
 | 18-10-2026 | Re-authentication added: changing a property's bank account needs the session to have re-authenticated with the password or Google within the last 5 minutes. Re-authentication endpoints added to §9. | NKMA-15 |
 | 18-10-2026 | U-9 narrowed: every error is a single object `{code, field, message}`; validation failures are `VALIDATION_FAILED` on the first invalid field. The code list and OpenAPI declaration stay open. | NKMA-19 |
+| 18-10-2026 | U-19 decided: facility tags are stored as a text-array column on the room. | NKMA-20 |
