@@ -1,5 +1,7 @@
 """FastAPI application. Its generated OpenAPI document is the API contract."""
 
+import logging
+
 from fastapi import Depends, FastAPI
 
 from app.errors import register_error_handlers
@@ -22,6 +24,12 @@ from app.routers import (
     user_accounts,
 )
 from app.security import bearer_scheme
+
+app_logger = logging.getLogger("app")
+app_logger.setLevel(logging.INFO)
+_handler = logging.StreamHandler()
+_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+app_logger.handlers = [_handler]  # replaced, not appended, so reloads keep one
 
 app = FastAPI(
     title="Niscala API",
