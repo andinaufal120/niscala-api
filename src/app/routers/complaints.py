@@ -18,12 +18,11 @@ from fastapi import (
     UploadFile,
     status,
 )
-from sqlalchemy.orm import Session
 
 from app.access import require_roles
 from app.ai.classifier import ComplaintClassifier, get_complaint_classifier
 from app.config import COMPLAINT_CATEGORIES
-from app.db import get_session
+from app.db import SessionDep
 from app.schemas.auth import UserRole
 from app.schemas.complaints import (
     Complaint,
@@ -41,7 +40,7 @@ router = APIRouter(prefix="/complaints", tags=["complaints"])
 categories_router = APIRouter(prefix="/complaint-categories", tags=["complaints"])
 
 ComplaintId = Annotated[UUID, Path(alias="complaintId")]
-Db = Annotated[Session, Depends(get_session)]
+Db = SessionDep
 Tenant = Annotated[CurrentUser, Depends(require_roles(UserRole.TENANT))]
 Reader = Annotated[
     CurrentUser,

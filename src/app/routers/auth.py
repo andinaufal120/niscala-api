@@ -3,9 +3,8 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import SessionDep
 from app.email import EmailSender, get_email_sender
 from app.errors import ApiError
 from app.models import UserAccount
@@ -46,7 +45,7 @@ def _require_unverified(user: UserAccount) -> None:
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_owner(
     body: RegisterOwnerInput,
-    db: Annotated[Session, Depends(get_session)],
+    db: SessionDep,
     sender: Annotated[EmailSender, Depends(get_email_sender)],
 ) -> AuthSession:
     """Sign up an Owner with a password and start a session."""
@@ -63,9 +62,7 @@ def register_owner_with_google(body: GoogleAuthInput) -> AuthSession:
 
 
 @router.post("/login")
-def login(
-    body: LoginInput, db: Annotated[Session, Depends(get_session)]
-) -> AuthSession:
+def login(body: LoginInput, db: SessionDep) -> AuthSession:
     """Log in with email and password and start a session."""
     email = body.email.strip().lower()
     ensure_not_locked(db, email)
@@ -88,9 +85,7 @@ def login_with_google(body: GoogleAuthInput) -> AuthSession:
 
 
 @router.post("/refresh")
-def refresh_tokens(
-    body: RefreshInput, db: Annotated[Session, Depends(get_session)]
-) -> AuthTokens:
+def refresh_tokens(body: RefreshInput, db: SessionDep) -> AuthTokens:
     """Exchange a refresh token for a new token pair; the old one stops working."""
     return refresh_session(db, body.refresh_token)
 
@@ -103,7 +98,7 @@ def refresh_tokens(
 )
 def logout(
     current: Annotated[CurrentUser, Depends(get_current_user)],
-    db: Annotated[Session, Depends(get_session)],
+    db: SessionDep,
 ) -> None:
     """End the current session."""
     end_session(db, current.session)
@@ -116,7 +111,7 @@ def logout(
 )
 def send_email_verification(
     current: Annotated[CurrentUser, Depends(get_current_user)],
-    db: Annotated[Session, Depends(get_session)],
+    db: SessionDep,
     sender: Annotated[EmailSender, Depends(get_email_sender)],
 ) -> EmailVerificationSent:
     """Email a new 6-digit verification code to the caller's account."""
@@ -129,7 +124,7 @@ def send_email_verification(
 def confirm_email(
     body: EmailConfirmationInput,
     current: Annotated[CurrentUser, Depends(get_current_user)],
-    db: Annotated[Session, Depends(get_session)],
+    db: SessionDep,
 ) -> Account:
     """Confirm the caller's email with the code that was sent."""
     _require_unverified(current.user)

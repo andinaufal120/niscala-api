@@ -4,10 +4,9 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
-from sqlalchemy.orm import Session
 
 from app.access import require_roles
-from app.db import get_session
+from app.db import SessionDep
 from app.schemas.auth import UserRole
 from app.schemas.tenants import Tenant, TenantInput, TenantInvitation
 from app.security import CurrentUser
@@ -16,7 +15,7 @@ from app.services import tenants
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
 TenantId = Annotated[UUID, Path(alias="tenantId")]
-Db = Annotated[Session, Depends(get_session)]
+Db = SessionDep
 OwnerOrManager = Annotated[
     CurrentUser, Depends(require_roles(UserRole.OWNER, UserRole.MANAGER))
 ]
