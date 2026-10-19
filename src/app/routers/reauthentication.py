@@ -3,9 +3,8 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import SessionDep
 from app.schemas.reauthentication import (
     Reauthentication,
     ReauthenticationGoogleInput,
@@ -21,7 +20,7 @@ router = APIRouter(prefix="/me/reauthentication", tags=["account"])
 def reauthenticate_with_password(
     body: ReauthenticationPasswordInput,
     current: Annotated[CurrentUser, Depends(get_verified_user)],
-    db: Annotated[Session, Depends(get_session)],
+    db: SessionDep,
 ) -> Reauthentication:
     """Confirm the caller's identity with their password."""
     until = reauthentication.reauthenticate_with_password(db, current, body.password)
