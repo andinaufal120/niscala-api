@@ -181,9 +181,8 @@ def test_active_subscription_default_now_is_the_current_time(db_session, owner):
 
 
 def test_grant_creates_a_subscription_for_the_period(db_session, owner):
-    from app.services.subscriptions import grant_subscription
-
     from app.models import Subscription
+    from app.services.subscriptions import grant_subscription
 
     before = datetime.now(UTC)
     row = grant_subscription(db_session, owner, PaidPlanCode.BASIC, 30)
@@ -203,10 +202,10 @@ def test_grant_is_visible_in_the_same_session(db_session, owner):
 
 
 def test_grant_flushes_but_does_not_commit(database, db_session, owner):
-    from app.services.subscriptions import grant_subscription
     from sqlalchemy.orm import Session
 
     from app.models import Subscription
+    from app.services.subscriptions import grant_subscription
 
     grant_subscription(db_session, owner, PaidPlanCode.BASIC, 30)
     assert db_session.in_transaction()
@@ -227,9 +226,8 @@ def test_grant_for_one_day(db_session, owner):
 
 @pytest.mark.parametrize("days", [0, -1, -30])
 def test_grant_rejects_a_period_shorter_than_one_day(db_session, owner, days):
-    from app.services.subscriptions import grant_subscription
-
     from app.models import Subscription
+    from app.services.subscriptions import grant_subscription
 
     with pytest.raises(ValueError):
         grant_subscription(db_session, owner, PaidPlanCode.BASIC, days)
@@ -237,10 +235,10 @@ def test_grant_rejects_a_period_shorter_than_one_day(db_session, owner, days):
 
 
 def test_granting_again_replaces_the_row(db_session, owner):
-    from app.services.subscriptions import grant_subscription
     from sqlalchemy import func, select
 
     from app.models import Subscription
+    from app.services.subscriptions import grant_subscription
 
     first = grant_subscription(db_session, owner, PaidPlanCode.BASIC, 30)
     second = grant_subscription(db_session, owner, PaidPlanCode.BASIC, 60)

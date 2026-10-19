@@ -156,9 +156,8 @@ def test_login_of_an_unverified_account_still_works(client, make_user):
 
 @pytest.mark.parametrize("role", ["owner", "manager", "tenant", "admin"])
 def test_login_works_for_every_role_with_a_password(client, make_user, role):
-    from app.services.passwords import hash_password
-
     from app.schemas.auth import UserRole
+    from app.services.passwords import hash_password
 
     make_user(
         email="rina@example.com",
