@@ -66,7 +66,13 @@ def test_start_session_inserts_one_row_with_the_device_and_login_method(
     assert row.platform == "Android 15"
     assert row.login_method == LoginMethod.GOOGLE
     assert row.revoked_at is None
-    assert row.previous_refresh_token_hash is None
+
+
+def test_start_session_records_no_used_refresh_token(db_session, make_user):
+    from app.models import UsedRefreshToken
+
+    start(db_session, make_user())
+    assert db_session.scalars(select(UsedRefreshToken)).all() == []
 
 
 def test_start_session_records_the_password_login_method(db_session, make_user):
