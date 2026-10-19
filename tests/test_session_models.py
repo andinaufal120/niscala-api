@@ -170,7 +170,6 @@ def test_user_session_gets_defaults_on_insert(db_session):
     db_session.refresh(row)
     assert isinstance(row.id, UUID)
     assert row.revoked_at is None
-    assert row.previous_refresh_token_hash is None
     for stamp in (row.created_at, row.last_active_at):
         assert stamp.tzinfo is not None
         assert stamp.utcoffset() == timedelta(0)
@@ -188,7 +187,6 @@ def test_user_session_round_trips_its_fields(db_session):
     row = new_session(
         user.id,
         refresh_token_hash="abc",
-        previous_refresh_token_hash="old",
         device_name="Galaxy",
         platform="Android 13",
         login_method=LoginMethod.GOOGLE,
@@ -200,7 +198,6 @@ def test_user_session_round_trips_its_fields(db_session):
     stored = db_session.get(UserSession, row.id)
     assert stored.user_id == user.id
     assert stored.refresh_token_hash == "abc"
-    assert stored.previous_refresh_token_hash == "old"
     assert stored.device_name == "Galaxy"
     assert stored.platform == "Android 13"
     assert stored.login_method == LoginMethod.GOOGLE
@@ -237,13 +234,148 @@ def test_user_session_requires_its_mandatory_columns(db_session, field):
         db_session.flush()
 
 
-def test_user_session_previous_hash_and_revoked_at_accept_none(db_session):
+def test_user_session_revoked_at_accepts_none(db_session):
     user = new_user()
     db_session.add(user)
     db_session.flush()
-    row = new_session(user.id, previous_refresh_token_hash=None, revoked_at=None)
+    row = new_session(user.id, revoked_at=None)
     db_session.add(row)
     db_session.flush()
+
+
+def test_user_session_no_longer_stores_a_previous_refresh_token_hash():
+    from app.models import UserSession
+
+    assert "previous_refresh_token_hash" not in UserSession.__table__.columns
+
+
+def test_database_sessions_table_has_no_previous_refresh_token_hash_column(database):
+    from sqlalchemy import inspect
+
+    columns = {c["name"] for c in inspect(database).get_columns("sessions")}
+    assert "previous_refresh_token_hash" not in columns
+
+
+def new_used_token(session_id, **overrides):
+    from app.models import UsedRefreshToken
+
+    fields = {
+        "token_hash": uuid4().hex,
+        "session_id": session_id,
+        "rotated_at": datetime.now(UTC),
+    }
+    return UsedRefreshToken(**{**fields, **overrides})
+
+
+def stored_session(db_session):
+    user = new_user()
+    db_session.add(user)
+    db_session.flush()
+    row = new_session(user.id)
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
+def test_used_refresh_token_model_is_registered_and_exported():
+    from app.models import Base, UsedRefreshToken
+
+    assert UsedRefreshToken.__tablename__ == "used_refresh_tokens"
+    assert "used_refresh_tokens" in Base.metadata.tables
+
+
+def test_used_refresh_token_has_the_expected_columns():
+    from app.models import UsedRefreshToken
+
+    table = UsedRefreshToken.__table__
+    assert set(table.columns.keys()) == {"token_hash", "session_id", "rotated_at"}
+    assert [c.name for c in table.primary_key.columns] == ["token_hash"]
+
+
+def test_used_refresh_token_round_trips_its_fields(db_session):
+    from app.models import UsedRefreshToken
+
+    session = stored_session(db_session)
+    rotated = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    db_session.add(new_used_token(session.id, token_hash="old", rotated_at=rotated))
+    db_session.commit()
+    db_session.expire_all()
+    stored = db_session.get(UsedRefreshToken, "old")
+    assert stored.session_id == session.id
+    assert stored.rotated_at == rotated
+    assert stored.rotated_at.utcoffset() == timedelta(0)
+
+
+def test_used_refresh_token_hash_must_be_unique(db_session):
+    session = stored_session(db_session)
+    db_session.add(new_used_token(session.id, token_hash="dup"))
+    db_session.flush()
+    db_session.add(new_used_token(session.id, token_hash="dup"))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
+def test_used_refresh_token_hash_is_unique_across_sessions(db_session):
+    first, second = stored_session(db_session), stored_session(db_session)
+    db_session.add(new_used_token(first.id, token_hash="dup"))
+    db_session.flush()
+    db_session.add(new_used_token(second.id, token_hash="dup"))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
+def test_used_refresh_token_requires_an_existing_session(db_session):
+    db_session.add(new_used_token(uuid4()))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
+@pytest.mark.parametrize("field", ["token_hash", "session_id"])
+def test_used_refresh_token_requires_its_key_columns(db_session, field):
+    session = stored_session(db_session)
+    db_session.add(new_used_token(**{"session_id": session.id, field: None}))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
+def test_a_session_can_have_many_used_refresh_tokens(db_session):
+    session = stored_session(db_session)
+    db_session.add_all([new_used_token(session.id) for _ in range(3)])
+    db_session.flush()
+
+
+def test_deleting_a_session_deletes_its_used_refresh_tokens(db_session):
+    from sqlalchemy import delete, func, select
+
+    from app.models import UsedRefreshToken, UserSession
+
+    doomed, kept = stored_session(db_session), stored_session(db_session)
+    db_session.add_all(
+        [new_used_token(doomed.id), new_used_token(doomed.id), new_used_token(kept.id)]
+    )
+    db_session.flush()
+    db_session.execute(delete(UserSession).where(UserSession.id == doomed.id))
+    remaining = db_session.scalars(select(UsedRefreshToken.session_id)).all()
+    assert remaining == [kept.id]
+    assert db_session.scalar(select(func.count()).select_from(UsedRefreshToken)) == 1
+
+
+def test_database_cascades_session_deletion_to_used_refresh_tokens(db_session):
+    session = stored_session(db_session)
+    db_session.add(new_used_token(session.id, token_hash="old"))
+    db_session.flush()
+    db_session.execute(text("DELETE FROM sessions WHERE id = :id"), {"id": session.id})
+    count = db_session.execute(
+        text("SELECT count(*) FROM used_refresh_tokens WHERE token_hash = 'old'")
+    ).scalar_one()
+    assert count == 0
+
+
+def test_used_refresh_tokens_session_id_is_indexed(database):
+    from sqlalchemy import inspect
+
+    indexes = inspect(database).get_indexes("used_refresh_tokens")
+    assert ["session_id"] in [index["column_names"] for index in indexes]
 
 
 @pytest.mark.parametrize("method", ["google", "password"])

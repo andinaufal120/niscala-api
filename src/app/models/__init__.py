@@ -8,7 +8,7 @@ from app.models.properties import ManagerAssignment, Property
 from app.models.rooms import Room
 from app.models.subscriptions import Subscription
 from app.models.tenants import EmergencyContact, Invitation, Lease, Tenant
-from app.models.users import UserAccount, UserSession
+from app.models.users import UsedRefreshToken, UserAccount, UserSession
 
 __all__ = [
     "Base",
@@ -24,6 +24,7 @@ __all__ = [
     "Room",
     "Subscription",
     "Tenant",
+    "UsedRefreshToken",
     "UserAccount",
     "UserSession",
 ]

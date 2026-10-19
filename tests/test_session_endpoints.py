@@ -29,6 +29,31 @@ def set_session_columns(database, session_id, **columns) -> None:
         db.commit()
 
 
+def used_hashes(database, session_id) -> set[str]:
+    from sqlalchemy import select
+
+    from app.models import UsedRefreshToken
+
+    with Session(database) as db:
+        return set(
+            db.scalars(
+                select(UsedRefreshToken.token_hash).where(
+                    UsedRefreshToken.session_id == session_id
+                )
+            )
+        )
+
+
+def rotate(client, first_token: str, times: int) -> list[str]:
+    """Refresh `times` in a row and return every token, oldest first."""
+    tokens = [first_token]
+    for _ in range(times):
+        response = refresh(client, tokens[-1])
+        assert response.status_code == 200
+        tokens.append(response.json()["refreshToken"])
+    return tokens
+
+
 def assert_access_rejected(response) -> None:
     assert response.status_code == 401
     body = response.json()
@@ -228,16 +253,58 @@ def test_access_token_from_before_the_refresh_keeps_working(client, make_user, s
     assert client.get(ME_URL, headers=signed_in.headers).status_code == 200
 
 
-def test_refresh_stores_the_new_hash_and_keeps_the_previous_one(
-    client, make_user, sign_in, read_session
+def test_refresh_stores_the_new_hash_and_records_the_old_one_as_used(
+    client, database, make_user, sign_in, read_session
 ):
     signed_in = sign_in(make_user())
     old = signed_in.tokens.refresh_token
     new = refresh(client, old).json()["refreshToken"]
     row = read_session(signed_in.session_id)
     assert row.refresh_token_hash == sha256(new)
-    assert row.previous_refresh_token_hash == sha256(old)
+    assert used_hashes(database, signed_in.session_id) == {sha256(old)}
     assert row.revoked_at is None
+
+
+def test_every_rotated_token_is_recorded_and_the_current_one_is_not(
+    client, database, make_user, sign_in, read_session
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 4)
+    assert used_hashes(database, signed_in.session_id) == {
+        sha256(token) for token in tokens[:-1]
+    }
+    assert read_session(signed_in.session_id).refresh_token_hash == sha256(tokens[-1])
+
+
+def test_rotation_stamps_the_time_it_was_recorded(client, database, make_user, sign_in):
+    from sqlalchemy import select
+
+    from app.models import UsedRefreshToken
+
+    signed_in = sign_in(make_user())
+    refresh(client, signed_in.tokens.refresh_token)
+    with Session(database) as db:
+        row = db.scalars(select(UsedRefreshToken)).one()
+    assert row.token_hash == sha256(signed_in.tokens.refresh_token)
+    assert row.session_id == signed_in.session_id
+    assert row.rotated_at.utcoffset() == timedelta(0)
+    assert abs(datetime.now(UTC) - row.rotated_at) < timedelta(minutes=1)
+
+
+def test_rotation_records_used_tokens_only_for_its_own_session(
+    client, database, make_user, sign_in
+):
+    user = make_user()
+    phone, tablet = sign_in(user, "Phone"), sign_in(user, "Tablet")
+    rotate(client, phone.tokens.refresh_token, 2)
+    assert len(used_hashes(database, phone.session_id)) == 2
+    assert used_hashes(database, tablet.session_id) == set()
+
+
+def test_failed_refreshes_record_no_used_tokens(client, database, make_user, sign_in):
+    signed_in = sign_in(make_user())
+    refresh(client, "no-such-token")
+    assert used_hashes(database, signed_in.session_id) == set()
 
 
 def test_refresh_sets_last_active_to_now_and_keeps_created_at(
@@ -299,6 +366,123 @@ def test_reusing_a_rotated_refresh_token_kills_the_sessions_access_tokens(
     )
 
 
+def test_reusing_a_token_from_three_rotations_back_is_rejected_and_ends_the_session(
+    client, make_user, sign_in, read_session
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 3)
+    assert_refresh_rejected(refresh(client, tokens[0]))
+    assert read_session(signed_in.session_id).revoked_at is not None
+
+
+def test_reusing_any_earlier_token_of_a_long_family_ends_the_session(
+    client, make_user, sign_in, read_session
+):
+    for position in (0, 1, 3, 4):
+        signed_in = sign_in(make_user())
+        tokens = rotate(client, signed_in.tokens.refresh_token, 5)
+        assert_refresh_rejected(refresh(client, tokens[position]))
+        assert read_session(signed_in.session_id).revoked_at is not None
+
+
+def test_reusing_an_old_token_kills_the_newest_refresh_token(
+    client, make_user, sign_in
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 3)
+    refresh(client, tokens[0])
+    assert_refresh_rejected(refresh(client, tokens[-1]))
+
+
+def test_reusing_an_old_token_kills_the_sessions_access_tokens(
+    client, make_user, sign_in
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 3)
+    assert client.get(ME_URL, headers=signed_in.headers).status_code == 200
+    refresh(client, tokens[0])
+    assert_access_rejected(client.get(ME_URL, headers=signed_in.headers))
+
+
+def test_reusing_the_immediately_previous_token_still_ends_the_session(
+    client, make_user, sign_in, read_session
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 3)
+    assert_refresh_rejected(refresh(client, tokens[-2]))
+    assert read_session(signed_in.session_id).revoked_at is not None
+    assert_refresh_rejected(refresh(client, tokens[-1]))
+
+
+def test_using_the_same_token_twice_in_a_row_ends_the_session_on_the_second_use(
+    client, make_user, sign_in, read_session
+):
+    signed_in = sign_in(make_user())
+    token = signed_in.tokens.refresh_token
+    first = refresh(client, token)
+    assert first.status_code == 200
+    assert read_session(signed_in.session_id).revoked_at is None
+    assert_refresh_rejected(refresh(client, token))
+    assert read_session(signed_in.session_id).revoked_at is not None
+    assert_refresh_rejected(refresh(client, first.json()["refreshToken"]))
+
+
+def test_reuse_detection_does_not_touch_another_users_session(
+    client, make_user, sign_in
+):
+    first, second = sign_in(make_user()), sign_in(make_user())
+    tokens = rotate(client, first.tokens.refresh_token, 3)
+    rotate(client, second.tokens.refresh_token, 1)
+    refresh(client, tokens[0])
+    assert client.get(ME_URL, headers=second.headers).status_code == 200
+
+
+def test_replaying_a_token_of_an_already_revoked_session_is_rejected(
+    client, make_user, sign_in, read_session
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 2)
+    client.post(LOGOUT_URL, headers=signed_in.headers)
+    revoked_at = read_session(signed_in.session_id).revoked_at
+    assert_refresh_rejected(refresh(client, tokens[0]))
+    assert read_session(signed_in.session_id).revoked_at == revoked_at
+
+
+def test_concurrent_refreshes_with_one_token_give_exactly_one_success(
+    app, database, make_user, sign_in, read_session
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from fastapi.testclient import TestClient
+
+    signed_in = sign_in(make_user())
+    token = signed_in.tokens.refresh_token
+    workers = 4
+    barrier = Barrier(workers)
+
+    def attempt(_):
+        barrier.wait()
+        return refresh(TestClient(app), token)
+
+    with ThreadPoolExecutor(workers) as pool:
+        responses = list(pool.map(attempt, range(workers)))
+
+    statuses = sorted(response.status_code for response in responses)
+    assert statuses == [200] + [401] * (workers - 1)
+    for response in responses:
+        if response.status_code == 401:
+            assert_refresh_rejected(response)
+    winner = next(r for r in responses if r.status_code == 200).json()
+    assert read_session(signed_in.session_id).revoked_at is not None
+    assert_refresh_rejected(refresh(TestClient(app), winner["refreshToken"]))
+    assert_access_rejected(
+        TestClient(app).get(
+            ME_URL, headers={"Authorization": f"Bearer {winner['accessToken']}"}
+        )
+    )
+
+
 def test_reusing_a_rotated_refresh_token_leaves_other_sessions_working(
     client, make_user, sign_in
 ):
@@ -323,6 +507,21 @@ def test_unknown_refresh_token_does_not_end_any_session(
     assert client.get(ME_URL, headers=signed_in.headers).status_code == 200
 
 
+def test_unknown_refresh_token_leaves_a_rotated_session_alive_and_unchanged(
+    client, database, make_user, sign_in, read_session
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 3)
+    before_hash = read_session(signed_in.session_id).refresh_token_hash
+    before_used = used_hashes(database, signed_in.session_id)
+    assert_refresh_rejected(refresh(client, "no-such-token"))
+    row = read_session(signed_in.session_id)
+    assert row.revoked_at is None
+    assert row.refresh_token_hash == before_hash
+    assert used_hashes(database, signed_in.session_id) == before_used
+    assert refresh(client, tokens[-1]).status_code == 200
+
+
 def test_access_token_is_not_accepted_as_a_refresh_token(client, make_user, sign_in):
     signed_in = sign_in(make_user())
     assert_refresh_rejected(refresh(client, signed_in.tokens.access_token))
@@ -344,7 +543,7 @@ def test_refresh_token_of_a_revoked_session_does_not_issue_a_new_token(
     refresh(client, signed_in.tokens.refresh_token)
     row = read_session(signed_in.session_id)
     assert row.refresh_token_hash == sha256(signed_in.tokens.refresh_token)
-    assert row.previous_refresh_token_hash is None
+    assert used_hashes(database, signed_in.session_id) == set()
 
 
 def test_session_idle_for_89_days_can_still_refresh(
@@ -441,3 +640,107 @@ def test_refresh_without_a_body_field_is_a_validation_failure(client, database):
     body = response.json()
     assert body["code"] == "VALIDATION_FAILED"
     assert body["field"] == "refreshToken"
+
+
+# Used refresh tokens are dropped when their session ends
+
+
+def test_logout_deletes_the_sessions_used_tokens(client, database, make_user, sign_in):
+    signed_in = sign_in(make_user())
+    rotate(client, signed_in.tokens.refresh_token, 3)
+    assert len(used_hashes(database, signed_in.session_id)) == 3
+    client.post(LOGOUT_URL, headers=signed_in.headers)
+    assert used_hashes(database, signed_in.session_id) == set()
+
+
+def test_logout_keeps_the_used_tokens_of_other_sessions(
+    client, database, make_user, sign_in
+):
+    user = make_user()
+    phone, tablet = sign_in(user, "Phone"), sign_in(user, "Tablet")
+    rotate(client, phone.tokens.refresh_token, 2)
+    latest = rotate(client, tablet.tokens.refresh_token, 2)[-1]
+    access_token = refresh(client, latest).json()["accessToken"]
+    client.post(LOGOUT_URL, headers={"Authorization": f"Bearer {access_token}"})
+    assert used_hashes(database, tablet.session_id) == set()
+    assert len(used_hashes(database, phone.session_id)) == 2
+
+
+def test_reuse_deletes_the_sessions_used_tokens(client, database, make_user, sign_in):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 3)
+    refresh(client, tokens[0])
+    assert used_hashes(database, signed_in.session_id) == set()
+
+
+def test_reuse_keeps_the_used_tokens_of_other_sessions(
+    client, database, make_user, sign_in
+):
+    user = make_user()
+    phone, tablet = sign_in(user, "Phone"), sign_in(user, "Tablet")
+    tokens = rotate(client, phone.tokens.refresh_token, 2)
+    rotate(client, tablet.tokens.refresh_token, 2)
+    refresh(client, tokens[0])
+    assert len(used_hashes(database, tablet.session_id)) == 2
+
+
+def test_idle_session_failure_deletes_the_sessions_used_tokens(
+    client, database, make_user, sign_in
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 2)
+    set_session_columns(database, signed_in.session_id, last_active_at=days_ago(91))
+    assert_refresh_rejected(refresh(client, tokens[-1]))
+    assert used_hashes(database, signed_in.session_id) == set()
+
+
+def test_expired_session_failure_deletes_the_sessions_used_tokens(
+    client, database, make_user, sign_in
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 2)
+    set_session_columns(database, signed_in.session_id, created_at=days_ago(366))
+    assert_refresh_rejected(refresh(client, tokens[-1]))
+    assert used_hashes(database, signed_in.session_id) == set()
+
+
+def test_replay_after_the_session_failed_its_limits_is_still_rejected(
+    client, database, make_user, sign_in
+):
+    signed_in = sign_in(make_user())
+    tokens = rotate(client, signed_in.tokens.refresh_token, 2)
+    set_session_columns(database, signed_in.session_id, last_active_at=days_ago(91))
+    refresh(client, tokens[-1])
+    assert_refresh_rejected(refresh(client, tokens[0]))
+    assert_refresh_rejected(refresh(client, tokens[-1]))
+
+
+def test_end_session_deletes_the_sessions_used_tokens_and_revokes_it(
+    client, database, make_user, sign_in, read_session
+):
+    from app.models import UserSession
+    from app.services.sessions import end_session
+
+    signed_in = sign_in(make_user())
+    other = sign_in(make_user())
+    rotate(client, signed_in.tokens.refresh_token, 3)
+    rotate(client, other.tokens.refresh_token, 1)
+    with Session(database) as db:
+        end_session(db, db.get(UserSession, signed_in.session_id))
+        db.commit()
+    assert read_session(signed_in.session_id).revoked_at is not None
+    assert used_hashes(database, signed_in.session_id) == set()
+    assert len(used_hashes(database, other.session_id)) == 1
+
+
+def test_end_session_on_a_session_without_used_tokens_succeeds(
+    database, make_user, sign_in, read_session
+):
+    from app.models import UserSession
+    from app.services.sessions import end_session
+
+    signed_in = sign_in(make_user())
+    with Session(database) as db:
+        end_session(db, db.get(UserSession, signed_in.session_id))
+        db.commit()
+    assert read_session(signed_in.session_id).revoked_at is not None

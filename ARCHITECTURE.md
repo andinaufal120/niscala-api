@@ -61,7 +61,7 @@ Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, A
 
 ## 4. Data Stores
 
-PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints` and `complaint_status_changes`. Facility tags are a text-array column on the room.
+PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints` and `complaint_status_changes`. Facility tags are a text-array column on the room.
 
 ## 5. External Integrations / APIs
 
@@ -74,7 +74,7 @@ Fly.io for the API and Supabase for the database are planned; *not set up yet.* 
 
 ## 7. Security Considerations
 
-- Authentication: a bearer JWT access token (HS256, 15 minutes, signed with `JWT_SECRET`), declared as `bearerAuth` in the OpenAPI document. `get_current_user` validates it and also loads the session row, so an ended session stops working at once. The refresh token is opaque, stored only as a SHA-256 hash, and rotated on every use; presenting a rotated one ends the session. Sessions end after 90 days idle or 1 year after login.
+- Authentication: a bearer JWT access token (HS256, 15 minutes, signed with `JWT_SECRET`), declared as `bearerAuth` in the OpenAPI document. `get_current_user` validates it and also loads the session row, so an ended session stops working at once. The refresh token is opaque, stored only as a SHA-256 hash, and rotated on every use; presenting a rotated one ends the session. Each session is a token family: every hash it has rotated away from stays in `used_refresh_tokens` until the session ends, so reuse of any of them is detected, and a `SELECT ... FOR UPDATE` on the session row makes concurrent refreshes with the same token run one after the other. Sessions end after 90 days idle or 1 year after login.
 - Invitation links carry a random token: the database keeps its SHA-256 hash for lookup and a Fernet-encrypted copy (key `INVITATION_ENCRYPTION_KEY`) so the link can be shown again while it is valid.
 - Passwords are hashed with argon2id. New passwords are checked against the common-password list and a few pattern rules (`services/passwords.py`). Failed logins are counted per email and lock it for 15 minutes after 5 failures (`login_failures`). Email verification codes are stored as SHA-256 hashes, valid 10 minutes and voided after 5 wrong attempts. Until the email is verified, `get_verified_user` answers `EMAIL_NOT_VERIFIED`; `get_current_user` is for the few endpoints open to unverified accounts.
 - Authorization: role and property access are enforced by the backend (`docs/SPEC.md` §4). `require_roles` checks the role after the session and email checks, and `require_recent_reauthentication` requires the session to have confirmed the password within the last 5 minutes. `get_accessible_property` and `accessible_properties` (in `access.py`) are the only way to reach a property: an inaccessible one answers `PROPERTY_NOT_FOUND`, the same as a missing one.
@@ -90,6 +90,8 @@ Fly.io for the API and Supabase for the database are planned; *not set up yet.* 
 ## 9. Future Considerations
 
 Open architecture questions are listed in `docs/SPEC.md` §10 (for example U-9 error codes in OpenAPI, U-15 conflict detection, TBD-3 Google Play integration).
+
+Not built yet: a cleanup job for sessions that passed the idle or maximum age limit without a later refresh attempt. Their `used_refresh_tokens` rows stay until that attempt ends the session.
 
 ## 10. Project Identification
 

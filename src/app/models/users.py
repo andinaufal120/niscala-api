@@ -49,7 +49,6 @@ class UserSession(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("user_accounts.id"))
     refresh_token_hash: Mapped[str] = mapped_column(unique=True)
-    previous_refresh_token_hash: Mapped[str | None]
     device_name: Mapped[str]
     platform: Mapped[str]
     login_method: Mapped[LoginMethod] = mapped_column(String)
@@ -59,3 +58,15 @@ class UserSession(Base):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reauthenticated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UsedRefreshToken(Base):
+    """A refresh token a session has rotated away from, kept as a hash."""
+
+    __tablename__ = "used_refresh_tokens"
+
+    token_hash: Mapped[str] = mapped_column(primary_key=True)
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), index=True
+    )
+    rotated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
