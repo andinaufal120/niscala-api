@@ -3,6 +3,7 @@
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from itertools import count
 from pathlib import Path
 from typing import Any
@@ -608,6 +609,159 @@ def make_complaint(database) -> Callable[..., Any]:
                         status=change_status,
                         handling_note=note,
                         changed_at=changed_at,
+                    )
+                )
+            db.commit()
+            return row
+
+    return factory
+
+
+BANK_ACCOUNT = {
+    "bankName": "Bank Mandiri",
+    "accountNumber": "1234567890",
+    "accountHolderName": "Rina Owner",
+}
+
+
+@dataclass(frozen=True)
+class RentScene:
+    """A property with a bank account, one room, its tenant and the staff around it.
+
+    The manager is assigned to the property. Every account is signed in.
+    """
+
+    owner: Any
+    manager: Any
+    prop: Any
+    room: Any
+    tenant: StoredTenant
+    owner_in: SignedIn
+    manager_in: SignedIn
+    tenant_in: SignedIn
+
+
+@pytest.fixture
+def frozen_today(monkeypatch) -> date:
+    """Fix the date the rent bill rules treat as today in Jakarta."""
+    from rent_bill_support import TODAY
+
+    monkeypatch.setattr("app.services.rent_bills.today_jakarta", lambda: TODAY)
+    return TODAY
+
+
+@pytest.fixture
+def scene(
+    frozen_today,
+    database,
+    make_user,
+    make_property,
+    make_room,
+    make_verified_tenant,
+    assign_manager,
+    sign_in,
+) -> RentScene:
+    """An owner, an assigned manager and a tenant with an active lease."""
+    from sqlalchemy.orm import Session
+
+    from app.models import Property
+    from app.schemas.auth import UserRole
+
+    owner = make_user(name="Rina Owner")
+    manager = make_user(name="Mira Manager", role=UserRole.MANAGER)
+    prop = make_property(owner, name="Kos Melati")
+    with Session(database) as db:
+        row = db.get(Property, prop.id)
+        row.bank_name = BANK_ACCOUNT["bankName"]
+        row.bank_account_number = BANK_ACCOUNT["accountNumber"]
+        row.bank_account_holder_name = BANK_ACCOUNT["accountHolderName"]
+        db.commit()
+    assign_manager(manager, prop)
+    room = make_room(prop, number="A1")
+    tenant = make_verified_tenant(room, name="Budi Tenant")
+    return RentScene(
+        owner=owner,
+        manager=manager,
+        prop=prop,
+        room=room,
+        tenant=tenant,
+        owner_in=sign_in(owner),
+        manager_in=sign_in(manager),
+        tenant_in=sign_in(tenant.user),
+    )
+
+
+@pytest.fixture
+def make_rent_bill(database) -> Callable[..., Any]:
+    """Commit a `RentBill` for a lease with its status history and optional receipt.
+
+    The default bill covers today, is unpaid and is not yet due. `changes` is a
+    list of `(status, method, reason, manual, actor_id, changed_at)`; by default
+    one unpaid entry made by the system at the creation time. `receipt` is an
+    optional `(content, content_type, uploaded_at)`.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy.orm import Session
+
+    from app.models import RentBill, RentBillReceipt, RentBillStatusChange
+
+    def factory(
+        lease,
+        *,
+        period_start: date | None = None,
+        period_end: date | None = None,
+        due_date: date | None = None,
+        amount: int = 1000000,
+        status: str = "unpaid",
+        method: str | None = None,
+        paid_on: date | None = None,
+        rejection_reason: str | None = None,
+        receipt: tuple[bytes, str, datetime] | None = None,
+        changes: list[tuple] | None = None,
+        created_at: datetime | None = None,
+    ) -> RentBill:
+        from rent_bill_support import TODAY as today
+
+        start = period_start or today - timedelta(days=5)
+        created = created_at or datetime.now(UTC)
+        with Session(database, expire_on_commit=False) as db:
+            row = RentBill(
+                lease_id=lease.id,
+                period_start=start,
+                period_end=period_end or start + timedelta(days=29),
+                due_date=due_date or today + timedelta(days=10),
+                amount=amount,
+                payment_status=status,
+                payment_method=method,
+                paid_on=paid_on,
+                rejection_reason=rejection_reason,
+                created_at=created,
+            )
+            db.add(row)
+            db.flush()
+            for c_status, c_method, reason, manual, actor_id, changed_at in changes or [
+                ("unpaid", None, None, False, None, created)
+            ]:
+                db.add(
+                    RentBillStatusChange(
+                        rent_bill_id=row.id,
+                        status=c_status,
+                        method=c_method,
+                        reason=reason,
+                        manual=manual,
+                        actor_id=actor_id,
+                        changed_at=changed_at,
+                    )
+                )
+            if receipt is not None:
+                content, content_type, uploaded_at = receipt
+                db.add(
+                    RentBillReceipt(
+                        rent_bill_id=row.id,
+                        content=content,
+                        content_type=content_type,
+                        uploaded_at=uploaded_at,
                     )
                 )
             db.commit()

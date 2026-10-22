@@ -196,11 +196,12 @@ def test_list_rent_bills_declares_exactly_tenant_and_payment_status_filters(
 ) -> None:
     assert set(_query_parameters(openapi, "get", "/rent-bills")) == {
         "tenantId",
+        "propertyId",
         "paymentStatus",
     }
 
 
-@pytest.mark.parametrize("name", ["tenantId", "paymentStatus"])
+@pytest.mark.parametrize("name", ["tenantId", "propertyId", "paymentStatus"])
 def test_list_rent_bills_filter_is_optional(openapi: OpenApiDoc, name: str) -> None:
     parameter = _query_parameters(openapi, "get", "/rent-bills")[name]
     assert parameter.get("required", False) is False
@@ -211,11 +212,21 @@ def test_list_rent_bills_tenant_id_filter_is_uuid_string(openapi: OpenApiDoc) ->
     _assert_uuid_string(_unwrap_optional(parameter["schema"]))
 
 
-def test_list_rent_bills_payment_status_filter_is_payment_status(
+def test_list_rent_bills_property_id_filter_is_uuid_string(
+    openapi: OpenApiDoc,
+) -> None:
+    parameter = _query_parameters(openapi, "get", "/rent-bills")["propertyId"]
+    _assert_uuid_string(_unwrap_optional(parameter["schema"]))
+
+
+def test_list_rent_bills_payment_status_filter_is_a_repeatable_payment_status(
     openapi: OpenApiDoc,
 ) -> None:
     parameter = _query_parameters(openapi, "get", "/rent-bills")["paymentStatus"]
-    assert openapi.ref_name(_unwrap_optional(parameter["schema"])) == "PaymentStatus"
+    schema = _unwrap_optional(parameter["schema"])
+    assert schema["type"] == "array"
+    assert openapi.ref_name(schema["items"]) == "PaymentStatus"
+    assert parameter.get("explode", True) is True
 
 
 def test_payment_overview_declares_exactly_the_date_query_parameter(
@@ -477,9 +488,12 @@ SUMMARY_FIELDS = {
     "amount",
     "daysOverdue",
     "payment",
+    "property",
+    "isCurrent",
+    "canUploadReceipt",
 }
 
-RENT_BILL_FIELDS = {*SUMMARY_FIELDS, "property", "bankAccount", "statusChanges"}
+RENT_BILL_FIELDS = {*SUMMARY_FIELDS, "bankAccount", "statusChanges"}
 
 
 @pytest.fixture(params=["RentBill", "RentBillSummary"])
@@ -638,9 +652,25 @@ def test_rent_bill_payment_is_payment(
     assert openapi.ref_name(schema) == "Payment"
 
 
-def test_rent_bill_property_is_property_ref(openapi: OpenApiDoc) -> None:
-    schema = openapi.component("RentBill")["properties"]["property"]
+def test_rent_bill_property_is_property_ref(
+    openapi: OpenApiDoc, any_rent_bill_schema: dict[str, Any]
+) -> None:
+    schema = any_rent_bill_schema["properties"]["property"]
     assert openapi.ref_name(schema) == "PropertyRef"
+
+
+@pytest.mark.parametrize("field", ["isCurrent", "canUploadReceipt"])
+def test_rent_bill_flag_is_boolean(
+    any_rent_bill_schema: dict[str, Any], field: str
+) -> None:
+    assert any_rent_bill_schema["properties"][field]["type"] == "boolean"
+
+
+@pytest.mark.parametrize("field", ["isCurrent", "canUploadReceipt"])
+def test_rent_bill_flag_is_described(
+    any_rent_bill_schema: dict[str, Any], field: str
+) -> None:
+    assert any_rent_bill_schema["properties"][field]["description"].strip()
 
 
 def test_rent_bill_bank_account_is_nullable_bank_account(openapi: OpenApiDoc) -> None:
