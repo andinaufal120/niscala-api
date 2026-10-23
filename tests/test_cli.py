@@ -449,6 +449,39 @@ def test_weekly_leases_get_one_bill_per_week(
     ] * 5
 
 
+def test_seeding_never_dates_a_late_payment_after_today(
+    frozen_today, database, make_user, make_property, make_room, make_tenant
+):
+    from zoneinfo import ZoneInfo
+
+    from app.cli import main
+
+    room = make_room(make_property(make_user(email="owner@example.com")))
+    make_tenant(
+        room,
+        email="weekly@example.com",
+        start_date=date(2026, 9, 25),
+        billing_cycle="weekly",
+        invitation=False,
+        activated=True,
+    )
+    main([SEED, "weekly@example.com"])
+    bills = stored_bills(database)
+    # The fourth bill is due 2026-10-16, so due date + 10 days would be after today.
+    assert bills[3].due_date + timedelta(days=10) > frozen_today
+    end_of_today = datetime(
+        frozen_today.year,
+        frozen_today.month,
+        frozen_today.day,
+        tzinfo=ZoneInfo("Asia/Jakarta"),
+    ) + timedelta(days=1)
+    for bill in bills[:-1]:
+        assert bill.paid_on <= frozen_today
+        paid = [c for c in stored_bill_changes(database, bill) if c.status == "paid"]
+        assert paid
+        assert all(c.changed_at <= end_of_today for c in paid)
+
+
 def test_quarterly_leases_get_one_bill_per_quarter(
     frozen_today, database, make_user, make_property, make_room, make_tenant
 ):
