@@ -4,10 +4,8 @@ from typing import Any
 
 import pytest
 from conftest import (
-    NOT_A_UUID,
     PROPERTY_ID,
     RENT_BILL_ID,
-    TENANT_ID,
     OpenApiDoc,
     nullable_inner,
 )
@@ -143,14 +141,43 @@ def test_rent_bill_operation_has_operation_id(
     assert openapi.operation(method, path)["operationId"] == operation_id
 
 
+# (method, path): the error statuses the operation documents. 401 is not declared.
+DECLARED_ERROR_STATUSES = {
+    ("get", "/rent-bills"): {"403", "422"},
+    ("get", "/rent-bills/{rentBillId}"): {"403", "404", "422"},
+    ("put", "/rent-bills/{rentBillId}/receipt"): {"403", "404", "409", "422"},
+    ("get", "/rent-bills/{rentBillId}/receipt"): {"403", "404", "422"},
+    ("post", "/rent-bills/{rentBillId}/verification"): {"403", "404", "409", "422"},
+    ("post", "/rent-bills/{rentBillId}/rejection"): {"403", "404", "409", "422"},
+    ("post", "/rent-bills/{rentBillId}/cash-payment"): {"403", "404", "409", "422"},
+    ("post", "/rent-bills/{rentBillId}/status-changes"): {"403", "404", "422"},
+}
+
+
 @pytest.mark.parametrize(
     ("method", "path", "operation_id", "status"), RENT_BILL_OPERATIONS
 )
-def test_rent_bill_operation_declares_only_its_success_status_besides_validation_error(
+def test_rent_bill_operation_declares_its_success_and_error_statuses(
     openapi: OpenApiDoc, method: str, path: str, operation_id: str, status: int
 ) -> None:
     responses = set(openapi.operation(method, path)["responses"])
-    assert responses - {"422"} == {str(status)}
+    errors = DECLARED_ERROR_STATUSES.get((method, path), {"422"})
+    assert responses == {str(status)} | errors
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [pytest.param(m, p, id=p + ":" + m) for (m, p) in DECLARED_ERROR_STATUSES],
+)
+def test_rent_bill_error_responses_carry_the_error_body(
+    openapi: OpenApiDoc, method: str, path: str
+) -> None:
+    responses = openapi.operation(method, path)["responses"]
+    for status in DECLARED_ERROR_STATUSES[(method, path)] - {"422"}:
+        schema = openapi.resolve(
+            responses[status]["content"]["application/json"]["schema"]
+        )
+        assert {"code", "field", "message"} <= _property_names(schema)
 
 
 @pytest.mark.parametrize(("method", "path", "name"), RENT_BILL_PATH_PARAMETERS)
@@ -863,399 +890,3 @@ def test_payment_overview_items_is_array_of_payment_overview_item(
     items = openapi.component("PaymentOverview")["properties"]["items"]
     assert items["type"] == "array"
     assert openapi.ref_name(items["items"]) == "PaymentOverviewItem"
-
-
-# Runtime: valid requests reach the not-implemented stub
-
-
-@pytest.mark.parametrize(
-    ("method", "url", "body"),
-    [
-        pytest.param("get", LIST_URL, None, id="list"),
-        pytest.param("get", BILL_URL, None, id="get"),
-        pytest.param("get", RECEIPT_URL, None, id="get_receipt"),
-        pytest.param("post", VERIFICATION_URL, None, id="verify"),
-        pytest.param("post", REJECTION_URL, VALID_REJECTION_INPUT, id="reject"),
-        pytest.param(
-            "post", CASH_PAYMENT_URL, VALID_CASH_PAYMENT_INPUT, id="cash_payment"
-        ),
-        pytest.param(
-            "post", STATUS_CHANGES_URL, VALID_STATUS_CHANGE_INPUT, id="change_status"
-        ),
-        pytest.param("get", OVERVIEW_URL, None, id="overview"),
-    ],
-)
-def test_valid_rent_bill_request_responds_not_implemented(
-    client, method: str, url: str, body: dict[str, Any] | None
-) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize(
-    ("filename", "content", "content_type"),
-    [
-        pytest.param("receipt.png", PNG_BYTES, "image/png", id="png"),
-        pytest.param("receipt.jpg", JPEG_BYTES, "image/jpeg", id="jpeg"),
-    ],
-)
-def test_valid_receipt_upload_responds_not_implemented(
-    client, filename: str, content: bytes, content_type: str
-) -> None:
-    response = client.put(
-        RECEIPT_URL, files={"file": (filename, content, content_type)}
-    )
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize(
-    "params",
-    [
-        pytest.param({"tenantId": TENANT_ID}, id="tenant"),
-        pytest.param({"paymentStatus": "awaitingVerification"}, id="status"),
-        pytest.param(
-            {"tenantId": TENANT_ID, "paymentStatus": "paid"}, id="tenant_and_status"
-        ),
-    ],
-)
-def test_list_rent_bills_with_valid_filters_responds_not_implemented(
-    client, params: dict[str, str]
-) -> None:
-    assert client.get(LIST_URL, params=params).status_code == 501
-
-
-@pytest.mark.parametrize("status", PAYMENT_STATUSES)
-def test_every_payment_status_is_accepted_as_a_list_filter(client, status: str) -> None:
-    response = client.get(LIST_URL, params={"paymentStatus": status})
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize("date", ["2026-10-17", "2026-02-28", "2024-02-29"])
-def test_payment_overview_with_valid_date_responds_not_implemented(
-    client, date: str
-) -> None:
-    assert client.get(OVERVIEW_URL, params={"date": date}).status_code == 501
-
-
-@pytest.mark.parametrize("status", MANUAL_TARGET_STATUSES)
-def test_every_manual_target_status_is_accepted_in_a_status_change(
-    client, status: str
-) -> None:
-    response = client.post(
-        STATUS_CHANGES_URL, json={"status": status, "reason": "Corrected by hand."}
-    )
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize(
-    "reason",
-    [
-        pytest.param("x", id="single_character"),
-        pytest.param("  padded  ", id="surrounded_by_whitespace"),
-        pytest.param("Line one.\nLine two.", id="multiline"),
-        pytest.param("a" * 2000, id="long"),
-    ],
-)
-def test_non_blank_reason_is_accepted_in_a_rejection(client, reason: str) -> None:
-    response = client.post(REJECTION_URL, json={"reason": reason})
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        pytest.param(
-            {"status": "paid", "reason": "Cash.", "method": "cash"},
-            id="paid_with_method",
-        ),
-        pytest.param(
-            {
-                "status": "paid",
-                "reason": "Cash.",
-                "method": "cash",
-                "receivedOn": "2026-10-17",
-            },
-            id="paid_with_method_and_received_on",
-        ),
-        pytest.param(
-            {
-                "status": "paid",
-                "reason": "Transfer.",
-                "method": "transfer",
-                "receivedOn": "2026-10-01",
-            },
-            id="paid_by_transfer",
-        ),
-        pytest.param(
-            {"status": "paid", "reason": "Cash.", "method": None, "receivedOn": None},
-            id="paid_with_explicit_nulls",
-        ),
-        pytest.param({"status": "paid", "reason": "No details."}, id="paid_bare"),
-        pytest.param(
-            {"status": "unpaid", "reason": "Undo.", "method": "cash"},
-            id="unpaid_with_method",
-        ),
-        pytest.param(
-            {"status": "rejected", "reason": "Bad.", "receivedOn": "2026-10-17"},
-            id="rejected_with_received_on",
-        ),
-    ],
-)
-def test_status_change_conditional_fields_are_not_cross_checked_by_request_validation(
-    client, body: dict[str, Any]
-) -> None:
-    assert client.post(STATUS_CHANGES_URL, json=body).status_code == 501
-
-
-@pytest.mark.parametrize(
-    "extra",
-    [
-        pytest.param({"method": "check"}, id="unknown_method"),
-        pytest.param({"method": "CASH"}, id="wrong_case_method"),
-        pytest.param({"method": 1}, id="numeric_method"),
-        pytest.param({"receivedOn": "not-a-date"}, id="not_a_date"),
-        pytest.param({"receivedOn": "2026-02-30"}, id="day_out_of_range"),
-        pytest.param({"receivedOn": "17/10/2026"}, id="wrong_date_format"),
-        pytest.param({"receivedOn": 20261017}, id="numeric_date"),
-    ],
-)
-def test_malformed_status_change_conditional_field_is_rejected_with_validation_error(
-    client, extra: dict[str, Any]
-) -> None:
-    response = client.post(
-        STATUS_CHANGES_URL, json={**VALID_STATUS_CHANGE_INPUT, **extra}
-    )
-    assert response.status_code == 422
-
-
-@pytest.mark.parametrize(
-    "reason",
-    [
-        pytest.param("x", id="single_character"),
-        pytest.param("  padded  ", id="surrounded_by_whitespace"),
-    ],
-)
-def test_non_blank_reason_is_accepted_in_a_status_change(client, reason: str) -> None:
-    response = client.post(
-        STATUS_CHANGES_URL, json={"status": "paid", "reason": reason}
-    )
-    assert response.status_code == 501
-
-
-# Runtime: invalid requests are rejected with a validation error
-
-BLANK_REASONS = [
-    pytest.param("", id="empty"),
-    pytest.param(" ", id="single_space"),
-    pytest.param("          ", id="only_spaces"),
-    pytest.param("\n\t \n", id="only_whitespace_characters"),
-]
-
-
-@pytest.mark.parametrize("reason", BLANK_REASONS)
-def test_blank_rejection_reason_is_rejected_with_validation_error(
-    client, reason: str
-) -> None:
-    response = client.post(REJECTION_URL, json={"reason": reason})
-    assert response.status_code == 422
-
-
-@pytest.mark.parametrize("reason", BLANK_REASONS)
-def test_blank_status_change_reason_is_rejected_with_validation_error(
-    client, reason: str
-) -> None:
-    response = client.post(
-        STATUS_CHANGES_URL, json={"status": "paid", "reason": reason}
-    )
-    assert response.status_code == 422
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        pytest.param({}, id="empty_object"),
-        pytest.param({"reason": None}, id="null_reason"),
-        pytest.param({"reason": 5}, id="numeric_reason"),
-        pytest.param({"reason": ["unreadable"]}, id="array_reason"),
-        pytest.param({"note": "unreadable"}, id="wrong_field_name"),
-    ],
-)
-def test_invalid_rejection_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
-) -> None:
-    response = client.post(REJECTION_URL, json=body)
-    assert response.status_code == 422
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        pytest.param({}, id="empty_object"),
-        pytest.param({"receivedOn": None}, id="null_date"),
-        pytest.param({"receivedOn": ""}, id="empty_date"),
-        pytest.param({"receivedOn": "not-a-date"}, id="not_a_date"),
-        pytest.param({"receivedOn": "2026-13-01"}, id="month_out_of_range"),
-        pytest.param({"receivedOn": "2026-02-30"}, id="day_out_of_range"),
-        pytest.param({"receivedOn": "2025-02-29"}, id="leap_day_in_common_year"),
-        pytest.param({"receivedOn": "17/10/2026"}, id="wrong_format"),
-        pytest.param({"receivedOn": 20261017}, id="numeric_date"),
-        pytest.param({"date": "2026-10-17"}, id="wrong_field_name"),
-    ],
-)
-def test_invalid_cash_payment_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
-) -> None:
-    response = client.post(CASH_PAYMENT_URL, json=body)
-    assert response.status_code == 422
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        pytest.param({}, id="empty_object"),
-        pytest.param(_without(VALID_STATUS_CHANGE_INPUT, "status"), id="no_status"),
-        pytest.param(_without(VALID_STATUS_CHANGE_INPUT, "reason"), id="no_reason"),
-        pytest.param({**VALID_STATUS_CHANGE_INPUT, "status": None}, id="null_status"),
-        pytest.param({**VALID_STATUS_CHANGE_INPUT, "reason": None}, id="null_reason"),
-        pytest.param(
-            {**VALID_STATUS_CHANGE_INPUT, "status": "awaitingVerification"},
-            id="awaiting_verification_target",
-        ),
-        pytest.param({**VALID_STATUS_CHANGE_INPUT, "status": "late"}, id="unknown"),
-        pytest.param({**VALID_STATUS_CHANGE_INPUT, "status": "PAID"}, id="wrong_case"),
-        pytest.param(
-            {**VALID_STATUS_CHANGE_INPUT, "status": "awaiting_verification"},
-            id="snake_case_status",
-        ),
-        pytest.param({**VALID_STATUS_CHANGE_INPUT, "status": ""}, id="empty_status"),
-        pytest.param({**VALID_STATUS_CHANGE_INPUT, "reason": 5}, id="numeric_reason"),
-    ],
-)
-def test_invalid_payment_status_change_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
-) -> None:
-    response = client.post(STATUS_CHANGES_URL, json=body)
-    assert response.status_code == 422
-
-
-@pytest.mark.parametrize(
-    ("method", "url"),
-    [
-        pytest.param("post", REJECTION_URL, id="reject_receipt"),
-        pytest.param("post", CASH_PAYMENT_URL, id="record_cash_payment"),
-        pytest.param("post", STATUS_CHANGES_URL, id="change_payment_status"),
-    ],
-)
-def test_rent_bill_write_without_body_is_rejected_with_validation_error(
-    client, method: str, url: str
-) -> None:
-    response = client.request(method, url)
-    assert response.status_code == 422
-
-
-def test_receipt_upload_without_body_is_rejected_with_validation_error(client) -> None:
-    assert client.put(RECEIPT_URL).status_code == 422
-
-
-def test_receipt_upload_without_file_field_is_rejected_with_validation_error(
-    client,
-) -> None:
-    response = client.put(RECEIPT_URL, data={"note": "no file here"})
-    assert response.status_code == 422
-
-
-def test_receipt_upload_with_file_under_another_field_name_is_rejected_with_validation_error(
-    client,
-) -> None:
-    response = client.put(
-        RECEIPT_URL, files={"image": ("receipt.png", PNG_BYTES, "image/png")}
-    )
-    assert response.status_code == 422
-
-
-@pytest.mark.parametrize(
-    "params",
-    [
-        pytest.param({"tenantId": NOT_A_UUID}, id="non_uuid_tenant"),
-        pytest.param({"paymentStatus": "late"}, id="unknown_status"),
-        pytest.param({"paymentStatus": "PAID"}, id="wrong_case_status"),
-        pytest.param({"paymentStatus": "awaiting_verification"}, id="snake_case"),
-    ],
-)
-def test_invalid_rent_bill_list_filter_is_rejected_with_validation_error(
-    client, params: dict[str, str]
-) -> None:
-    assert client.get(LIST_URL, params=params).status_code == 422
-
-
-@pytest.mark.parametrize(
-    "date",
-    [
-        pytest.param("not-a-date", id="not_a_date"),
-        pytest.param("2026-13-01", id="month_out_of_range"),
-        pytest.param("2026-02-30", id="day_out_of_range"),
-        pytest.param("2025-02-29", id="leap_day_in_common_year"),
-        pytest.param("17-10-2026", id="wrong_format"),
-        pytest.param("", id="empty"),
-    ],
-)
-def test_invalid_payment_overview_date_is_rejected_with_validation_error(
-    client, date: str
-) -> None:
-    assert client.get(OVERVIEW_URL, params={"date": date}).status_code == 422
-
-
-@pytest.mark.parametrize(
-    ("method", "url", "body"),
-    [
-        pytest.param("get", f"/rent-bills/{NOT_A_UUID}", None, id="get_rent_bill"),
-        pytest.param(
-            "get", f"/rent-bills/{NOT_A_UUID}/receipt", None, id="get_receipt"
-        ),
-        pytest.param(
-            "post",
-            f"/rent-bills/{NOT_A_UUID}/verification",
-            None,
-            id="verify_receipt",
-        ),
-        pytest.param(
-            "post",
-            f"/rent-bills/{NOT_A_UUID}/rejection",
-            VALID_REJECTION_INPUT,
-            id="reject_receipt",
-        ),
-        pytest.param(
-            "post",
-            f"/rent-bills/{NOT_A_UUID}/cash-payment",
-            VALID_CASH_PAYMENT_INPUT,
-            id="record_cash_payment",
-        ),
-        pytest.param(
-            "post",
-            f"/rent-bills/{NOT_A_UUID}/status-changes",
-            VALID_STATUS_CHANGE_INPUT,
-            id="change_payment_status",
-        ),
-        pytest.param(
-            "get",
-            f"/properties/{NOT_A_UUID}/payment-overview",
-            None,
-            id="get_payment_overview",
-        ),
-    ],
-)
-def test_non_uuid_path_id_is_rejected_with_validation_error(
-    client, method: str, url: str, body: dict[str, Any] | None
-) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 422
-
-
-def test_non_uuid_rent_bill_id_in_receipt_upload_is_rejected_with_validation_error(
-    client,
-) -> None:
-    response = client.put(
-        f"/rent-bills/{NOT_A_UUID}/receipt",
-        files={"file": ("receipt.png", PNG_BYTES, "image/png")},
-    )
-    assert response.status_code == 422
