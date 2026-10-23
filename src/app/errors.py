@@ -6,11 +6,20 @@ from http import HTTPStatus
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
 
 SOURCE_SEGMENTS = {"body", "query", "path", "header", "cookie"}
+
+
+class ErrorBody(BaseModel):
+    """The JSON body of every error response."""
+
+    code: str
+    field: str | None
+    message: str
 
 
 class ApiError(Exception):
@@ -56,6 +65,9 @@ def _validation_handler(request: Request, exc: RequestValidationError) -> JSONRe
     if error["type"] == "json_invalid":
         loc = []
     elif loc and loc[0] in SOURCE_SEGMENTS:
+        # A repeated query parameter is one field, not one per value.
+        if loc[0] == "query":
+            loc = [part for part in loc if not isinstance(part, int)]
         loc = loc[1:]
     field = ".".join(str(part) for part in loc) or None
     return _response(422, "VALIDATION_FAILED", error["msg"], field)

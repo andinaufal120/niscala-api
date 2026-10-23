@@ -16,9 +16,9 @@ niscala-api/
 │   ├── email.py       # EmailSender protocol; the console sender only logs the code
 │   ├── ai/            # ComplaintClassifier protocol, the Gemini classifier and the dependency that supplies it
 │   ├── plans.py       # Plan limits per subscription plan, as data
-│   ├── cli.py         # `niscala-api` command: grant-subscription (development tool)
+│   ├── cli.py         # `niscala-api` command: grant-subscription and seed-rent-bills (development tools)
 │   ├── access.py      # require_roles and the property access queries (owner: own, manager: assigned)
-│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints)
+│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints, rent bills)
 │   ├── routers/       # One module per resource: parse the request, return a schema
 │   └── schemas/       # Pydantic request and response models; they define the OpenAPI contract
 ├── data/              # common-passwords.txt: the 100,000 most used passwords (SecLists, MIT license)
@@ -56,6 +56,7 @@ The Flutter Android app lives in `andinaufal120/niscala-app`. It generates its D
 - **Settings** (`config.py`): `get_settings()` returns a cached `Settings` read from the environment.
 - **Logging** (`main.py`): logs go to stderr; INFO records from the `app` loggers are shown, including the verification codes the console email sender prints in development.
 - **Database** (`db.py`): `get_session()` yields a SQLAlchemy `Session`; endpoints and dependencies declare it as `SessionDep`, a function-scope dependency. It commits when the handler returns and rolls back when it raises, so a failed request saves nothing. Function scope makes the commit happen before the response is sent, so a failed commit becomes an error response. The database enforces structural integrity only; business rules live in code.
+- **Rent bills** (`services/rent_bills.py`): a bill, its status history and its transfer receipt are three tables. The receipt image is stored in the database as bytes (one per bill, replaced on re-upload) so a failed request saves nothing; the type is read from the file signature. Dates that depend on the calendar day (current period, future-date checks, payment date of a verified receipt) are read in Asia/Jakarta through `today_jakarta()`. Notifying the tenant and regenerating the payment-pattern summary after a status change have named empty hooks (`notify_status_change`, `regenerate_payment_pattern`) until those features are built; bills are created only by the development seed command, since bill generation is undecided.
 
 Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, Alembic, psycopg 3, managed with uv.
 

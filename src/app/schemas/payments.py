@@ -12,7 +12,8 @@ from app.schemas.complaints import PropertyRef
 from app.schemas.properties import BankAccount
 from app.schemas.tenants import RoomRef
 
-Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# A blank reason passes the type and is refused by the service with its own code.
+Reason = Annotated[str, StringConstraints(strip_whitespace=True)]
 
 
 class PaymentStatus(StrEnum):
@@ -54,6 +55,7 @@ class RentBillSummary(ApiModel):
     id: UUID
     tenant: TenantRef
     room: RoomRef
+    property: PropertyRef
     period_start: dt.date
     period_end: dt.date
     due_date: dt.date
@@ -62,6 +64,13 @@ class RentBillSummary(ApiModel):
     days_overdue: int = Field(
         ge=0,
         description="Days past the due date while unpaid or rejected, else 0.",
+    )
+    is_current: bool = Field(
+        description="True when the billing period contains today in Asia/Jakarta."
+    )
+    can_upload_receipt: bool = Field(
+        description="True when the bill is current, unpaid or rejected, and its "
+        "property has a bank account. Describes the bill, not the caller's role."
     )
 
 
@@ -77,9 +86,8 @@ class PaymentStatusChange(ApiModel):
 
 
 class RentBill(RentBillSummary):
-    """A rent bill with its property, the bank account to pay into and its history."""
+    """A rent bill with the bank account to pay into and its history."""
 
-    property: PropertyRef
     bank_account: BankAccount | None
     status_changes: list[PaymentStatusChange] = Field(description="Oldest first.")
 
@@ -93,7 +101,9 @@ class RentBillList(ApiModel):
 class ReceiptRejectionInput(ApiModel):
     """The reason a transfer receipt is rejected."""
 
-    reason: Reason = Field(description="Not blank after trimming.")
+    reason: Reason = Field(
+        description="Not blank after trimming.", json_schema_extra={"minLength": 1}
+    )
 
 
 class CashPaymentInput(ApiModel):
@@ -106,7 +116,9 @@ class PaymentStatusChangeInput(ApiModel):
     """A manual correction of a rent bill's payment status."""
 
     status: Literal["unpaid", "paid", "rejected"]
-    reason: Reason = Field(description="Not blank after trimming.")
+    reason: Reason = Field(
+        description="Not blank after trimming.", json_schema_extra={"minLength": 1}
+    )
     method: PaymentMethod | None = Field(
         default=None,
         description="Required when status is paid; not allowed otherwise.",

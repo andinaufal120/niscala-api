@@ -22,7 +22,8 @@ def _add_months(start: date, months: int) -> date:
     return date(year, month, day)
 
 
-def _period_start(start_date: date, cycle: BillingCycle, period: int) -> date:
+def period_start(start_date: date, cycle: BillingCycle, period: int) -> date:
+    """Return the start of the zero-based `period` counted from `start_date`."""
     if cycle == BillingCycle.WEEKLY:
         return start_date + timedelta(weeks=period)
     return _add_months(start_date, CYCLE_MONTHS[cycle] * period)
@@ -43,7 +44,7 @@ def next_bill_date(
     if start_date is None:
         return None
     period = 0
-    while (result := _period_start(start_date, billing_cycle, period)) <= today:
+    while (result := period_start(start_date, billing_cycle, period)) <= today:
         period += 1
     if end_date is not None and result > end_date:
         return None
