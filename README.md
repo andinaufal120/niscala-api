@@ -32,6 +32,17 @@ uv run niscala-api grant-subscription owner@example.com pro --days 90
 
 Running it again replaces the Owner's current period. It is a development tool, not part of the API.
 
+### Seeding rent bills (development only)
+
+Bills are not generated automatically yet. This command creates the billing history of a Tenant's active lease in the database in `DATABASE_URL`: paid bills for the past periods (some paid late) and an unpaid bill for the current period.
+
+```sh
+uv run niscala-api seed-rent-bills tenant@example.com              # last 12 periods
+uv run niscala-api seed-rent-bills tenant@example.com --months 24
+```
+
+Running it again skips periods that already have a bill. It is a development tool, not part of the API.
+
 ## Configuration
 
 Settings are read from environment variables, or from a `.env` file in the project root. Every variable has a default except `JWT_SECRET` and `INVITATION_ENCRYPTION_KEY`, which must be set.
