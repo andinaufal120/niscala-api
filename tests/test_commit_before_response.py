@@ -145,19 +145,20 @@ def test_login_session_is_committed_when_the_response_starts(
 def test_refresh_rotation_is_committed_when_the_response_starts(
     probe, client, sent_emails
 ):
-    from app.models import UserSession
+    from app.models import UsedRefreshToken, UserSession
 
     old_token = register(client)["refreshToken"]
 
     def read(s):
-        row = s.scalars(select(UserSession)).one()
-        return row.refresh_token_hash, row.previous_refresh_token_hash
+        current_hash = s.scalars(select(UserSession.refresh_token_hash)).one()
+        used_hashes = set(s.scalars(select(UsedRefreshToken.token_hash)))
+        return current_hash, used_hashes
 
-    response, (current_hash, previous_hash) = probe(
+    response, (current_hash, used_hashes) = probe(
         "POST", "/auth/refresh", read, json={"refreshToken": old_token}
     )
     assert response.status_code == 200
-    assert previous_hash == sha256(old_token)
+    assert used_hashes == {sha256(old_token)}
     assert current_hash != sha256(old_token)
 
 
