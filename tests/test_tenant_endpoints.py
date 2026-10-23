@@ -192,6 +192,15 @@ REQUESTS = [
     ),
     pytest.param("get", tenants_url(uuid4()), None, id="list"),
     pytest.param("get", tenant_url(uuid4()), None, id="get"),
+    pytest.param(
+        "put",
+        tenant_url(uuid4()),
+        {"name": "Budi", "phone": "081234567890"},
+        id="edit",
+    ),
+    pytest.param(
+        "post", tenant_url(uuid4()) + "/invitation", None, id="regenerate_invitation"
+    ),
 ]
 
 
@@ -1729,24 +1738,1295 @@ def test_the_tenant_id_is_the_user_account_id(
     assert UUID(body["id"]) == stored.user.id == stored.tenant.user_id
 
 
-# Operations that are not implemented yet
+# PUT /tenants/{tenantId}
+
+
+def edit_body(**overrides) -> dict:
+    return {
+        "name": "Budi Santoso",
+        "phone": "081234567890",
+        "occupation": "Mahasiswa",
+        "emergencyContacts": CONTACTS,
+        "lease": LEASE,
+        **overrides,
+    }
+
+
+def edit(client, headers, tenant_id, **overrides):
+    return client.put(
+        tenant_url(tenant_id), json=edit_body(**overrides), headers=headers
+    )
+
+
+def tenant_state(database, tenant_id) -> dict:
+    """Everything stored about a tenant that an edit may touch."""
+    from app.models import EmergencyContact, Lease, Tenant, UserAccount
+
+    with Session(database, expire_on_commit=False) as db:
+        user = db.get(UserAccount, tenant_id)
+        tenant = db.get(Tenant, tenant_id)
+        contacts = db.scalars(
+            select(EmergencyContact)
+            .where(EmergencyContact.tenant_id == tenant_id)
+            .order_by(EmergencyContact.position)
+        )
+        leases = db.scalars(select(Lease).where(Lease.tenant_id == tenant_id))
+        return {
+            "name": user.name,
+            "email": user.email,
+            "phone": tenant.phone,
+            "occupation": tenant.occupation,
+            "activated_at": tenant.activated_at,
+            "contacts": [
+                (c.position, c.name, c.relationship, c.phone) for c in contacts
+            ],
+            "leases": sorted(
+                (
+                    l.id,
+                    l.room_id,
+                    l.start_date,
+                    l.end_date,
+                    l.billing_cycle,
+                    l.rent,
+                    l.grace_period_days,
+                    l.ended_at,
+                )
+                for l in leases
+            ),
+        }
+
+
+def invitation_state(database, tenant_id) -> list:
+    from app.models import Invitation
+
+    with Session(database, expire_on_commit=False) as db:
+        rows = db.scalars(
+            select(Invitation)
+            .where(Invitation.tenant_id == tenant_id)
+            .order_by(Invitation.created_at)
+        )
+        return [
+            (
+                r.id,
+                r.token_hash,
+                r.created_at,
+                r.expires_at,
+                r.used_at,
+                r.invalidated_at,
+            )
+            for r in rows
+        ]
+
+
+@pytest.fixture
+def current(room, make_tenant):
+    """A not yet activated tenant whose every editable value differs from `edit_body`."""
+    return make_tenant(
+        room,
+        name="Old Name",
+        phone="085555555555",
+        occupation="Old job",
+        contacts=[
+            ("Old One", "Ayah", "081111111111"),
+            ("Old Two", "Ibu", "082222222222"),
+        ],
+        start_date=date(2099, 2, 1),
+        end_date=date(2099, 6, 30),
+        billing_cycle="weekly",
+        rent=500000,
+        grace_period_days=1,
+    )
+
+
+@pytest.fixture
+def active(room, make_tenant):
+    """An activated tenant with two emergency contacts."""
+    return make_tenant(
+        room,
+        name="Old Name",
+        phone="085555555555",
+        email="budi@example.com",
+        activated=True,
+        contacts=[
+            ("Old One", "Ayah", "081111111111"),
+            ("Old Two", "Ibu", "082222222222"),
+        ],
+    )
+
+
+# PUT: success
+
+
+def test_editing_a_tenant_answers_with_the_updated_tenant(
+    client, database, signed_in, room, current
+):
+    response = edit(client, signed_in.headers, current.id)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == TENANT_FIELDS
+    assert body["id"] == str(current.id)
+    assert body["name"] == "Budi Santoso"
+    assert body["phone"] == "081234567890"
+    assert body["email"] is None
+    assert body["occupation"] == "Mahasiswa"
+    assert body["accountStatus"] == "notActivated"
+    assert body["room"] == {"id": str(room.id), "number": "A1"}
+    assert body["lease"] == {
+        "startDate": "2099-01-10",
+        "endDate": "2099-12-31",
+        "rent": 1200000,
+        "billingCycle": "monthly",
+        "gracePeriodDays": 3,
+        "nextBillDate": "2099-01-10",
+    }
+    assert body["emergencyContacts"] == [
+        {"name": "Siti", "relationship": "Ibu", "phone": "081234567890"},
+        {"name": "Agus", "relationship": "Kakak", "phone": "08571234567"},
+    ]
+
+
+def test_the_edited_tenant_can_be_read_back_unchanged(
+    client, database, signed_in, current
+):
+    edited = edit(client, signed_in.headers, current.id).json()
+    response = get_tenant(client, signed_in.headers, current.id)
+    assert response.status_code == 200
+    assert response.json() == edited
+
+
+def test_the_edited_values_are_stored(client, database, signed_in, room, current):
+    edit(client, signed_in.headers, current.id)
+    state = tenant_state(database, current.id)
+    assert state["name"] == "Budi Santoso"
+    assert state["phone"] == "081234567890"
+    assert state["occupation"] == "Mahasiswa"
+    (lease,) = state["leases"]
+    assert lease[1:] == (
+        room.id,
+        date(2099, 1, 10),
+        date(2099, 12, 31),
+        "monthly",
+        1200000,
+        3,
+        None,
+    )
+
+
+def test_the_emergency_contacts_are_replaced_in_the_order_given(
+    client, database, signed_in, current
+):
+    contacts = [
+        {"name": "Zed", "relationship": "Ayah", "phone": "081111111119"},
+        {"name": "Abe", "relationship": "Ibu", "phone": "082222222228"},
+        {"name": "Mia", "relationship": "Adik", "phone": "628333333337"},
+    ]
+    body = edit(client, signed_in.headers, current.id, emergencyContacts=contacts)
+    assert [c["name"] for c in body.json()["emergencyContacts"]] == [
+        "Zed",
+        "Abe",
+        "Mia",
+    ]
+    assert tenant_state(database, current.id)["contacts"] == [
+        (0, "Zed", "Ayah", "081111111119"),
+        (1, "Abe", "Ibu", "082222222228"),
+        (2, "Mia", "Adik", "08333333337"),
+    ]
+
+
+def test_old_emergency_contacts_are_not_kept(client, database, signed_in, current):
+    from app.models import EmergencyContact
+
+    edit(client, signed_in.headers, current.id)
+    names = {c.name for c in fetch_all(database, EmergencyContact)}
+    assert names == {"Siti", "Agus"}
+
+
+def test_the_tenant_keeps_the_same_room_and_the_same_lease_row(
+    client, database, signed_in, room, current
+):
+    from app.models import Lease
+
+    edit(client, signed_in.headers, current.id)
+    (lease,) = fetch_all(database, Lease)
+    assert lease.id == current.lease.id
+    assert lease.room_id == room.id
+    assert lease.tenant_id == current.id
+    assert lease.ended_at is None
+    assert counts(database)["users"] == 1
+
+
+def test_the_edit_does_not_move_the_tenant_to_another_room(
+    client, database, existing, signed_in, room, current, make_room
+):
+    other = make_room(existing, number="A2")
+    response = client.put(
+        tenant_url(current.id),
+        json={**edit_body(), "roomId": str(other.id)},
+        headers=signed_in.headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["room"] == {"id": str(room.id), "number": "A1"}
+    assert tenant_state(database, current.id)["leases"][0][1] == room.id
+
+
+def test_editing_leaves_other_tenants_untouched(
+    client, database, existing, signed_in, current, make_room, make_tenant
+):
+    other = make_tenant(make_room(existing, number="A2"), name="Dewi")
+    before = tenant_state(database, other.id)
+    edit(client, signed_in.headers, current.id)
+    assert tenant_state(database, other.id) == before
+
+
+def test_editing_does_not_change_the_invitation_or_the_account_status(
+    client, database, signed_in, current
+):
+    before = invitation_state(database, current.id)
+    body = edit(client, signed_in.headers, current.id).json()
+    assert invitation_state(database, current.id) == before
+    assert body["accountStatus"] == "notActivated"
+    assert (
+        body["invitation"]["url"] == f"{invitation_base()}/invitations/{current.token}"
+    )
+    assert body["invitation"]["expired"] is False
+
+
+def test_editing_an_expired_invitation_leaves_it_expired(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, expired=True)
+    before = invitation_state(database, stored.id)
+    body = edit(client, signed_in.headers, stored.id).json()
+    assert invitation_state(database, stored.id) == before
+    assert body["invitation"]["expired"] is True
+    assert body["invitation"]["url"] is None
+
+
+def test_editing_a_tenant_without_an_invitation_creates_none(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, invitation=False)
+    body = edit(client, signed_in.headers, stored.id).json()
+    assert body["invitation"] is None
+    assert invitation_state(database, stored.id) == []
+
+
+def test_editing_an_active_tenant_keeps_the_account_active_and_the_email(
+    client, database, signed_in, active
+):
+    before = tenant_state(database, active.id)
+    response = edit(client, signed_in.headers, active.id)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["accountStatus"] == "active"
+    assert body["email"] == "budi@example.com"
+    assert body["invitation"] is None
+    after = tenant_state(database, active.id)
+    assert after["activated_at"] == before["activated_at"]
+    assert after["email"] == "budi@example.com"
+    assert after["name"] == "Budi Santoso"
+
+
+def test_editing_with_the_same_values_succeeds(client, database, signed_in, room):
+    from app.models import Lease
+
+    stored = create(
+        client, signed_in.headers, room.property_id, room, name="Budi Santoso"
+    ).json()
+    response = edit(client, signed_in.headers, stored["id"])
+    assert response.status_code == 200, response.text
+    assert response.json() == stored
+    assert len(fetch_all(database, Lease)) == 1
+
+
+def test_a_rent_or_billing_cycle_change_does_not_change_existing_bills(
+    client, database, signed_in, current, make_rent_bill
+):
+    from rent_bill_support import stored_bill
+
+    bills = [
+        make_rent_bill(current.lease, amount=500000),
+        make_rent_bill(
+            current.lease,
+            amount=500000,
+            period_start=date(2026, 8, 1),
+            period_end=date(2026, 8, 7),
+        ),
+    ]
+    lease = lease_body(billingCycle="quarterly", rent=3600000)
+    response = edit(client, signed_in.headers, current.id, lease=lease)
+    assert response.status_code == 200, response.text
+    assert response.json()["lease"]["rent"] == 3600000
+    assert response.json()["lease"]["billingCycle"] == "quarterly"
+    for bill in bills:
+        assert stored_bill(database, bill).amount == 500000
+
+
+# PUT: tenant access
+
+
+def test_an_unknown_tenant_is_not_found_on_edit(client, database, signed_in):
+    response = edit(client, signed_in.headers, uuid4())
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_the_id_of_a_user_who_is_not_a_tenant_is_not_found_on_edit(
+    client, database, owner, signed_in
+):
+    response = edit(client, signed_in.headers, owner.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_a_deleted_tenant_is_not_found_on_edit(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, deleted=True)
+    before = tenant_state(database, stored.id)
+    response = edit(client, signed_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert tenant_state(database, stored.id) == before
+
+
+def test_a_tenant_without_an_active_lease_is_not_found_on_edit(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, lease_ended=True)
+    before = tenant_state(database, stored.id)
+    response = edit(client, signed_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert tenant_state(database, stored.id) == before
+
+
+def test_a_tenant_of_another_owners_property_is_not_found_on_edit(
+    client, database, signed_in, make_user, make_property, make_room, make_tenant
+):
+    theirs = make_property(make_user(), name="Theirs")
+    stored = make_tenant(make_room(theirs), name="Theirs Tenant")
+    before = tenant_state(database, stored.id)
+    response = edit(client, signed_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert tenant_state(database, stored.id) == before
+
+
+def test_a_tenant_of_a_deleted_property_is_not_found_on_edit(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    gone = make_property(owner, name="Gone", deleted=True)
+    stored = make_tenant(make_room(gone))
+    response = edit(client, signed_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_a_malformed_tenant_id_is_a_validation_failure_on_edit(
+    client, database, signed_in
+):
+    response = edit(client, signed_in.headers, "not-a-uuid")
+    assert_error(response, 422, "VALIDATION_FAILED", "tenantId")
+
+
+def test_a_manager_edits_a_tenant_of_an_assigned_property(
+    client, database, manager, manager_in, existing, current, assign_manager
+):
+    assign_manager(manager, existing)
+    response = edit(client, manager_in.headers, current.id)
+    assert response.status_code == 200, response.text
+    assert tenant_state(database, current.id)["name"] == "Budi Santoso"
+
+
+def test_a_manager_cannot_edit_a_tenant_of_an_unassigned_property(
+    client, database, manager_in, current
+):
+    before = tenant_state(database, current.id)
+    response = edit(client, manager_in.headers, current.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert tenant_state(database, current.id) == before
+
+
+def test_a_manager_loses_the_right_to_edit_a_tenant_as_soon_as_unassigned(
+    client, database, manager, manager_in, existing, current, assign_manager
+):
+    assign_manager(manager, existing)
+    assert edit(client, manager_in.headers, current.id).status_code == 200
+    unassign(database, manager, existing)
+    response = edit(client, manager_in.headers, current.id, name="Again")
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert tenant_state(database, current.id)["name"] == "Budi Santoso"
+
+
+@pytest.mark.parametrize("name", ["tenant", "admin"])
+def test_a_forbidden_account_edits_nothing(
+    client, database, make_user, sign_in, current, name
+):
+    headers = sign_in(make_user(role=role(name))).headers
+    before = tenant_state(database, current.id)
+    response = edit(client, headers, current.id)
+    assert_error(response, 403, "FORBIDDEN")
+    assert tenant_state(database, current.id) == before
+
+
+# PUT: view-only property and room
+
+
+def test_a_view_only_property_refuses_tenant_edits(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen), name="Old Name")
+    before = tenant_state(database, stored.id)
+    response = edit(client, signed_in.headers, stored.id)
+    assert_error(response, 403, "PROPERTY_READ_ONLY")
+    assert tenant_state(database, stored.id) == before
+
+
+def test_a_view_only_property_refuses_tenant_edits_from_a_manager(
+    client,
+    database,
+    owner,
+    manager,
+    manager_in,
+    make_property,
+    make_room,
+    make_tenant,
+    assign_manager,
+):
+    frozen = make_property(owner, view_only=True)
+    assign_manager(manager, frozen)
+    stored = make_tenant(make_room(frozen), name="Old Name")
+    response = edit(client, manager_in.headers, stored.id)
+    assert_error(response, 403, "PROPERTY_READ_ONLY")
+    assert tenant_state(database, stored.id)["name"] == "Old Name"
+
+
+def test_a_view_only_room_refuses_tenant_edits(
+    client, database, existing, signed_in, make_room, make_tenant
+):
+    frozen = make_room(existing, number="F1", view_only=True)
+    stored = make_tenant(frozen, name="Old Name")
+    before = tenant_state(database, stored.id)
+    response = edit(client, signed_in.headers, stored.id)
+    assert_error(response, 403, "ROOM_READ_ONLY")
+    assert tenant_state(database, stored.id) == before
+
+
+def test_a_view_only_room_refuses_tenant_edits_from_a_manager(
+    client,
+    database,
+    manager,
+    manager_in,
+    existing,
+    make_room,
+    make_tenant,
+    assign_manager,
+):
+    assign_manager(manager, existing)
+    stored = make_tenant(make_room(existing, number="F1", view_only=True))
+    response = edit(client, manager_in.headers, stored.id)
+    assert_error(response, 403, "ROOM_READ_ONLY")
+
+
+def test_not_found_is_reported_before_view_only_on_edit(
+    client, database, signed_in, make_user, make_property, make_room, make_tenant
+):
+    theirs = make_property(make_user(), view_only=True)
+    stored = make_tenant(make_room(theirs, view_only=True))
+    response = edit(client, signed_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_an_unassigned_manager_gets_not_found_before_view_only(
+    client, database, owner, manager_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen, view_only=True))
+    response = edit(client, manager_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_a_missing_tenant_is_reported_before_field_rules(client, database, signed_in):
+    response = edit(client, signed_in.headers, uuid4(), phone="bad", name="  ")
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_view_only_property_is_reported_before_view_only_room(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen, view_only=True))
+    response = edit(client, signed_in.headers, stored.id)
+    assert_error(response, 403, "PROPERTY_READ_ONLY")
+
+
+def test_view_only_property_is_reported_before_field_rules_on_edit(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen))
+    response = edit(client, signed_in.headers, stored.id, name="   ")
+    assert_error(response, 403, "PROPERTY_READ_ONLY")
+
+
+def test_view_only_room_is_reported_before_field_rules_on_edit(
+    client, database, existing, signed_in, make_room, make_tenant
+):
+    stored = make_tenant(make_room(existing, number="F1", view_only=True))
+    response = edit(client, signed_in.headers, stored.id, name="   ")
+    assert_error(response, 403, "ROOM_READ_ONLY")
+    response = edit(client, signed_in.headers, stored.id, phone="bad")
+    assert_error(response, 403, "ROOM_READ_ONLY")
+
+
+def test_another_room_being_view_only_does_not_block_the_edit(
+    client, database, existing, signed_in, current, make_room, make_tenant
+):
+    make_tenant(make_room(existing, number="F1", view_only=True), name="Frozen")
+    assert edit(client, signed_in.headers, current.id).status_code == 200
+
+
+# PUT: field rules
+
+
+def test_the_name_is_trimmed_on_edit(client, database, signed_in, current):
+    body = edit(client, signed_in.headers, current.id, name="  Budi \n").json()
+    assert body["name"] == "Budi"
+    assert tenant_state(database, current.id)["name"] == "Budi"
+
+
+@pytest.mark.parametrize("value", [" ", " \t\n "])
+def test_a_blank_name_is_a_validation_failure_on_edit(
+    client, database, signed_in, current, value
+):
+    before = tenant_state(database, current.id)
+    response = edit(client, signed_in.headers, current.id, name=value)
+    assert_error(response, 422, "VALIDATION_FAILED", "name")
+    assert tenant_state(database, current.id) == before
+
+
+def test_a_missing_name_is_a_validation_failure_on_edit(
+    client, database, signed_in, current
+):
+    response = client.put(
+        tenant_url(current.id),
+        json=without(edit_body(), "name"),
+        headers=signed_in.headers,
+    )
+    assert_error(response, 422, "VALIDATION_FAILED", "name")
+
+
+def test_a_missing_phone_is_a_validation_failure_on_edit(
+    client, database, signed_in, current
+):
+    response = client.put(
+        tenant_url(current.id),
+        json=without(edit_body(), "phone"),
+        headers=signed_in.headers,
+    )
+    assert_error(response, 422, "VALIDATION_FAILED", "phone")
 
 
 @pytest.mark.parametrize(
-    ("method", "url", "body"),
+    ("submitted", "expected"),
     [
-        pytest.param(
-            "put",
-            tenant_url(uuid4()),
-            {"name": "Budi", "phone": "081234567890"},
-            id="put",
-        ),
-        pytest.param("delete", tenant_url(uuid4()), None, id="delete"),
-        pytest.param("post", tenant_url(uuid4()) + "/invitation", None, id="invite"),
+        ("08123456789", "08123456789"),
+        ("628123456789", "08123456789"),
+        ("0812-3456-789", "08123456789"),
+        ("0812 3456 789", "08123456789"),
+        ("62 812-3456 789", "08123456789"),
+        (" 08123456789 ", "08123456789"),
+        ("0812345678", "0812345678"),
+        ("08" + "1" * 11, "08" + "1" * 11),
+        ("628" + "1" * 8, "08" + "1" * 8),
+        ("628" + "1" * 11, "08" + "1" * 11),
     ],
 )
-def test_other_tenant_operations_are_still_not_implemented(
-    client, database, signed_in, method, url, body
+def test_a_phone_is_normalized_to_digits_starting_with_08_on_edit(
+    client, database, signed_in, current, submitted, expected
 ):
-    response = client.request(method, url, json=body, headers=signed_in.headers)
+    response = edit(client, signed_in.headers, current.id, phone=submitted)
+    assert response.status_code == 200, response.text
+    assert response.json()["phone"] == expected
+    assert tenant_state(database, current.id)["phone"] == expected
+
+
+@pytest.mark.parametrize(
+    "submitted",
+    [
+        "+628123456789",
+        "0812345678a",
+        "abcdefgh",
+        "0712345678",
+        "8123456789",
+        "081234567",
+        "08123456789012",
+        "628" + "1" * 7,
+        "628" + "1" * 12,
+        "0812.3456.789",
+        "08",
+        "   ",
+    ],
+)
+def test_an_invalid_phone_is_a_validation_failure_on_edit(
+    client, database, signed_in, current, submitted
+):
+    before = tenant_state(database, current.id)
+    response = edit(client, signed_in.headers, current.id, phone=submitted)
+    assert_error(response, 422, "VALIDATION_FAILED", "phone")
+    assert tenant_state(database, current.id) == before
+
+
+def test_the_occupation_is_trimmed_on_edit(client, database, signed_in, current):
+    body = edit(client, signed_in.headers, current.id, occupation="  Dosen \n").json()
+    assert body["occupation"] == "Dosen"
+    assert tenant_state(database, current.id)["occupation"] == "Dosen"
+
+
+@pytest.mark.parametrize("value", ["   ", "", None])
+def test_a_blank_or_null_occupation_becomes_null_on_edit(
+    client, database, signed_in, current, value
+):
+    response = edit(client, signed_in.headers, current.id, occupation=value)
+    assert response.status_code == 200, response.text
+    assert response.json()["occupation"] is None
+    assert tenant_state(database, current.id)["occupation"] is None
+
+
+@pytest.mark.parametrize("count", [2, 3, 4])
+def test_two_to_four_emergency_contacts_are_accepted_on_edit(
+    client, database, signed_in, current, count
+):
+    contacts = [
+        {"name": f"C{n}", "relationship": "Teman", "phone": f"08123456789{n}"}
+        for n in range(count)
+    ]
+    response = edit(client, signed_in.headers, current.id, emergencyContacts=contacts)
+    assert response.status_code == 200, response.text
+    assert [c["name"] for c in response.json()["emergencyContacts"]] == [
+        f"C{n}" for n in range(count)
+    ]
+    assert len(tenant_state(database, current.id)["contacts"]) == count
+
+
+def test_a_tenant_that_is_not_activated_may_clear_the_emergency_contacts(
+    client, database, signed_in, current
+):
+    response = edit(client, signed_in.headers, current.id, emergencyContacts=[])
+    assert response.status_code == 200, response.text
+    assert response.json()["emergencyContacts"] == []
+    assert tenant_state(database, current.id)["contacts"] == []
+
+
+def test_a_single_emergency_contact_is_a_validation_failure_on_edit(
+    client, database, signed_in, current
+):
+    before = tenant_state(database, current.id)
+    response = edit(
+        client, signed_in.headers, current.id, emergencyContacts=CONTACTS[:1]
+    )
+    assert_error(response, 422, "VALIDATION_FAILED", "emergencyContacts")
+    assert tenant_state(database, current.id) == before
+
+
+def test_five_emergency_contacts_are_a_validation_failure_on_edit(
+    client, database, signed_in, current
+):
+    before = tenant_state(database, current.id)
+    response = edit(
+        client,
+        signed_in.headers,
+        current.id,
+        emergencyContacts=(CONTACTS * 3)[:5],
+    )
+    assert_error(response, 422, "VALIDATION_FAILED", "emergencyContacts")
+    assert tenant_state(database, current.id) == before
+
+
+@pytest.mark.parametrize("field", ["name", "relationship"])
+@pytest.mark.parametrize("index", [0, 1])
+def test_a_blank_emergency_contact_text_is_a_validation_failure_on_edit(
+    client, database, signed_in, current, field, index
+):
+    contacts = [dict(c) for c in CONTACTS]
+    contacts[index][field] = "   "
+    before = tenant_state(database, current.id)
+    response = edit(client, signed_in.headers, current.id, emergencyContacts=contacts)
+    assert_error(
+        response, 422, "VALIDATION_FAILED", f"emergencyContacts.{index}.{field}"
+    )
+    assert tenant_state(database, current.id) == before
+
+
+@pytest.mark.parametrize("index", [0, 1])
+@pytest.mark.parametrize("phone", ["+628123456789", "12345", "abc", "081234567"])
+def test_an_invalid_emergency_contact_phone_is_a_validation_failure_on_edit(
+    client, database, signed_in, current, index, phone
+):
+    contacts = [dict(c) for c in CONTACTS]
+    contacts[index]["phone"] = phone
+    before = tenant_state(database, current.id)
+    response = edit(client, signed_in.headers, current.id, emergencyContacts=contacts)
+    assert_error(response, 422, "VALIDATION_FAILED", f"emergencyContacts.{index}.phone")
+    assert tenant_state(database, current.id) == before
+
+
+def test_emergency_contact_text_is_trimmed_and_phones_normalized_on_edit(
+    client, database, signed_in, current
+):
+    contacts = [
+        {"name": "  A ", "relationship": " Ibu\n", "phone": "0812-3456-789"},
+        {"name": "B", "relationship": "Ayah", "phone": "628123456789"},
+    ]
+    body = edit(
+        client, signed_in.headers, current.id, emergencyContacts=contacts
+    ).json()
+    assert body["emergencyContacts"] == [
+        {"name": "A", "relationship": "Ibu", "phone": "08123456789"},
+        {"name": "B", "relationship": "Ayah", "phone": "08123456789"},
+    ]
+    assert tenant_state(database, current.id)["contacts"] == [
+        (0, "A", "Ibu", "08123456789"),
+        (1, "B", "Ayah", "08123456789"),
+    ]
+
+
+@pytest.mark.parametrize("contacts", [[], CONTACTS[:1]])
+def test_an_active_tenant_cannot_have_fewer_than_two_emergency_contacts(
+    client, database, signed_in, active, contacts
+):
+    before = tenant_state(database, active.id)
+    response = edit(client, signed_in.headers, active.id, emergencyContacts=contacts)
+    assert_error(response, 422, "VALIDATION_FAILED", "emergencyContacts")
+    assert tenant_state(database, active.id) == before
+
+
+def test_an_active_tenant_may_replace_the_emergency_contacts(
+    client, database, signed_in, active
+):
+    response = edit(client, signed_in.headers, active.id)
+    assert response.status_code == 200, response.text
+    assert [c["name"] for c in response.json()["emergencyContacts"]] == [
+        "Siti",
+        "Agus",
+    ]
+
+
+def test_an_end_date_before_the_start_date_is_a_validation_failure_on_edit(
+    client, database, signed_in, current
+):
+    before = tenant_state(database, current.id)
+    lease = lease_body(startDate="2099-03-01", endDate="2099-02-28")
+    response = edit(client, signed_in.headers, current.id, lease=lease)
+    assert_error(response, 422, "VALIDATION_FAILED", "lease.endDate")
+    assert tenant_state(database, current.id) == before
+
+
+def test_an_end_date_equal_to_the_start_date_is_accepted_on_edit(
+    client, database, signed_in, current
+):
+    lease = lease_body(startDate="2099-03-01", endDate="2099-03-01")
+    response = edit(client, signed_in.headers, current.id, lease=lease)
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize(
+    "dates",
+    [
+        {"startDate": None, "endDate": None},
+        {"startDate": "2099-01-10", "endDate": None},
+        {"startDate": None, "endDate": "2099-12-31"},
+    ],
+)
+def test_both_lease_dates_are_optional_on_edit(
+    client, database, signed_in, current, dates
+):
+    response = edit(client, signed_in.headers, current.id, lease=lease_body(**dates))
+    assert response.status_code == 200, response.text
+    assert response.json()["lease"]["startDate"] == dates["startDate"]
+    assert response.json()["lease"]["endDate"] == dates["endDate"]
+    (lease,) = tenant_state(database, current.id)["leases"]
+    assert lease[2] == (
+        date.fromisoformat(dates["startDate"]) if dates["startDate"] else None
+    )
+
+
+def test_clearing_the_lease_start_date_clears_the_next_bill_date(
+    client, database, signed_in, current
+):
+    lease = lease_body(startDate=None, endDate=None)
+    body = edit(client, signed_in.headers, current.id, lease=lease).json()
+    assert body["lease"]["nextBillDate"] is None
+
+
+@pytest.mark.parametrize("rent", [0, -5])
+def test_a_rent_that_is_not_positive_is_a_validation_failure_on_edit(
+    client, database, signed_in, current, rent
+):
+    before = tenant_state(database, current.id)
+    lease = lease_body(rent=rent)
+    response = edit(client, signed_in.headers, current.id, lease=lease)
+    assert_error(response, 422, "VALIDATION_FAILED", "lease.rent")
+    assert tenant_state(database, current.id) == before
+
+
+@pytest.mark.parametrize("omit", ["missing", "null"])
+def test_a_monthly_lease_without_rent_uses_the_base_rate_of_the_room_on_edit(
+    client, database, signed_in, current, omit
+):
+    lease = (
+        without(lease_body(), "rent") if omit == "missing" else lease_body(rent=None)
+    )
+    response = edit(client, signed_in.headers, current.id, lease=lease)
+    assert response.status_code == 200, response.text
+    assert response.json()["lease"]["rent"] == 1750000
+    (stored,) = tenant_state(database, current.id)["leases"]
+    assert stored[5] == 1750000
+
+
+@pytest.mark.parametrize("cycle", ["weekly", "quarterly", "semiannual", "annual"])
+@pytest.mark.parametrize("omit", ["missing", "null"])
+def test_a_lease_that_is_not_monthly_requires_rent_on_edit(
+    client, database, signed_in, current, cycle, omit
+):
+    lease = (
+        without(lease_body(billingCycle=cycle), "rent")
+        if omit == "missing"
+        else lease_body(billingCycle=cycle, rent=None)
+    )
+    before = tenant_state(database, current.id)
+    response = edit(client, signed_in.headers, current.id, lease=lease)
+    assert_error(response, 422, "VALIDATION_FAILED", "lease.rent")
+    assert tenant_state(database, current.id) == before
+
+
+@pytest.mark.parametrize(
+    "cycle", ["weekly", "monthly", "quarterly", "semiannual", "annual"]
+)
+def test_an_explicit_rent_is_kept_for_every_billing_cycle_on_edit(
+    client, database, signed_in, current, cycle
+):
+    lease = lease_body(billingCycle=cycle, rent=333000)
+    response = edit(client, signed_in.headers, current.id, lease=lease)
+    assert response.status_code == 200, response.text
+    assert response.json()["lease"]["rent"] == 333000
+    assert response.json()["lease"]["billingCycle"] == cycle
+    (stored,) = tenant_state(database, current.id)["leases"]
+    assert (stored[5], stored[4]) == (333000, cycle)
+
+
+def test_the_grace_period_is_stored_on_edit(client, database, signed_in, current):
+    lease = lease_body(gracePeriodDays=9)
+    response = edit(client, signed_in.headers, current.id, lease=lease)
+    assert response.json()["lease"]["gracePeriodDays"] == 9
+    assert tenant_state(database, current.id)["leases"][0][6] == 9
+
+
+# PUT: atomicity
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"name": "  "},
+        {"phone": "nope"},
+        {"emergencyContacts": CONTACTS[:1]},
+        {"lease": lease_body(startDate="2099-03-01", endDate="2099-01-01")},
+        {"lease": without(lease_body(billingCycle="annual"), "rent")},
+    ],
+    ids=["name", "phone", "contacts", "end_date", "rent"],
+)
+def test_a_failed_field_rule_saves_nothing_on_edit(
+    client, database, signed_in, current, change
+):
+    before = tenant_state(database, current.id)
+    response = edit(client, signed_in.headers, current.id, **change)
+    assert response.status_code == 422
+    assert tenant_state(database, current.id) == before
+
+
+def test_a_bad_second_contact_keeps_the_old_contacts_and_name(
+    client, database, signed_in, current
+):
+    contacts = [dict(c) for c in CONTACTS]
+    contacts[1]["phone"] = "nope"
+    before = tenant_state(database, current.id)
+    response = edit(
+        client,
+        signed_in.headers,
+        current.id,
+        name="Changed Name",
+        emergencyContacts=contacts,
+    )
+    assert_error(response, 422, "VALIDATION_FAILED", "emergencyContacts.1.phone")
+    after = tenant_state(database, current.id)
+    assert after == before
+    assert after["name"] == "Old Name"
+    assert [c[1] for c in after["contacts"]] == ["Old One", "Old Two"]
+
+
+def test_any_other_failure_saves_nothing_on_edit(
+    app, database, owner, current, sign_in, monkeypatch
+):
+    from sqlalchemy.orm import Session as OrmSession
+
+    from app.models import EmergencyContact
+
+    headers = sign_in(owner).headers
+    original = OrmSession.flush
+
+    def failing_flush(self, *args, **kwargs):
+        if any(isinstance(obj, EmergencyContact) for obj in self.new):
+            raise RuntimeError("storage failure")
+        return original(self, *args, **kwargs)
+
+    before = tenant_state(database, current.id)
+    contacts = [
+        {"name": f"C{n}", "relationship": "Teman", "phone": f"08123456789{n}"}
+        for n in range(4)
+    ]
+    monkeypatch.setattr(OrmSession, "flush", failing_flush)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = edit(
+        client, headers, current.id, name="Changed Name", emergencyContacts=contacts
+    )
+    monkeypatch.setattr(OrmSession, "flush", original)
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert tenant_state(database, current.id) == before
+
+
+# POST /tenants/{tenantId}/invitation
+
+
+def regenerate(client, headers, tenant_id):
+    return client.post(f"{tenant_url(tenant_id)}/invitation", headers=headers)
+
+
+def preview_status(client, token: str) -> str:
+    response = client.post("/invitations/previews", json={"token": token})
+    assert response.status_code == 200, response.text
+    return response.json()["status"]
+
+
+def token_of(url: str) -> str:
+    prefix = f"{invitation_base()}/invitations/"
+    assert url.startswith(prefix)
+    return url.removeprefix(prefix)
+
+
+def test_regenerating_answers_with_a_new_invitation(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room)
+    before = datetime.now(UTC)
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert set(body) == INVITATION_FIELDS
+    assert body["expired"] is False
+    assert body["url"].startswith(f"{invitation_base()}/invitations/")
+    assert body["url"] != f"{invitation_base()}/invitations/{stored.token}"
+    created = parse_time(body["createdAt"])
+    assert before - timedelta(minutes=1) <= created <= datetime.now(UTC)
+    assert parse_time(body["expiresAt"]) - created == timedelta(days=7)
+
+
+def test_the_new_invitation_is_stored_with_a_hashed_token(
+    client, database, signed_in, room, make_tenant
+):
+    import hashlib
+
+    stored = make_tenant(room)
+    body = regenerate(client, signed_in.headers, stored.id).json()
+    token = token_of(body["url"])
+    rows = invitation_state(database, stored.id)
+    assert len(rows) == 2
+    newest = rows[-1]
+    assert newest[1] == hashlib.sha256(token.encode()).hexdigest()
+    assert newest[4] is None
+    assert newest[5] is None
+    assert newest[3] - newest[2] == timedelta(days=7)
+
+
+def test_the_old_link_stops_working_and_the_new_link_is_valid(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room)
+    assert preview_status(client, stored.token) == "valid"
+    body = regenerate(client, signed_in.headers, stored.id).json()
+    assert preview_status(client, stored.token) == "used"
+    assert preview_status(client, token_of(body["url"])) == "valid"
+
+
+def test_the_tenant_detail_shows_the_new_link(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room)
+    body = regenerate(client, signed_in.headers, stored.id).json()
+    invitation = get_tenant(client, signed_in.headers, stored.id).json()["invitation"]
+    assert invitation == body
+    assert invitation["url"] != f"{invitation_base()}/invitations/{stored.token}"
+
+
+def test_an_expired_invitation_is_renewed(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, expired=True)
+    assert preview_status(client, stored.token) == "expired"
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["expired"] is False
+    assert parse_time(body["expiresAt"]) > datetime.now(UTC) + timedelta(days=6)
+    assert preview_status(client, token_of(body["url"])) == "valid"
+    detail = get_tenant(client, signed_in.headers, stored.id).json()["invitation"]
+    assert detail["expired"] is False
+    assert detail["url"] == body["url"]
+
+
+def test_the_old_link_of_a_renewed_expired_invitation_is_not_valid(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, expired=True)
+    assert preview_status(client, stored.token) == "expired"
+    regenerate(client, signed_in.headers, stored.id)
+    assert preview_status(client, stored.token) == "used"
+
+
+def test_a_tenant_without_an_invitation_gets_one(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, invitation=False)
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert response.status_code == 201, response.text
+    assert preview_status(client, token_of(response.json()["url"])) == "valid"
+    assert len(invitation_state(database, stored.id)) == 1
+
+
+def test_regenerating_does_not_change_the_tenant_data(
+    client, database, signed_in, current
+):
+    before = tenant_state(database, current.id)
+    regenerate(client, signed_in.headers, current.id)
+    assert tenant_state(database, current.id) == before
+    body = get_tenant(client, signed_in.headers, current.id).json()
+    assert body["accountStatus"] == "notActivated"
+
+
+def test_regenerating_twice_leaves_only_the_latest_link_valid(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room)
+    first = regenerate(client, signed_in.headers, stored.id).json()
+    second = regenerate(client, signed_in.headers, stored.id).json()
+    assert first["url"] != second["url"]
+    assert preview_status(client, stored.token) == "used"
+    assert preview_status(client, token_of(first["url"])) == "used"
+    assert preview_status(client, token_of(second["url"])) == "valid"
+    assert len(invitation_state(database, stored.id)) == 3
+    detail = get_tenant(client, signed_in.headers, stored.id).json()["invitation"]
+    assert detail["url"] == second["url"]
+
+
+def test_regenerating_leaves_other_tenants_links_valid(
+    client, database, existing, signed_in, room, make_room, make_tenant
+):
+    mine = make_tenant(room)
+    other = make_tenant(make_room(existing, number="A2"), name="Dewi")
+    regenerate(client, signed_in.headers, mine.id)
+    assert preview_status(client, other.token) == "valid"
+
+
+def test_an_active_tenant_cannot_get_a_new_invitation(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, activated=True, email="budi@example.com")
+    before = invitation_state(database, stored.id)
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "TENANT_ALREADY_ACTIVE"
+    assert response.json()["message"]
+    assert invitation_state(database, stored.id) == before
+
+
+def test_an_active_tenant_without_an_invitation_row_gets_none_created(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(
+        room, activated=True, email="budi@example.com", invitation=False
+    )
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert response.status_code == 409
+    assert response.json()["code"] == "TENANT_ALREADY_ACTIVE"
+    assert invitation_state(database, stored.id) == []
+
+
+def test_a_view_only_property_still_allows_a_new_invitation(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen))
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert response.status_code == 201, response.text
+    assert preview_status(client, token_of(response.json()["url"])) == "valid"
+    assert preview_status(client, stored.token) == "used"
+
+
+def test_a_view_only_room_still_allows_a_new_invitation(
+    client, database, existing, signed_in, make_room, make_tenant
+):
+    stored = make_tenant(make_room(existing, number="F1", view_only=True))
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert response.status_code == 201, response.text
+    assert preview_status(client, token_of(response.json()["url"])) == "valid"
+
+
+def test_a_manager_regenerates_the_invitation_of_an_assigned_property(
+    client, database, manager, manager_in, existing, room, make_tenant, assign_manager
+):
+    stored = make_tenant(room)
+    assign_manager(manager, existing)
+    response = regenerate(client, manager_in.headers, stored.id)
+    assert response.status_code == 201, response.text
+    assert preview_status(client, stored.token) == "used"
+
+
+def test_a_manager_cannot_regenerate_the_invitation_of_an_unassigned_property(
+    client, database, manager_in, room, make_tenant
+):
+    stored = make_tenant(room)
+    response = regenerate(client, manager_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert preview_status(client, stored.token) == "valid"
+    assert len(invitation_state(database, stored.id)) == 1
+
+
+def test_a_manager_loses_the_right_to_regenerate_as_soon_as_unassigned(
+    client, database, manager, manager_in, existing, room, make_tenant, assign_manager
+):
+    stored = make_tenant(room)
+    assign_manager(manager, existing)
+    assert regenerate(client, manager_in.headers, stored.id).status_code == 201
+    unassign(database, manager, existing)
+    response = regenerate(client, manager_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert len(invitation_state(database, stored.id)) == 2
+
+
+@pytest.mark.parametrize("name", ["tenant", "admin"])
+def test_a_forbidden_account_regenerates_nothing(
+    client, database, make_user, sign_in, room, make_tenant, name
+):
+    stored = make_tenant(room)
+    headers = sign_in(make_user(role=role(name))).headers
+    response = regenerate(client, headers, stored.id)
+    assert_error(response, 403, "FORBIDDEN")
+    assert preview_status(client, stored.token) == "valid"
+    assert len(invitation_state(database, stored.id)) == 1
+
+
+def test_an_unknown_tenant_is_not_found_on_regenerate(client, database, signed_in):
+    response = regenerate(client, signed_in.headers, uuid4())
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_the_id_of_a_user_who_is_not_a_tenant_is_not_found_on_regenerate(
+    client, database, owner, signed_in
+):
+    response = regenerate(client, signed_in.headers, owner.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_a_deleted_tenant_is_not_found_on_regenerate(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, deleted=True)
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert len(invitation_state(database, stored.id)) == 1
+
+
+def test_a_tenant_without_an_active_lease_is_not_found_on_regenerate(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, lease_ended=True)
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert len(invitation_state(database, stored.id)) == 1
+
+
+def test_a_tenant_of_another_owners_property_is_not_found_on_regenerate(
+    client, database, signed_in, make_user, make_property, make_room, make_tenant
+):
+    theirs = make_property(make_user(), name="Theirs")
+    stored = make_tenant(make_room(theirs))
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+    assert preview_status(client, stored.token) == "valid"
+    assert len(invitation_state(database, stored.id)) == 1
+
+
+def test_a_tenant_of_a_deleted_property_is_not_found_on_regenerate(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    gone = make_property(owner, name="Gone", deleted=True)
+    stored = make_tenant(make_room(gone))
+    response = regenerate(client, signed_in.headers, stored.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_a_malformed_tenant_id_is_a_validation_failure_on_regenerate(
+    client, database, signed_in
+):
+    response = regenerate(client, signed_in.headers, "not-a-uuid")
+    assert_error(response, 422, "VALIDATION_FAILED", "tenantId")
+
+
+def test_the_old_link_stays_valid_when_the_new_invitation_cannot_be_created(
+    app, database, owner, sign_in, room, make_tenant, monkeypatch
+):
+    stored = make_tenant(room)
+    headers = sign_in(owner).headers
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("no invitation")
+
+    before = invitation_state(database, stored.id)
+    client = TestClient(app, raise_server_exceptions=False)
+    with monkeypatch.context() as patch:
+        patch.setattr("app.services.invitations.create_invitation", fail)
+        response = regenerate(client, headers, stored.id)
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert invitation_state(database, stored.id) == before
+    assert preview_status(client, stored.token) == "valid"
+    detail = get_tenant(client, headers, stored.id).json()["invitation"]
+    assert detail["url"] == f"{invitation_base()}/invitations/{stored.token}"
+
+
+def test_the_old_link_stays_valid_when_creation_fails_after_replacing_it(
+    app, database, owner, sign_in, room, make_tenant, monkeypatch
+):
+    from app.services import invitations
+
+    stored = make_tenant(room)
+    headers = sign_in(owner).headers
+    create_invitation = invitations.create_invitation
+
+    def create_then_fail(*args, **kwargs):
+        create_invitation(*args, **kwargs)
+        raise RuntimeError("failure after the new invitation was created")
+
+    before = invitation_state(database, stored.id)
+    client = TestClient(app, raise_server_exceptions=False)
+    with monkeypatch.context() as patch:
+        patch.setattr("app.services.invitations.create_invitation", create_then_fail)
+        response = regenerate(client, headers, stored.id)
+    assert response.status_code == 500
+    assert invitation_state(database, stored.id) == before
+    assert preview_status(client, stored.token) == "valid"
+
+
+# Operations that are not implemented yet
+
+
+def test_deleting_a_tenant_is_still_not_implemented(client, database, signed_in):
+    response = client.delete(tenant_url(uuid4()), headers=signed_in.headers)
     assert response.status_code == 501
