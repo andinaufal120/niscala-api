@@ -5,6 +5,7 @@ from app.models.complaints import Complaint, ComplaintStatusChange
 from app.models.email_verification import EmailVerificationCode
 from app.models.login_failure import LoginFailure
 from app.models.properties import ManagerAssignment, Property
+from app.models.rent_bills import RentBill, RentBillReceipt, RentBillStatusChange
 from app.models.rooms import Room
 from app.models.subscriptions import Subscription
 from app.models.tenants import EmergencyContact, Invitation, Lease, Tenant
@@ -21,6 +22,9 @@ __all__ = [
     "LoginFailure",
     "ManagerAssignment",
     "Property",
+    "RentBill",
+    "RentBillReceipt",
+    "RentBillStatusChange",
     "Room",
     "Subscription",
     "Tenant",
