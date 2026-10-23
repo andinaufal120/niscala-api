@@ -432,7 +432,8 @@ def seed_rent_bills(db: Session, lease: LeaseRow, months: int) -> int:
 
     Periods run from the lease start date through the one containing today.
     Past periods are paid by transfer on the due date, every fourth one
-    `SEED_LATE_DAYS` days late; the current period is unpaid. Periods that
+    `SEED_LATE_DAYS` days late (a payment date never passes today); the current
+    period is unpaid. Periods that
     already have a bill are skipped. Flushes, never commits, and returns the
     number of bills created. The lease needs a start date.
     """
@@ -464,7 +465,9 @@ def _seed_bill(db: Session, lease: LeaseRow, number: int, current: bool) -> None
     paid_on = None
     if not current:
         late = (number + 1) % SEED_LATE_EVERY == 0
-        paid_on = due_date + timedelta(days=SEED_LATE_DAYS if late else 0)
+        paid_on = min(
+            due_date + timedelta(days=SEED_LATE_DAYS if late else 0), today_jakarta()
+        )
     bill = RentBillRow(
         lease_id=lease.id,
         period_start=start,
