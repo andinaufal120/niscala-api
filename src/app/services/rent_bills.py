@@ -129,7 +129,7 @@ def _summary(row: Row, today: date, has_receipt: bool) -> RentBillSummary:
         ),
         days_overdue=max(0, (today - bill.due_date).days) if unsettled else 0,
         is_current=current,
-        can_upload_receipt=unsettled and current and prop.bank_name is not None,
+        can_upload_receipt=unsettled and prop.bank_name is not None,
     )
 
 
@@ -275,16 +275,14 @@ def upload_receipt(
     """Store a transfer receipt image and mark the bill as awaiting verification.
 
     Only the bill's tenant gets this far; checks in order: bill (404
-    RENT_BILL_NOT_FOUND), unpaid or rejected and in the current period (409
+    RENT_BILL_NOT_FOUND), unpaid or rejected (409
     RENT_BILL_NOT_UPLOADABLE), property bank account (409
     PROPERTY_BANK_ACCOUNT_MISSING), file size (422 RECEIPT_TOO_LARGE) and a PNG
     or JPEG signature (422 RECEIPT_TYPE_INVALID). A new receipt replaces the old
     one and clears a previous rejection reason.
     """
     bill, _, _, prop, _ = _find(db, user, rent_bill_id, lock=True)
-    if PaymentStatus(bill.payment_status) not in UPLOADABLE or not _is_current(
-        bill, today_jakarta()
-    ):
+    if PaymentStatus(bill.payment_status) not in UPLOADABLE:
         raise ApiError(409, "RENT_BILL_NOT_UPLOADABLE")
     if prop.bank_name is None:
         raise ApiError(409, "PROPERTY_BANK_ACCOUNT_MISSING")
