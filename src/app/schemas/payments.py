@@ -69,7 +69,7 @@ class RentBillSummary(ApiModel):
         description="True when the billing period contains today in Asia/Jakarta."
     )
     can_upload_receipt: bool = Field(
-        description="True when the bill is current, unpaid or rejected, and its "
+        description="True when the bill is unpaid or rejected and its "
         "property has a bank account. Describes the bill, not the caller's role."
     )
 

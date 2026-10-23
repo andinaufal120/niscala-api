@@ -540,10 +540,43 @@ def test_a_receipt_can_be_uploaded_while_unpaid_or_rejected(
         assert item["canUploadReceipt"] is expected
 
 
-def test_a_receipt_cannot_be_uploaded_for_a_bill_outside_the_current_period(
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("unpaid", True),
+        ("rejected", True),
+        ("awaitingVerification", False),
+        ("paid", False),
+    ],
+)
+def test_a_receipt_can_be_uploaded_for_a_past_bill_only_while_unpaid_or_rejected(
+    client, scene, lease, make_rent_bill, status, expected
+):
+    make_rent_bill(
+        lease, period_start=days_ago(60), period_end=days_ago(31), status=status
+    )
+    for who in ("tenant_in", "owner_in", "manager_in"):
+        (item,) = client.get(RENT_BILLS, headers=getattr(scene, who).headers).json()[
+            "items"
+        ]
+        assert item["isCurrent"] is False
+        assert item["canUploadReceipt"] is expected
+
+
+def test_a_receipt_can_be_uploaded_for_a_bill_of_a_future_period(
     client, scene, lease, make_rent_bill
 ):
+    make_rent_bill(lease, period_start=days_ahead(1), period_end=days_ahead(30))
+    (item,) = client.get(RENT_BILLS, headers=scene.tenant_in.headers).json()["items"]
+    assert item["isCurrent"] is False
+    assert item["canUploadReceipt"] is True
+
+
+def test_a_receipt_cannot_be_uploaded_for_a_past_bill_without_a_bank_account(
+    client, database, scene, lease, make_rent_bill
+):
     make_rent_bill(lease, period_start=days_ago(60), period_end=days_ago(31))
+    clear_bank_account(database, scene.prop)
     (item,) = client.get(RENT_BILLS, headers=scene.tenant_in.headers).json()["items"]
     assert item["isCurrent"] is False
     assert item["canUploadReceipt"] is False
@@ -568,7 +601,7 @@ def test_the_detail_carries_the_same_flags_as_the_list(
         body = client.get(bill_url(current), headers=headers).json()
         assert (body["isCurrent"], body["canUploadReceipt"]) == (True, True)
         body = client.get(bill_url(old), headers=headers).json()
-        assert (body["isCurrent"], body["canUploadReceipt"]) == (False, False)
+        assert (body["isCurrent"], body["canUploadReceipt"]) == (False, True)
 
 
 # Days overdue

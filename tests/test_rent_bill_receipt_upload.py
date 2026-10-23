@@ -25,7 +25,6 @@ from rent_bill_support import (
     stored_bill,
     stored_changes,
     stored_receipts,
-    today,
 )
 
 
@@ -308,59 +307,102 @@ def test_a_bill_that_is_not_unpaid_or_rejected_refuses_a_receipt(
     assert snapshot(database, bill) == before
 
 
-# Current period
+# Period
 
 
-@pytest.mark.parametrize(
-    ("start", "end"),
-    [
-        (days_ago(60), days_ago(31)),
-        (days_ago(30), days_ago(1)),
-        (days_ahead(1), days_ahead(30)),
-        (days_ahead(31), days_ahead(60)),
-    ],
-    ids=["old", "ended_yesterday", "starts_tomorrow", "future"],
-)
-def test_only_the_bill_of_the_current_period_accepts_a_receipt(
-    client, database, scene, make_rent_bill, lease, start, end
-):
-    bill = make_rent_bill(lease, period_start=start, period_end=end)
-    before = snapshot(database, bill)
-    response = upload(client, scene.tenant_in.headers, bill)
-    assert_refused(response, "RENT_BILL_NOT_UPLOADABLE")
-    assert snapshot(database, bill) == before
+PERIODS = [
+    (days_ago(60), days_ago(31)),
+    (days_ago(30), days_ago(1)),
+    (days_ahead(1), days_ahead(30)),
+    (days_ahead(31), days_ahead(60)),
+]
+PERIOD_IDS = ["old", "ended_yesterday", "starts_tomorrow", "future"]
 
 
-def test_the_current_period_is_decided_by_the_date_in_jakarta(
-    client, database, scene, make_rent_bill, lease, monkeypatch
-):
-    from datetime import date
-
-    monkeypatch.setattr(
-        "app.services.rent_bills.today_jakarta", lambda: date(2031, 3, 1)
-    )
-    bill = make_rent_bill(
-        lease, period_start=date(2031, 3, 1), period_end=date(2031, 3, 31)
-    )
-    assert upload(client, scene.tenant_in.headers, bill).status_code == 200
-
-
-@pytest.mark.parametrize(
-    ("start", "end"),
-    [
-        (today(), days_ahead(29)),
-        (days_ago(29), today()),
-        (today(), today()),
-        (days_ago(10), days_ahead(10)),
-    ],
-    ids=["starts_today", "ends_today", "single_day", "middle"],
-)
-def test_a_period_containing_today_is_current(
+@pytest.mark.parametrize(("start", "end"), PERIODS, ids=PERIOD_IDS)
+def test_an_unpaid_bill_of_any_period_accepts_a_receipt(
     client, database, scene, make_rent_bill, lease, start, end
 ):
     bill = make_rent_bill(lease, period_start=start, period_end=end)
     response = upload(client, scene.tenant_in.headers, bill)
     assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["payment"]["status"] == "awaitingVerification"
+    assert body["payment"]["hasReceipt"] is True
+    assert body["canUploadReceipt"] is False
+    assert stored_bill(database, bill).payment_status == "awaitingVerification"
+
+
+@pytest.mark.parametrize(("start", "end"), PERIODS[:2], ids=PERIOD_IDS[:2])
+def test_a_rejected_bill_of_a_past_period_accepts_a_receipt(
+    client, database, scene, make_rent_bill, lease, start, end
+):
+    bill = make_rent_bill(
+        lease,
+        period_start=start,
+        period_end=end,
+        status="rejected",
+        rejection_reason="Blurry photo.",
+    )
+    response = upload(client, scene.tenant_in.headers, bill)
+    assert response.status_code == 200, response.text
+    payment = response.json()["payment"]
+    assert payment["status"] == "awaitingVerification"
+    assert payment["rejectionReason"] is None
+    assert payment["hasReceipt"] is True
+
+
+def test_an_overdue_bill_of_a_past_period_stores_the_receipt_and_history(
+    client, database, scene, make_rent_bill, lease
+):
+    bill = make_rent_bill(
+        lease, period_start=days_ago(60), period_end=days_ago(31), due_date=days_ago(55)
+    )
+    content = png(2048)
+    upload(client, scene.tenant_in.headers, bill, content)
+    (receipt,) = stored_receipts(database)
+    assert receipt.rent_bill_id == bill.id
+    assert bytes(receipt.content) == content
+    created, change = stored_changes(database, bill)
+    assert created.status == "unpaid"
+    assert change.status == "awaitingVerification"
+    assert change.manual is False
+    assert change.actor_id == scene.tenant.id
+
+
+def test_a_past_bill_that_is_paid_or_awaiting_verification_refuses_a_receipt(
+    client, database, scene, make_rent_bill, lease
+):
+    paid = make_rent_bill(
+        lease,
+        period_start=days_ago(90),
+        period_end=days_ago(61),
+        status="paid",
+        method="cash",
+        paid_on=days_ago(70),
+    )
+    waiting = make_rent_bill(
+        lease,
+        period_start=days_ago(60),
+        period_end=days_ago(31),
+        status="awaitingVerification",
+    )
+    for bill in (paid, waiting):
+        before = snapshot(database, bill)
+        response = upload(client, scene.tenant_in.headers, bill)
+        assert_refused(response, "RENT_BILL_NOT_UPLOADABLE")
+        assert snapshot(database, bill) == before
+
+
+def test_a_past_bill_without_a_bank_account_refuses_a_receipt(
+    client, database, scene, make_rent_bill, lease
+):
+    bill = make_rent_bill(lease, period_start=days_ago(60), period_end=days_ago(31))
+    clear_bank_account(database, scene.prop)
+    before = snapshot(database, bill)
+    response = upload(client, scene.tenant_in.headers, bill)
+    assert_refused(response, "PROPERTY_BANK_ACCOUNT_MISSING")
+    assert snapshot(database, bill) == before
 
 
 def test_the_current_bill_is_accepted_when_an_older_bill_is_still_unpaid(
