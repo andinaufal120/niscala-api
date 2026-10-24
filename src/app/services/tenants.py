@@ -1,4 +1,4 @@
-"""Adding, listing and reading tenants."""
+"""Adding, listing, reading and editing tenants, and regenerating invitations."""
 
 import logging
 import re
@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.access import get_accessible_property
@@ -27,6 +27,7 @@ from app.schemas.tenants import (
     RoomRef,
     Tenant,
     TenantAccountStatus,
+    TenantInput,
     TenantInvitation,
     TenantList,
     TenantSummary,
@@ -79,7 +80,7 @@ def clean_contacts(submitted: list[EmergencyContact]) -> list[EmergencyContact]:
     return contacts
 
 
-def _rent(data: NewTenantInput, room: RoomRow) -> int:
+def _rent(data: TenantInput, room: RoomRow) -> int:
     lease = data.lease
     if lease.rent is not None:
         return lease.rent
@@ -295,7 +296,7 @@ def list_tenants(db: Session, user: UserAccount, property_id: UUID) -> TenantLis
     )
 
 
-def get_tenant(db: Session, user: UserAccount, tenant_id: UUID) -> Tenant:
+def _find_accessible(db: Session, user: UserAccount, tenant_id: UUID) -> Found:
     """Return a tenant with an active lease in a property the user may access.
 
     Raises 404 TENANT_NOT_FOUND for an unknown, deleted, lease-less or
@@ -308,4 +309,87 @@ def get_tenant(db: Session, user: UserAccount, tenant_id: UUID) -> Tenant:
         get_accessible_property(db, user, found[0][3].property_id)
     except ApiError:
         raise ApiError(404, "TENANT_NOT_FOUND") from None
-    return _detail(db, found[0])
+    return found[0]
+
+
+def get_tenant(db: Session, user: UserAccount, tenant_id: UUID) -> Tenant:
+    """Return a tenant with an active lease in a property the user may access.
+
+    Raises 404 TENANT_NOT_FOUND for an unknown, deleted, lease-less or
+    inaccessible tenant.
+    """
+    return _detail(db, _find_accessible(db, user, tenant_id))
+
+
+def update_tenant(
+    db: Session, user: UserAccount, tenant_id: UUID, data: TenantInput
+) -> Tenant:
+    """Edit a tenant and their active lease; the room cannot change.
+
+    Checks in order: tenant access (404 TENANT_NOT_FOUND), view-only property
+    (403 PROPERTY_READ_ONLY), view-only room (403 ROOM_READ_ONLY), field rules
+    (422 VALIDATION_FAILED). An activated tenant must keep at least two
+    emergency contacts. The emergency contacts are replaced wholesale. A
+    failure saves nothing.
+    """
+    found = _find_accessible(db, user, tenant_id)
+    tenant, account, stored_lease, room = found
+    if get_accessible_property(db, user, room.property_id).view_only:
+        raise ApiError(403, "PROPERTY_READ_ONLY")
+    if room.view_only:
+        raise ApiError(403, "ROOM_READ_ONLY")
+
+    name = _text(data.name, "name")
+    phone = _phone(data.phone, "phone")
+    occupation = (data.occupation or "").strip() or None
+    contacts = clean_contacts(data.emergency_contacts)
+    if tenant.activated_at is not None and not contacts:
+        raise _invalid("emergencyContacts")
+    lease = data.lease
+    if (
+        lease.start_date is not None
+        and lease.end_date is not None
+        and lease.end_date < lease.start_date
+    ):
+        raise _invalid("lease.endDate")
+    rent = _rent(data, room)
+
+    account.name = name
+    tenant.phone = phone
+    tenant.occupation = occupation
+    stored_lease.start_date = lease.start_date
+    stored_lease.end_date = lease.end_date
+    stored_lease.billing_cycle = lease.billing_cycle.value
+    stored_lease.rent = rent
+    stored_lease.grace_period_days = lease.grace_period_days
+    db.execute(delete(ContactRow).where(ContactRow.tenant_id == tenant.user_id))
+    db.flush()
+    db.add_all(
+        ContactRow(
+            tenant_id=tenant.user_id,
+            name=c.name,
+            relationship=c.relationship,
+            phone=c.phone,
+            position=position,
+        )
+        for position, c in enumerate(contacts)
+    )
+    db.flush()
+    return _detail(db, found)
+
+
+def regenerate_invitation(
+    db: Session, user: UserAccount, tenant_id: UUID
+) -> TenantInvitation:
+    """Create a new invitation for a tenant, invalidating the old one.
+
+    Checks in order: tenant access (404 TENANT_NOT_FOUND), tenant already
+    activated (409 TENANT_ALREADY_ACTIVE). Allowed while the room or property
+    is view-only. A failure leaves the previous invitation valid.
+    """
+    tenant = _find_accessible(db, user, tenant_id)[0]
+    if tenant.activated_at is not None:
+        raise ApiError(409, "TENANT_ALREADY_ACTIVE")
+    with db.begin_nested():
+        row, _ = invitations.create_invitation(db, tenant_id)
+    return _invitation(row)

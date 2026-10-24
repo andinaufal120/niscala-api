@@ -787,20 +787,10 @@ def _live(url: str, property_id: str) -> str:
 @pytest.mark.parametrize(
     ("method", "url", "body"),
     [
-        pytest.param(
-            "put", TENANT_URL, MINIMAL_TENANT_INPUT, id="update_tenant_minimal"
-        ),
-        pytest.param("put", TENANT_URL, FULL_TENANT_INPUT, id="update_tenant_full"),
         pytest.param("delete", TENANT_URL, None, id="delete_tenant"),
-        pytest.param(
-            "post",
-            f"{TENANT_URL}/invitation",
-            None,
-            id="regenerate_tenant_invitation",
-        ),
     ],
 )
-def test_valid_tenant_request_responds_not_implemented(
+def test_valid_stub_tenant_request_responds_not_implemented(
     client, method: str, url: str, body: dict[str, Any] | None
 ) -> None:
     response = client.request(method, url, json=body)
@@ -870,8 +860,9 @@ def test_tenant_input_edge_body_is_accepted(
     response = client.request(
         method, _live(url, property_id), json={**base, **extra}, headers=headers
     )
-    # Adding a tenant gets past validation to the unknown room; editing is a stub.
-    assert response.status_code == {"post": 404, "put": 501}[method]
+    # A body the schema accepts reaches the endpoint, which answers 404 for the
+    # unknown room (create) or the unknown tenant (edit); a rejected body is 422.
+    assert response.status_code == 404
 
 
 # Runtime: invalid requests are rejected with a validation error

@@ -1,4 +1,4 @@
-"""Endpoints under /tenants. Reading a tenant is implemented; the others answer 501."""
+"""Endpoints under /tenants. Removing a tenant answers 501; the others are implemented."""
 
 from typing import Annotated
 from uuid import UUID
@@ -28,9 +28,11 @@ def get_tenant(tenant_id: TenantId, caller: OwnerOrManager, db: Db) -> Tenant:
 
 
 @router.put("/{tenantId}")
-def update_tenant(tenant_id: TenantId, body: TenantInput) -> Tenant:
+def update_tenant(
+    tenant_id: TenantId, body: TenantInput, caller: OwnerOrManager, db: Db
+) -> Tenant:
     """Replace a tenant's fields. The room cannot be changed."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return tenants.update_tenant(db, caller.user, tenant_id, body)
 
 
 @router.delete(
@@ -44,6 +46,8 @@ def delete_tenant(tenant_id: TenantId) -> None:
 
 
 @router.post("/{tenantId}/invitation", status_code=status.HTTP_201_CREATED)
-def regenerate_tenant_invitation(tenant_id: TenantId) -> TenantInvitation:
+def regenerate_tenant_invitation(
+    tenant_id: TenantId, caller: OwnerOrManager, db: Db
+) -> TenantInvitation:
     """Create a new invitation link for a tenant, invalidating the old one."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return tenants.regenerate_invitation(db, caller.user, tenant_id)
