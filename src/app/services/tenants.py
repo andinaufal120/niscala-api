@@ -15,12 +15,17 @@ from app.errors import ApiError
 from app.models import EmergencyContact as ContactRow
 from app.models import Invitation as InvitationRow
 from app.models import Lease as LeaseRow
+from app.models import Property as PropertyRow
 from app.models import Room as RoomRow
 from app.models import Tenant as TenantRow
 from app.models import UserAccount, UserSession
 from app.schemas.auth import UserRole
 from app.schemas.tenants import (
     BillingCycle,
+    CurrentLease,
+    CurrentLeaseProperty,
+    CurrentLeaseResult,
+    CurrentLeaseRoom,
     EmergencyContact,
     Lease,
     NewTenantInput,
@@ -182,6 +187,37 @@ def _find(db: Session, *conditions) -> list[Found]:
         .where(TenantRow.deleted_at.is_(None), LeaseRow.ended_at.is_(None), *conditions)
     )
     return [tuple(row) for row in rows]
+
+
+def get_current_lease(db: Session, user: UserAccount) -> CurrentLeaseResult:
+    """Return the caller's active lease with its room and property.
+
+    The lease is null when the caller has no active lease. A view-only room or
+    property does not hide it.
+    """
+    found = _find(db, TenantRow.user_id == user.id)
+    if not found:
+        return CurrentLeaseResult(lease=None)
+    _, _, lease, room = found[0]
+    parent = db.get(PropertyRow, room.property_id)
+    return CurrentLeaseResult(
+        lease=CurrentLease(
+            room=CurrentLeaseRoom(
+                id=room.id,
+                number=room.number,
+                facilities=room.facilities,
+                length_m=room.length_m,
+                width_m=room.width_m,
+            ),
+            property=CurrentLeaseProperty(
+                id=parent.id, name=parent.name, address=parent.address
+            ),
+            start_date=lease.start_date,
+            end_date=lease.end_date,
+            rent=lease.rent,
+            billing_cycle=BillingCycle(lease.billing_cycle),
+        )
+    )
 
 
 def create_tenant(

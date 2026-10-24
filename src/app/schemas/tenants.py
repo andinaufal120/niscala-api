@@ -101,14 +101,27 @@ class CurrentLeaseRoom(ApiModel):
     id: UUID
     number: str
     facilities: list[str]
+    length_m: float | None = Field(description="In metres.")
+    width_m: float | None = Field(description="In metres.")
+
+
+class CurrentLeaseProperty(ApiModel):
+    """The property of the caller's lease."""
+
+    id: UUID
+    name: str
+    address: str
 
 
 class CurrentLease(ApiModel):
     """The calling tenant's active lease."""
 
     room: CurrentLeaseRoom
+    property: CurrentLeaseProperty
     start_date: date | None
     end_date: date | None
+    rent: int = Field(description="Per billing cycle, in rupiah.")
+    billing_cycle: BillingCycle
 
 
 class CurrentLeaseResult(ApiModel):
