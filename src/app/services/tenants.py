@@ -1,4 +1,4 @@
-"""Adding, listing, reading and editing tenants, and regenerating invitations."""
+"""Adding, listing, reading, editing and deleting tenants, and regenerating invitations."""
 
 import logging
 import re
@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.access import get_accessible_property
@@ -17,7 +17,7 @@ from app.models import Invitation as InvitationRow
 from app.models import Lease as LeaseRow
 from app.models import Room as RoomRow
 from app.models import Tenant as TenantRow
-from app.models import UserAccount
+from app.models import UserAccount, UserSession
 from app.schemas.auth import UserRole
 from app.schemas.tenants import (
     BillingCycle,
@@ -32,7 +32,7 @@ from app.schemas.tenants import (
     TenantList,
     TenantSummary,
 )
-from app.services import invitations
+from app.services import invitations, sessions
 from app.services.leases import next_bill_date
 from app.services.rooms import natural_number_key
 
@@ -376,6 +376,42 @@ def update_tenant(
     )
     db.flush()
     return _detail(db, found)
+
+
+def delete_tenant(db: Session, user: UserAccount, tenant_id: UUID) -> None:
+    """End a tenant's lease and revoke their access; history is kept.
+
+    Checks in order: tenant access (404 TENANT_NOT_FOUND), view-only property
+    (403 PROPERTY_READ_ONLY), view-only room (403 ROOM_READ_ONLY). Marks the
+    tenant deleted, ends the active lease, invalidates unused invitations and
+    ends every session of the account. A failure saves nothing.
+    """
+    tenant, _, stored_lease, room = _find_accessible(db, user, tenant_id)
+    if get_accessible_property(db, user, room.property_id).view_only:
+        raise ApiError(403, "PROPERTY_READ_ONLY")
+    if room.view_only:
+        raise ApiError(403, "ROOM_READ_ONLY")
+
+    now = datetime.now(UTC)
+    tenant.deleted_at = now
+    stored_lease.ended_at = now
+    db.execute(
+        update(InvitationRow)
+        .where(
+            InvitationRow.tenant_id == tenant_id,
+            InvitationRow.used_at.is_(None),
+            InvitationRow.invalidated_at.is_(None),
+        )
+        .values(invalidated_at=now)
+    )
+    open_sessions = db.scalars(
+        select(UserSession).where(
+            UserSession.user_id == tenant_id, UserSession.revoked_at.is_(None)
+        )
+    ).all()
+    for session in open_sessions:
+        sessions.end_session(db, session)
+    db.flush()
 
 
 def regenerate_invitation(

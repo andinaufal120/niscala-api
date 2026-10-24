@@ -1,9 +1,9 @@
-"""Endpoints under /tenants. Removing a tenant answers 501; the others are implemented."""
+"""Endpoints under /tenants."""
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, Path, Response, status
 
 from app.access import require_roles
 from app.db import SessionDep
@@ -40,9 +40,9 @@ def update_tenant(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def delete_tenant(tenant_id: TenantId) -> None:
+def delete_tenant(tenant_id: TenantId, caller: OwnerOrManager, db: Db) -> None:
     """End a tenant's lease, revoke their access and free the room; history is kept."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    tenants.delete_tenant(db, caller.user, tenant_id)
 
 
 @router.post("/{tenantId}/invitation", status_code=status.HTTP_201_CREATED)
