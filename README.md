@@ -62,6 +62,16 @@ Good to know:
 - To get a billing history for the demo Tenant, run `uv run niscala-api seed-rent-bills tenant@example.com`.
 - To start over, stop the server, run `docker rm -f niscala-pg`, and repeat steps 1 and 3.
 
+## Shared development server
+
+A shared copy of the API runs on Fly.io at `https://dev-api-niscala.andinaufal.com` (interactive docs at `/docs`). Point the debug APK at this URL. The demo logins from the steps above work there too.
+
+- The machine stops when idle, so the first request after a quiet period takes a few seconds.
+- Verification codes are written to the server log: `fly logs -a niscala-api-dev`.
+- Development commands run on the server: `fly ssh console -a niscala-api-dev -C "niscala-api seed-rent-bills tenant@example.com"` (same for `grant-subscription`).
+- To deploy, run `fly deploy` from an up-to-date `main`. Migrations are applied by the deploy itself.
+- Secrets are set with `fly secrets set NAME=value -a niscala-api-dev`.
+
 ## Development
 
 ```sh

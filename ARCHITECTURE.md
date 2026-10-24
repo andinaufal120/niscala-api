@@ -64,7 +64,7 @@ Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, A
 
 ## 4. Data Stores
 
-PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints` and `complaint_status_changes`. Facility tags are a text-array column on the room.
+PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints` and `complaint_status_changes`. Facility tags are a text-array column on the room.
 
 ## 5. External Integrations / APIs
 
@@ -73,7 +73,7 @@ PostgreSQL (Supabase in production), reached through `DATABASE_URL`. Schema chan
 
 ## 6. Deployment & Infrastructure
 
-Fly.io for the API and Supabase for the database are planned; *not set up yet.* GitHub Actions runs Claude Code review on pull requests (`.github/workflows/`).
+The shared development server is the Fly.io app `niscala-api-dev` at `https://dev-api-niscala.andinaufal.com` (also reachable at `niscala-api-dev.fly.dev`), in region `sin` (Singapore, next to the database). It is built from `Dockerfile` and configured in `fly.toml`. Its database is the Supabase project *niscala-api-dev* (ap-southeast-1), reached through the Supavisor session pooler, with Supabase's Data API turned off because only the backend uses the database. `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY` and `GEMINI_API_KEY` are Fly secrets. Deploys are manual (`fly deploy`), and each one runs `alembic upgrade head` as Fly's release command before the new version starts. The machine stops when idle and starts again on the next request. Production is *not set up yet.* GitHub Actions runs Claude Code review on pull requests (`.github/workflows/`).
 
 ## 7. Security Considerations
 
