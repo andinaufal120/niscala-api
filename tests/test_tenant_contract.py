@@ -765,7 +765,7 @@ def test_tenant_list_items_is_required_array_of_tenant_summary(
     assert openapi.ref_name(items["items"]) == "TenantSummary"
 
 
-# Runtime: valid requests reach the not-implemented stub
+# Runtime: valid requests are accepted
 
 
 @pytest.fixture
@@ -782,19 +782,6 @@ def owner_property_id(database, make_user, sign_in, make_property):
 
 def _live(url: str, property_id: str) -> str:
     return url.replace(PROPERTY_ID, property_id)
-
-
-@pytest.mark.parametrize(
-    ("method", "url", "body"),
-    [
-        pytest.param("delete", TENANT_URL, None, id="delete_tenant"),
-    ],
-)
-def test_valid_stub_tenant_request_responds_not_implemented(
-    client, method: str, url: str, body: dict[str, Any] | None
-) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 501
 
 
 @pytest.mark.parametrize(("method", "url", "base"), TENANT_WRITE_REQUESTS)

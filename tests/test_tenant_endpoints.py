@@ -201,6 +201,7 @@ REQUESTS = [
     pytest.param(
         "post", tenant_url(uuid4()) + "/invitation", None, id="regenerate_invitation"
     ),
+    pytest.param("delete", tenant_url(uuid4()), None, id="delete"),
 ]
 
 
@@ -3024,9 +3025,826 @@ def test_the_old_link_stays_valid_when_creation_fails_after_replacing_it(
     assert preview_status(client, stored.token) == "valid"
 
 
-# Operations that are not implemented yet
+# DELETE /tenants/{tenantId}
+
+ACTIVATION_URL = "/invitations/activations/password"
+PREVIEW_URL = "/invitations/previews"
+REFRESH_URL = "/auth/refresh"
+ME_URL = "/me"
+LOGIN_URL = "/auth/login"
+DEVICE = {"name": "Pixel 8", "platform": "Android 14"}
+PASSWORD = "T7#vq9-lorem-ipsum"
 
 
-def test_deleting_a_tenant_is_still_not_implemented(client, database, signed_in):
-    response = client.delete(tenant_url(uuid4()), headers=signed_in.headers)
-    assert response.status_code == 501
+def remove(client, headers, tenant_id):
+    return client.delete(tenant_url(tenant_id), headers=headers)
+
+
+def remove_ok(client, headers, tenant_id) -> None:
+    response = remove(client, headers, tenant_id)
+    assert response.status_code == 204, response.text
+
+
+def tenant_row(database, tenant_id):
+    from app.models import Tenant
+
+    with Session(database, expire_on_commit=False) as db:
+        return db.get(Tenant, tenant_id)
+
+
+def session_rows(database, user_id) -> list:
+    from app.models import UserSession
+
+    with Session(database, expire_on_commit=False) as db:
+        return list(
+            db.scalars(
+                select(UserSession)
+                .where(UserSession.user_id == user_id)
+                .order_by(UserSession.created_at, UserSession.id)
+            )
+        )
+
+
+def removal_state(database, tenant_id) -> dict:
+    """Everything a removal may touch: the edit state, deletion time, sessions, links."""
+    return {
+        **tenant_state(database, tenant_id),
+        "deleted_at": tenant_row(database, tenant_id).deleted_at,
+        "sessions": [(s.id, s.revoked_at) for s in session_rows(database, tenant_id)],
+        "invitations": invitation_state(database, tenant_id),
+    }
+
+
+def assert_just_now(value) -> None:
+    assert value is not None
+    now = datetime.now(UTC)
+    assert now - timedelta(minutes=1) <= value <= now + timedelta(minutes=1)
+
+
+def assert_access_rejected(response) -> None:
+    assert_error(response, 401, "ACCESS_TOKEN_INVALID")
+
+
+def refresh_with(client, token: str):
+    return client.post(REFRESH_URL, json={"refreshToken": token})
+
+
+def assert_link_unknown(client, token: str) -> None:
+    assert_error(
+        client.post(PREVIEW_URL, json={"token": token}), 404, "INVITATION_NOT_FOUND"
+    )
+    body = {
+        "token": token,
+        "name": "Dewi Lestari",
+        "email": "dewi.new@example.com",
+        "password": PASSWORD,
+        "device": DEVICE,
+    }
+    assert_error(client.post(ACTIVATION_URL, json=body), 404, "INVITATION_NOT_FOUND")
+
+
+def set_password(database, user, password: str) -> None:
+    from app.models import UserAccount
+    from app.services.passwords import hash_password
+
+    with Session(database) as db:
+        db.get(UserAccount, user.id).password_hash = hash_password(password)
+        db.commit()
+
+
+@pytest.fixture
+def member(room, make_verified_tenant):
+    """An activated tenant with a verified email in `room`."""
+    return make_verified_tenant(room, name="Budi Tenant")
+
+
+# DELETE: success
+
+
+def test_removing_a_tenant_answers_no_content(
+    client, database, signed_in, room, current
+):
+    response = remove(client, signed_in.headers, current.id)
+    assert response.status_code == 204, response.text
+    assert response.content == b""
+
+
+def test_the_tenant_row_is_soft_deleted_and_kept(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, name="Budi", occupation="Mahasiswa", phone="08123456789")
+    assert remove(client, signed_in.headers, stored.id).status_code == 204
+    row = tenant_row(database, stored.id)
+    assert row is not None
+    assert_just_now(row.deleted_at)
+    assert row.phone == "08123456789"
+    assert row.occupation == "Mahasiswa"
+    assert row.user_id == stored.id
+
+
+def test_the_user_account_row_is_kept(client, database, signed_in, current):
+    from app.models import UserAccount
+
+    remove_ok(client, signed_in.headers, current.id)
+    with Session(database) as db:
+        assert db.get(UserAccount, current.id).name == "Old Name"
+
+
+def test_the_emergency_contacts_are_kept(client, database, signed_in, current):
+    before = tenant_state(database, current.id)["contacts"]
+    remove_ok(client, signed_in.headers, current.id)
+    assert tenant_state(database, current.id)["contacts"] == before
+    assert len(before) == 2
+
+
+def test_the_active_lease_is_ended_and_kept(client, database, signed_in, room, current):
+    from app.models import Lease
+
+    remove(client, signed_in.headers, current.id)
+    (lease,) = fetch_all(database, Lease)
+    assert lease.id == current.lease.id
+    assert lease.room_id == room.id
+    assert lease.tenant_id == current.id
+    assert lease.rent == 500000
+    assert_just_now(lease.ended_at)
+
+
+def test_the_room_shows_as_vacant_afterwards(
+    client, database, existing, signed_in, room, current
+):
+    remove(client, signed_in.headers, current.id)
+    detail = client.get(f"/rooms/{room.id}", headers=signed_in.headers).json()
+    assert detail["occupancy"] == "vacant"
+    assert detail["lease"] is None
+    items = client.get(
+        f"{PROPERTIES}/{existing.id}/rooms", headers=signed_in.headers
+    ).json()["items"]
+    (item,) = items
+    assert item["occupancy"] == "vacant"
+    assert item["lease"] is None
+
+
+def test_the_room_itself_is_untouched(client, database, signed_in, room, current):
+    remove_ok(client, signed_in.headers, current.id)
+    detail = client.get(f"/rooms/{room.id}", headers=signed_in.headers).json()
+    assert detail["number"] == "A1"
+    assert detail["baseRate"] == 1750000
+    assert detail["editable"] is True
+
+
+def test_the_freed_room_accepts_a_new_tenant(
+    client, database, existing, signed_in, room, current
+):
+    remove(client, signed_in.headers, current.id)
+    response = create(client, signed_in.headers, existing.id, room, name="Dewi")
+    assert response.status_code == 201, response.text
+    assert response.json()["room"] == {"id": str(room.id), "number": "A1"}
+    detail = client.get(f"/rooms/{room.id}", headers=signed_in.headers).json()
+    assert detail["occupancy"] == "occupied"
+    assert detail["lease"]["tenantName"] == "Dewi"
+
+
+def test_the_removed_tenant_leaves_the_property_list_and_cannot_be_read(
+    client, database, existing, signed_in, room, current
+):
+    assert list_tenants(client, signed_in.headers, existing.id).json()["items"]
+    remove(client, signed_in.headers, current.id)
+    assert list_tenants(client, signed_in.headers, existing.id).json() == {"items": []}
+    assert_error(
+        get_tenant(client, signed_in.headers, current.id), 404, "TENANT_NOT_FOUND"
+    )
+
+
+def test_removing_twice_answers_not_found_the_second_time(
+    client, database, signed_in, current
+):
+    assert remove(client, signed_in.headers, current.id).status_code == 204
+    after_first = removal_state(database, current.id)
+    assert_error(remove(client, signed_in.headers, current.id), 404, "TENANT_NOT_FOUND")
+    assert removal_state(database, current.id) == after_first
+
+
+def test_other_tenants_are_untouched(
+    client,
+    database,
+    existing,
+    signed_in,
+    current,
+    make_room,
+    make_verified_tenant,
+    sign_in,
+):
+    other_room = make_room(existing, number="A2")
+    other = make_verified_tenant(other_room, name="Dewi")
+    other_in = sign_in(other.user)
+    before = removal_state(database, other.id)
+    assert remove(client, signed_in.headers, current.id).status_code == 204
+    assert removal_state(database, other.id) == before
+    items = list_tenants(client, signed_in.headers, existing.id).json()["items"]
+    assert [i["id"] for i in items] == [str(other.id)]
+    detail = client.get(f"/rooms/{other_room.id}", headers=signed_in.headers).json()
+    assert detail["occupancy"] == "occupied"
+    assert client.get(ME_URL, headers=other_in.headers).status_code == 200
+
+
+def test_the_property_counts_drop(
+    client, database, existing, signed_in, current, make_room, make_tenant
+):
+    make_tenant(make_room(existing, number="A2"), name="Dewi")
+    make_room(existing, number="A3")
+    detail = client.get(f"{PROPERTIES}/{existing.id}", headers=signed_in.headers)
+    assert detail.json()["roomCount"] == 3
+    assert detail.json()["occupiedRoomCount"] == 2
+    assert detail.json()["vacantRoomCount"] == 1
+    remove(client, signed_in.headers, current.id)
+    detail = client.get(f"{PROPERTIES}/{existing.id}", headers=signed_in.headers)
+    assert detail.json()["roomCount"] == 3
+    assert detail.json()["occupiedRoomCount"] == 1
+    assert detail.json()["vacantRoomCount"] == 2
+    (item,) = client.get(PROPERTIES, headers=signed_in.headers).json()["items"]
+    assert (item["roomCount"], item["occupiedRoomCount"]) == (3, 1)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"activated": True, "email": "budi@example.com"},
+        {"expired": True},
+        {"invitation": False},
+    ],
+    ids=["unused_link", "activated", "expired_link", "no_link"],
+)
+def test_a_tenant_in_any_account_state_can_be_removed(
+    client, database, signed_in, room, make_tenant, options
+):
+    stored = make_tenant(room, **options)
+    assert remove(client, signed_in.headers, stored.id).status_code == 204
+    assert_just_now(tenant_row(database, stored.id).deleted_at)
+    assert_just_now(tenant_state(database, stored.id)["leases"][0][7])
+
+
+def test_a_manager_removes_a_tenant_of_an_assigned_property(
+    client, database, manager, manager_in, existing, room, member, assign_manager
+):
+    assign_manager(manager, existing)
+    assert remove(client, manager_in.headers, member.id).status_code == 204
+    assert_just_now(tenant_row(database, member.id).deleted_at)
+    assert_just_now(tenant_state(database, member.id)["leases"][0][7])
+    detail = client.get(f"/rooms/{room.id}", headers=manager_in.headers).json()
+    assert detail["occupancy"] == "vacant"
+
+
+def test_a_removed_tenant_can_no_longer_log_in(
+    client, database, signed_in, room, make_verified_tenant
+):
+    stored = make_verified_tenant(room, email="budi@example.com")
+    set_password(database, stored.user, PASSWORD)
+    body = {"email": "budi@example.com", "password": PASSWORD, "device": DEVICE}
+    assert client.post(LOGIN_URL, json=body).status_code == 200
+    remove(client, signed_in.headers, stored.id)
+    assert_error(client.post(LOGIN_URL, json=body), 401, "INVALID_CREDENTIALS")
+
+
+# DELETE: tenant access
+
+
+def test_an_unknown_tenant_is_not_found_on_removal(client, database, signed_in):
+    assert_error(remove(client, signed_in.headers, uuid4()), 404, "TENANT_NOT_FOUND")
+
+
+def test_the_id_of_a_user_who_is_not_a_tenant_is_not_found_on_removal(
+    client, database, owner, signed_in
+):
+    assert_error(remove(client, signed_in.headers, owner.id), 404, "TENANT_NOT_FOUND")
+    assert client.get(ME_URL, headers=signed_in.headers).status_code == 200
+
+
+def test_an_already_deleted_tenant_is_not_found_on_removal(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, deleted=True)
+    before = removal_state(database, stored.id)
+    assert_error(remove(client, signed_in.headers, stored.id), 404, "TENANT_NOT_FOUND")
+    assert removal_state(database, stored.id) == before
+
+
+def test_a_tenant_without_an_active_lease_is_not_found_on_removal(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, lease_ended=True)
+    before = removal_state(database, stored.id)
+    assert_error(remove(client, signed_in.headers, stored.id), 404, "TENANT_NOT_FOUND")
+    assert removal_state(database, stored.id) == before
+    assert before["deleted_at"] is None
+
+
+def test_a_tenant_of_another_owners_property_is_not_found_on_removal(
+    client, database, signed_in, make_user, make_property, make_room, make_tenant
+):
+    theirs = make_property(make_user(), name="Theirs")
+    stored = make_tenant(make_room(theirs))
+    before = removal_state(database, stored.id)
+    assert_error(remove(client, signed_in.headers, stored.id), 404, "TENANT_NOT_FOUND")
+    assert removal_state(database, stored.id) == before
+    assert before["deleted_at"] is None
+
+
+def test_a_tenant_of_a_deleted_property_is_not_found_on_removal(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    gone = make_property(owner, name="Gone", deleted=True)
+    stored = make_tenant(make_room(gone))
+    before = removal_state(database, stored.id)
+    assert_error(remove(client, signed_in.headers, stored.id), 404, "TENANT_NOT_FOUND")
+    assert removal_state(database, stored.id) == before
+
+
+def test_a_malformed_tenant_id_is_a_validation_failure_on_removal(
+    client, database, signed_in
+):
+    response = remove(client, signed_in.headers, "not-a-uuid")
+    assert_error(response, 422, "VALIDATION_FAILED", "tenantId")
+
+
+def test_an_unassigned_manager_cannot_remove_a_tenant(
+    client, database, manager_in, current
+):
+    before = removal_state(database, current.id)
+    assert_error(
+        remove(client, manager_in.headers, current.id), 404, "TENANT_NOT_FOUND"
+    )
+    assert removal_state(database, current.id) == before
+    assert before["deleted_at"] is None
+
+
+def test_a_manager_assigned_to_another_property_cannot_remove_a_tenant(
+    client, database, owner, manager, manager_in, current, make_property, assign_manager
+):
+    assign_manager(manager, make_property(owner, name="Elsewhere"))
+    before = removal_state(database, current.id)
+    assert_error(
+        remove(client, manager_in.headers, current.id), 404, "TENANT_NOT_FOUND"
+    )
+    assert removal_state(database, current.id) == before
+
+
+def test_a_manager_loses_the_right_to_remove_a_tenant_as_soon_as_unassigned(
+    client, database, manager, manager_in, existing, current, assign_manager
+):
+    assign_manager(manager, existing)
+    assert get_tenant(client, manager_in.headers, current.id).status_code == 200
+    unassign(database, manager, existing)
+    before = removal_state(database, current.id)
+    assert_error(
+        remove(client, manager_in.headers, current.id), 404, "TENANT_NOT_FOUND"
+    )
+    assert removal_state(database, current.id) == before
+    assert before["deleted_at"] is None
+
+
+@pytest.mark.parametrize("name", ["tenant", "admin"])
+def test_a_forbidden_account_removes_nothing(
+    client, database, make_user, sign_in, current, name
+):
+    headers = sign_in(make_user(role=role(name))).headers
+    before = removal_state(database, current.id)
+    assert_error(remove(client, headers, current.id), 403, "FORBIDDEN")
+    assert removal_state(database, current.id) == before
+    assert before["deleted_at"] is None
+
+
+def test_a_tenant_cannot_remove_themselves(client, database, room, member, sign_in):
+    own = sign_in(member.user)
+    before = removal_state(database, member.id)
+    assert_error(remove(client, own.headers, member.id), 403, "FORBIDDEN")
+    assert removal_state(database, member.id) == before
+
+
+# DELETE: view-only property and room
+
+
+def test_a_view_only_property_refuses_removal(
+    client,
+    database,
+    owner,
+    signed_in,
+    make_property,
+    make_room,
+    make_verified_tenant,
+    sign_in,
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_verified_tenant(make_room(frozen))
+    sign_in(stored.user)
+    before = removal_state(database, stored.id)
+    response = remove(client, signed_in.headers, stored.id)
+    assert_error(response, 403, "PROPERTY_READ_ONLY")
+    assert removal_state(database, stored.id) == before
+    assert before["deleted_at"] is None
+    assert get_tenant(client, signed_in.headers, stored.id).status_code == 200
+
+
+def test_a_view_only_property_refuses_removal_from_a_manager(
+    client,
+    database,
+    owner,
+    manager,
+    manager_in,
+    make_property,
+    make_room,
+    make_tenant,
+    assign_manager,
+):
+    frozen = make_property(owner, view_only=True)
+    assign_manager(manager, frozen)
+    stored = make_tenant(make_room(frozen))
+    before = removal_state(database, stored.id)
+    assert_error(
+        remove(client, manager_in.headers, stored.id), 403, "PROPERTY_READ_ONLY"
+    )
+    assert removal_state(database, stored.id) == before
+
+
+def test_a_view_only_room_refuses_removal(
+    client, database, existing, signed_in, make_room, make_verified_tenant, sign_in
+):
+    frozen = make_room(existing, number="F1", view_only=True)
+    stored = make_verified_tenant(frozen)
+    sign_in(stored.user)
+    before = removal_state(database, stored.id)
+    response = remove(client, signed_in.headers, stored.id)
+    assert_error(response, 403, "ROOM_READ_ONLY")
+    assert removal_state(database, stored.id) == before
+    assert before["deleted_at"] is None
+    detail = client.get(f"/rooms/{frozen.id}", headers=signed_in.headers).json()
+    assert detail["occupancy"] == "occupied"
+
+
+def test_a_view_only_room_refuses_removal_from_a_manager(
+    client,
+    database,
+    manager,
+    manager_in,
+    existing,
+    make_room,
+    make_tenant,
+    assign_manager,
+):
+    assign_manager(manager, existing)
+    stored = make_tenant(make_room(existing, number="F1", view_only=True))
+    before = removal_state(database, stored.id)
+    assert_error(remove(client, manager_in.headers, stored.id), 403, "ROOM_READ_ONLY")
+    assert removal_state(database, stored.id) == before
+
+
+def test_view_only_property_is_reported_before_view_only_room_on_removal(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen, view_only=True))
+    response = remove(client, signed_in.headers, stored.id)
+    assert_error(response, 403, "PROPERTY_READ_ONLY")
+
+
+def test_a_missing_tenant_is_reported_before_view_only_on_removal(
+    client, database, signed_in, make_user, make_property, make_room, make_tenant
+):
+    theirs = make_property(make_user(), view_only=True)
+    stored = make_tenant(make_room(theirs, view_only=True))
+    assert_error(remove(client, signed_in.headers, stored.id), 404, "TENANT_NOT_FOUND")
+
+
+def test_an_already_deleted_tenant_is_reported_before_view_only(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen, view_only=True), deleted=True)
+    assert_error(remove(client, signed_in.headers, stored.id), 404, "TENANT_NOT_FOUND")
+
+
+def test_an_unassigned_manager_gets_not_found_before_view_only_on_removal(
+    client, database, owner, manager_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen, view_only=True))
+    assert_error(remove(client, manager_in.headers, stored.id), 404, "TENANT_NOT_FOUND")
+
+
+def test_a_forbidden_role_is_reported_before_everything_else_on_removal(
+    client, database, owner, make_user, sign_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen, view_only=True))
+    headers = sign_in(make_user(role=role("tenant"))).headers
+    assert_error(remove(client, headers, stored.id), 403, "FORBIDDEN")
+
+
+def test_another_room_being_view_only_does_not_block_removal(
+    client, database, existing, signed_in, current, make_room, make_tenant
+):
+    make_tenant(make_room(existing, number="F1", view_only=True), name="Frozen")
+    assert remove(client, signed_in.headers, current.id).status_code == 204
+
+
+# DELETE: history is kept
+
+
+def test_the_rent_bills_of_a_removed_tenant_are_kept(
+    client, database, scene, make_rent_bill
+):
+    from rent_bill_support import days_ago, png, snapshot
+
+    from app.models import RentBill, RentBillReceipt, RentBillStatusChange
+
+    lease = scene.tenant.lease
+    bills = [
+        make_rent_bill(lease),
+        make_rent_bill(
+            lease,
+            period_start=days_ago(40),
+            status="awaitingVerification",
+            receipt=(png(), "image/png", datetime.now(UTC)),
+        ),
+        make_rent_bill(
+            lease,
+            period_start=days_ago(70),
+            status="paid",
+            method="cash",
+            paid_on=days_ago(65),
+        ),
+    ]
+    models = (RentBill, RentBillStatusChange, RentBillReceipt)
+    before = [snapshot(database, b) for b in bills]
+    sizes = [len(fetch_all(database, m)) for m in models]
+    response = remove(client, scene.owner_in.headers, scene.tenant.id)
+    assert response.status_code == 204, response.text
+    assert [snapshot(database, b) for b in bills] == before
+    assert [len(fetch_all(database, m)) for m in models] == sizes
+    assert sizes == [3, 3, 1]
+
+
+@pytest.mark.parametrize("who", ["owner_in", "manager_in"])
+def test_management_still_lists_the_bills_of_a_removed_tenant(
+    client, database, scene, make_rent_bill, who
+):
+    from rent_bill_support import RENT_BILLS, days_ago
+
+    first = make_rent_bill(scene.tenant.lease)
+    second = make_rent_bill(scene.tenant.lease, period_start=days_ago(40))
+    remove_ok(client, scene.owner_in.headers, scene.tenant.id)
+    response = client.get(RENT_BILLS, headers=getattr(scene, who).headers)
+    assert response.status_code == 200, response.text
+    assert {i["id"] for i in response.json()["items"]} == {
+        str(first.id),
+        str(second.id),
+    }
+
+
+@pytest.mark.parametrize("who", ["owner_in", "manager_in"])
+def test_management_still_reads_a_bill_and_its_receipt_of_a_removed_tenant(
+    client, database, scene, make_rent_bill, who
+):
+    from rent_bill_support import bill_url, png
+
+    bill = make_rent_bill(
+        scene.tenant.lease,
+        status="awaitingVerification",
+        receipt=(png(), "image/png", datetime.now(UTC)),
+    )
+    remove_ok(client, scene.owner_in.headers, scene.tenant.id)
+    headers = getattr(scene, who).headers
+    detail = client.get(bill_url(bill), headers=headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["id"] == str(bill.id)
+    assert detail.json()["tenant"]["id"] == str(scene.tenant.id)
+    assert detail.json()["payment"]["status"] == "awaitingVerification"
+    receipt = client.get(bill_url(bill, "/receipt"), headers=headers)
+    assert receipt.status_code == 200
+    assert receipt.content == png()
+
+
+def test_the_complaints_of_a_removed_tenant_are_kept(
+    client, database, scene, make_complaint
+):
+    from app.models import Complaint, ComplaintStatusChange
+
+    complaint = make_complaint(scene.tenant, scene.room)
+    sizes = [len(fetch_all(database, m)) for m in (Complaint, ComplaintStatusChange)]
+    assert remove(client, scene.owner_in.headers, scene.tenant.id).status_code == 204
+    after = [len(fetch_all(database, m)) for m in (Complaint, ComplaintStatusChange)]
+    assert after == sizes == [1, 1]
+    (stored,) = fetch_all(database, Complaint)
+    assert stored.id == complaint.id
+    assert stored.tenant_id == scene.tenant.id
+    assert stored.status == "new"
+
+
+@pytest.mark.parametrize("who", ["owner_in", "manager_in"])
+def test_management_still_reads_the_complaints_of_a_removed_tenant(
+    client, database, scene, make_complaint, who
+):
+    complaint = make_complaint(scene.tenant, scene.room)
+    remove_ok(client, scene.owner_in.headers, scene.tenant.id)
+    headers = getattr(scene, who).headers
+    detail = client.get(f"/complaints/{complaint.id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["id"] == str(complaint.id)
+    assert detail.json()["tenantName"] == "Budi Tenant"
+    listed = client.get("/complaints", headers=headers)
+    assert [i["id"] for i in listed.json()["items"]] == [str(complaint.id)]
+
+
+# DELETE: account access is revoked
+
+
+def test_every_unrevoked_session_of_the_tenant_is_ended(
+    client, database, signed_in, member, sign_in
+):
+    sessions = [sign_in(member.user, name) for name in ("Phone", "Tablet", "Laptop")]
+    for session in sessions:
+        assert client.get(ME_URL, headers=session.headers).status_code == 200
+    assert remove(client, signed_in.headers, member.id).status_code == 204
+    rows = session_rows(database, member.id)
+    assert len(rows) == 3
+    for row in rows:
+        assert_just_now(row.revoked_at)
+
+
+def test_the_access_tokens_of_the_tenant_stop_working_at_once(
+    client, database, signed_in, member, sign_in
+):
+    sessions = [sign_in(member.user, name) for name in ("Phone", "Tablet")]
+    remove(client, signed_in.headers, member.id)
+    for session in sessions:
+        assert_access_rejected(client.get(ME_URL, headers=session.headers))
+        assert_access_rejected(client.get(PROPERTIES, headers=session.headers))
+
+
+def test_the_refresh_tokens_of_the_tenant_stop_working(
+    client, database, signed_in, member, sign_in
+):
+    sessions = [sign_in(member.user, name) for name in ("Phone", "Tablet")]
+    remove(client, signed_in.headers, member.id)
+    for session in sessions:
+        assert_error(
+            refresh_with(client, session.tokens.refresh_token),
+            401,
+            "REFRESH_TOKEN_INVALID",
+        )
+
+
+def test_a_session_ended_earlier_keeps_its_revocation_time(
+    client, database, signed_in, member, sign_in, read_session
+):
+    ended = sign_in(member.user, "Old phone")
+    live = sign_in(member.user, "Tablet")
+    assert client.post("/auth/logout", headers=ended.headers).status_code == 204
+    first_revoked_at = read_session(ended.session_id).revoked_at
+    remove(client, signed_in.headers, member.id)
+    assert read_session(ended.session_id).revoked_at == first_revoked_at
+    assert_just_now(read_session(live.session_id).revoked_at)
+
+
+def test_the_sessions_of_other_users_are_untouched(
+    client,
+    database,
+    owner,
+    manager,
+    manager_in,
+    signed_in,
+    member,
+    sign_in,
+    make_verified_tenant,
+    existing,
+    make_room,
+    read_session,
+):
+    sign_in(member.user)
+    other = make_verified_tenant(make_room(existing, number="A2"), name="Dewi")
+    other_in = sign_in(other.user)
+    remove_ok(client, signed_in.headers, member.id)
+    for session in (signed_in, manager_in, other_in):
+        assert read_session(session.session_id).revoked_at is None
+        assert client.get(ME_URL, headers=session.headers).status_code == 200
+    assert refresh_with(client, other_in.tokens.refresh_token).status_code == 200
+
+
+def test_a_tenant_that_never_activated_is_removed_without_sessions(
+    client, database, signed_in, current
+):
+    assert session_rows(database, current.id) == []
+    assert remove(client, signed_in.headers, current.id).status_code == 204
+    assert session_rows(database, current.id) == []
+
+
+def test_an_activated_tenant_without_a_session_is_removed(
+    client, database, signed_in, member
+):
+    assert session_rows(database, member.id) == []
+    assert remove(client, signed_in.headers, member.id).status_code == 204
+
+
+# DELETE: invitation links
+
+
+def test_the_unused_link_of_a_removed_tenant_is_unknown(
+    client, database, signed_in, current
+):
+    remove(client, signed_in.headers, current.id)
+    assert_link_unknown(client, current.token)
+
+
+def test_the_expired_link_of_a_removed_tenant_is_unknown(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, expired=True)
+    remove(client, signed_in.headers, stored.id)
+    assert_link_unknown(client, stored.token)
+
+
+def test_every_link_of_a_removed_tenant_is_unknown_after_regeneration(
+    client, database, signed_in, current
+):
+    renewed = regenerate(client, signed_in.headers, current.id).json()
+    remove(client, signed_in.headers, current.id)
+    assert_link_unknown(client, current.token)
+    assert_link_unknown(client, token_of(renewed["url"]))
+
+
+def test_activation_with_the_link_of_a_removed_tenant_changes_nothing(
+    client, database, signed_in, current
+):
+    from app.models import UserAccount
+
+    remove(client, signed_in.headers, current.id)
+    before = removal_state(database, current.id)
+    users = len(fetch_all(database, UserAccount))
+    assert_link_unknown(client, current.token)
+    assert removal_state(database, current.id) == before
+    assert len(fetch_all(database, UserAccount)) == users
+    assert before["email"] is None
+
+
+def test_the_links_of_other_tenants_stay_valid(
+    client, database, existing, signed_in, current, make_room, make_tenant
+):
+    other = make_tenant(make_room(existing, number="A2"), name="Dewi")
+    remove_ok(client, signed_in.headers, current.id)
+    assert preview_status(client, other.token) == "valid"
+
+
+# DELETE: failures save nothing
+
+
+def test_a_failure_while_ending_sessions_saves_nothing(
+    app, database, owner, room, member, sign_in, monkeypatch
+):
+    from app.services import sessions
+
+    sign_in(member.user, "Phone")
+    sign_in(member.user, "Tablet")
+    headers = sign_in(owner).headers
+    before = removal_state(database, member.id)
+    original = sessions.end_session
+    calls = []
+
+    def fail_on_the_second_call(db, session):
+        calls.append(session.id)
+        if len(calls) == 2:
+            raise RuntimeError("storage failure")
+        return original(db, session)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    with monkeypatch.context() as patch:
+        patch.setattr(sessions, "end_session", fail_on_the_second_call)
+        response = remove(client, headers, member.id)
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert len(calls) == 2
+    after = removal_state(database, member.id)
+    assert after == before
+    assert after["deleted_at"] is None
+    assert [revoked for _, revoked in after["sessions"]] == [None, None]
+    assert get_tenant(client, headers, member.id).status_code == 200
+    detail = client.get(f"/rooms/{room.id}", headers=headers).json()
+    assert detail["occupancy"] == "occupied"
+
+
+def test_a_tenant_can_be_removed_after_a_failed_attempt(
+    app, database, owner, member, sign_in, monkeypatch
+):
+    from app.services import sessions
+
+    sign_in(member.user)
+    headers = sign_in(owner).headers
+
+    def fail(db, session):
+        raise RuntimeError("storage failure")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    with monkeypatch.context() as patch:
+        patch.setattr(sessions, "end_session", fail)
+        assert remove(client, headers, member.id).status_code == 500
+    assert remove(client, headers, member.id).status_code == 204
+    assert_just_now(tenant_row(database, member.id).deleted_at)
