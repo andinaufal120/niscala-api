@@ -11,6 +11,57 @@ This repository holds the FastAPI service. It owns the business rules and the AP
 - Docker, for the tests that use a database (they start a throwaway PostgreSQL container)
 - A PostgreSQL database to run the API against (see `DATABASE_URL` below)
 
+## Running the API for the app
+
+These steps start the API on your machine with a ready-made *Pemilik Kost (Owner)* and *Penyewa (Tenant)*, so you can log in from the Android app straight away. Run them from the project root.
+
+1. Start a PostgreSQL database. This one matches the default `DATABASE_URL`:
+
+   ```sh
+   docker run -d --name niscala-pg -e POSTGRES_USER=niscala -e POSTGRES_PASSWORD=niscala \
+     -e POSTGRES_DB=niscala -p 5432:5432 postgres:17
+   ```
+
+2. Create a `.env` file in the project root (it is not committed) with two secrets:
+
+   ```sh
+   uv sync
+   echo "JWT_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" >> .env
+   echo "INVITATION_ENCRYPTION_KEY=$(uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> .env
+   ```
+
+3. Create the tables and the demo data:
+
+   ```sh
+   uv run alembic upgrade head
+   uv run niscala-api seed-demo
+   ```
+
+   `seed-demo` prints the two logins. Both use the password `Demo-Kost-2026!`:
+
+   | Role | Email |
+   |---|---|
+   | Owner | `owner@example.com` |
+   | Tenant | `tenant@example.com` |
+
+   The Owner has one property, *Kost Melati*, with room 101. The Tenant lives in that room with an active monthly lease. Both emails are already verified. Running `seed-demo` again changes nothing.
+
+4. Start the API:
+
+   ```sh
+   uv run fastapi run src/app/main.py --host 0.0.0.0 --port 8000
+   ```
+
+   Use `uv run fastapi dev src/app/main.py` instead to restart on every code change. The interactive API docs are at `http://localhost:8000/docs`.
+
+5. Point the app at the API. From the Android emulator the host machine is `http://10.0.2.2:8000`. From a physical phone on the same network use `http://<your-computer-IP>:8000`.
+
+Good to know:
+
+- Accounts you create through the API (sign up, or a Tenant accepting an invitation) must confirm their email. There is no mail service yet, so the 6-digit code is written to the server output as `Verification code for <email>: <code>`.
+- To get a billing history for the demo Tenant, run `uv run niscala-api seed-rent-bills tenant@example.com`.
+- To start over, stop the server, run `docker rm -f niscala-pg`, and repeat steps 1 and 3.
+
 ## Development
 
 ```sh

@@ -12,7 +12,7 @@ from app.db import get_engine
 from app.models import Lease
 from app.schemas.auth import UserRole
 from app.schemas.subscriptions import PaidPlanCode
-from app.services import rent_bills
+from app.services import demo, rent_bills
 from app.services.accounts import find_by_email
 from app.services.subscriptions import grant_subscription
 
@@ -39,6 +39,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     seed.add_argument("email")
     seed.add_argument("--months", type=_positive_int, default=12)
+    commands.add_parser(
+        "seed-demo",
+        help="create a demo owner, property, room and active tenant, for development",
+    )
     return parser
 
 
@@ -81,9 +85,26 @@ def _seed_rent_bills(email: str, months: int) -> int:
         return 0
 
 
+def _seed_demo() -> int:
+    with Session(get_engine()) as db:
+        try:
+            demo.seed_demo(db)
+        except demo.DemoConflict as conflict:
+            print(conflict, file=sys.stderr)
+            return 1
+        db.commit()
+    print(f"Owner: {demo.OWNER_EMAIL} / {demo.PASSWORD}")
+    print(f"Tenant: {demo.TENANT_EMAIL} / {demo.PASSWORD}")
+    print(f"Property: {demo.PROPERTY_NAME}")
+    print(f"Room: {demo.ROOM_NUMBER}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run a command and return the process exit code."""
     args = _build_parser().parse_args(argv)
     if args.command == "seed-rent-bills":
         return _seed_rent_bills(args.email, args.months)
+    if args.command == "seed-demo":
+        return _seed_demo()
     return _grant_subscription(args.email, PaidPlanCode(args.plan), args.days)
