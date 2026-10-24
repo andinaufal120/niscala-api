@@ -6,6 +6,7 @@ import pytest
 from conftest import OpenApiDoc, nullable_inner
 
 LEASE_PATH = "/me/lease"
+ROOM_FIELDS = {"id", "number", "facilities", "lengthM", "widthM"}
 
 
 def _property_names(schema: dict[str, Any]) -> set[str]:
@@ -108,16 +109,58 @@ def current_lease_schema(openapi: OpenApiDoc) -> dict[str, Any]:
     return openapi.component("CurrentLease")
 
 
+CURRENT_LEASE_FIELDS = {
+    "room",
+    "property",
+    "startDate",
+    "endDate",
+    "rent",
+    "billingCycle",
+}
+
+
 def test_current_lease_has_exactly_its_fields(
     current_lease_schema: dict[str, Any],
 ) -> None:
-    assert _property_names(current_lease_schema) == {"room", "startDate", "endDate"}
+    assert _property_names(current_lease_schema) == CURRENT_LEASE_FIELDS
 
 
 def test_current_lease_requires_every_field(
     current_lease_schema: dict[str, Any],
 ) -> None:
-    assert set(current_lease_schema["required"]) == {"room", "startDate", "endDate"}
+    assert set(current_lease_schema["required"]) == CURRENT_LEASE_FIELDS
+
+
+def test_current_lease_property_is_a_component_with_id_name_and_address(
+    openapi: OpenApiDoc, current_lease_schema: dict[str, Any]
+) -> None:
+    schema = openapi.resolve(current_lease_schema["properties"]["property"])
+    assert _property_names(schema) == {"id", "name", "address"}
+    assert set(schema["required"]) == {"id", "name", "address"}
+    _assert_uuid_string(schema["properties"]["id"])
+    assert schema["properties"]["name"]["type"] == "string"
+    assert schema["properties"]["address"]["type"] == "string"
+
+
+def test_current_lease_property_is_not_nullable(
+    current_lease_schema: dict[str, Any],
+) -> None:
+    schema = current_lease_schema["properties"]["property"]
+    assert "$ref" in schema
+    assert "anyOf" not in schema
+
+
+def test_current_lease_rent_is_integer(
+    current_lease_schema: dict[str, Any],
+) -> None:
+    assert current_lease_schema["properties"]["rent"]["type"] == "integer"
+
+
+def test_current_lease_billing_cycle_is_the_billing_cycle_enum(
+    openapi: OpenApiDoc, current_lease_schema: dict[str, Any]
+) -> None:
+    schema = current_lease_schema["properties"]["billingCycle"]
+    assert openapi.ref_name(schema) == "BillingCycle"
 
 
 def test_current_lease_room_is_current_lease_room(
@@ -145,13 +188,21 @@ def current_lease_room_schema(openapi: OpenApiDoc) -> dict[str, Any]:
 def test_current_lease_room_has_exactly_its_fields(
     current_lease_room_schema: dict[str, Any],
 ) -> None:
-    assert _property_names(current_lease_room_schema) == {"id", "number", "facilities"}
+    assert _property_names(current_lease_room_schema) == ROOM_FIELDS
 
 
 def test_current_lease_room_requires_every_field(
     current_lease_room_schema: dict[str, Any],
 ) -> None:
-    assert set(current_lease_room_schema["required"]) == {"id", "number", "facilities"}
+    assert set(current_lease_room_schema["required"]) == ROOM_FIELDS
+
+
+@pytest.mark.parametrize("field", ["lengthM", "widthM"])
+def test_current_lease_room_dimension_is_nullable_number(
+    current_lease_room_schema: dict[str, Any], field: str
+) -> None:
+    inner = nullable_inner(current_lease_room_schema["properties"][field])
+    assert inner["type"] == "number"
 
 
 def test_current_lease_room_id_is_uuid_string(
@@ -172,10 +223,3 @@ def test_current_lease_room_facilities_is_array_of_strings(
     schema = current_lease_room_schema["properties"]["facilities"]
     assert schema["type"] == "array"
     assert schema["items"]["type"] == "string"
-
-
-# Runtime
-
-
-def test_valid_get_my_lease_request_responds_not_implemented(client) -> None:
-    assert client.get(LEASE_PATH).status_code == 501
