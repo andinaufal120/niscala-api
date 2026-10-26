@@ -1,7 +1,8 @@
 """Endpoints under /invitations.
 
-The preview and the password activation of a Tenant invitation are implemented;
-the others are declared in the contract and answer 501.
+The preview, the password activation and the acceptance of Tenant and Manager
+invitations are implemented (accepting a Tenant invitation answers 501); the
+Google activation is declared in the contract and answers 501.
 """
 
 from typing import Annotated
@@ -17,7 +18,7 @@ from app.schemas.invitations import (
     InvitationPasswordActivationInput,
     InvitationPreview,
 )
-from app.security import bearer_scheme
+from app.security import CurrentUser, get_verified_user
 from app.services import activation
 
 router = APIRouter(prefix="/invitations", tags=["invitations"])
@@ -47,18 +48,25 @@ def activate_invitation_with_google(
     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
 
 
-@router.post("/acceptance-previews", dependencies=[Depends(bearer_scheme)])
-def preview_invitation_acceptance(body: TokenInput) -> InvitationAcceptancePreview:
+@router.post("/acceptance-previews")
+def preview_invitation_acceptance(
+    body: TokenInput,
+    db: SessionDep,
+    current: Annotated[CurrentUser, Depends(get_verified_user)],
+) -> InvitationAcceptancePreview:
     """Check whether the caller's account can accept an invitation."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return activation.preview_acceptance(db, body.token, current.user)
 
 
 @router.post(
     "/acceptances",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
-    dependencies=[Depends(bearer_scheme)],
 )
-def accept_invitation(body: TokenInput) -> None:
+def accept_invitation(
+    body: TokenInput,
+    db: SessionDep,
+    current: Annotated[CurrentUser, Depends(get_verified_user)],
+) -> None:
     """Accept an invitation with the caller's existing account."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    activation.accept_invitation(db, body.token, current.user)
