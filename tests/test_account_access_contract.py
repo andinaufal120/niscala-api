@@ -1030,16 +1030,24 @@ IMPLEMENTED_URLS = {
     EMAIL_CONFIRMATION_URL,
     INVITATION_PREVIEWS_URL,
     PASSWORD_ACTIVATION_URL,
+    ACCEPTANCE_PREVIEWS_URL,
+    ACCEPTANCES_URL,
 }
 # Implemented endpoints that need a signed-in caller before the body is read.
 SIGNED_IN_URLS = {EMAIL_CONFIRMATION_URL}
+# Implemented endpoints that need a verified signed-in caller.
+VERIFIED_URLS = {ACCEPTANCE_PREVIEWS_URL, ACCEPTANCES_URL}
 
 
 def _auth_headers(request, url: str) -> dict[str, str]:
-    """Headers of an unverified signed-in user when the endpoint requires one."""
-    if url not in SIGNED_IN_URLS:
+    """Headers of a signed-in user when the endpoint requires one.
+
+    The user is unverified for the email confirmation and verified for endpoints
+    that need a verified account.
+    """
+    if url not in SIGNED_IN_URLS | VERIFIED_URLS:
         return {}
-    user = request.getfixturevalue("make_user")(email_verified=False)
+    user = request.getfixturevalue("make_user")(email_verified=url in VERIFIED_URLS)
     return request.getfixturevalue("sign_in")(user).headers
 
 
@@ -1272,9 +1280,10 @@ def test_invalid_password_reset_request_email_is_rejected_with_validation_error(
 )
 @pytest.mark.parametrize("token", ["", None, 5])
 def test_invalid_token_input_is_rejected_with_validation_error(
-    client, url: str, token: Any
+    client, request, url: str, token: Any
 ) -> None:
-    assert client.post(url, json={"token": token}).status_code == 422
+    headers = _auth_headers(request, url)
+    assert client.post(url, json={"token": token}, headers=headers).status_code == 422
 
 
 @pytest.mark.parametrize(
