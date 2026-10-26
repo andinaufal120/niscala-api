@@ -218,10 +218,10 @@ def change_complaint_status(
     """Move a complaint to its next status and record it in the history.
 
     A blank handling note is stored as none. Flushes, never commits. The tenant
-    is notified after the change is saved; a failing notification is logged and
-    does not undo the change. Raises 404 COMPLAINT_NOT_FOUND for an unknown or
-    unreadable complaint and 409 COMPLAINT_STATUS_NOT_NEXT when the status is
-    not the next one.
+    is notified after the change is flushed, before the commit; a failing
+    notification is logged and does not undo the change. Raises 404
+    COMPLAINT_NOT_FOUND for an unknown or unreadable complaint and 409
+    COMPLAINT_STATUS_NOT_NEXT when the status is not the next one.
     """
     row = db.execute(_readable_by(user).where(ComplaintRow.id == complaint_id)).first()
     if row is None:
