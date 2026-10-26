@@ -4,6 +4,7 @@ from app.models.base import Base
 from app.models.complaints import Complaint, ComplaintStatusChange
 from app.models.email_verification import EmailVerificationCode
 from app.models.login_failure import LoginFailure
+from app.models.managers import Manager
 from app.models.properties import ManagerAssignment, Property
 from app.models.rent_bills import RentBill, RentBillReceipt, RentBillStatusChange
 from app.models.rooms import Room
@@ -20,6 +21,7 @@ __all__ = [
     "Invitation",
     "Lease",
     "LoginFailure",
+    "Manager",
     "ManagerAssignment",
     "Property",
     "RentBill",

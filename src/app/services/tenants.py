@@ -53,7 +53,7 @@ def _invalid(field: str) -> ApiError:
     return ApiError(422, "VALIDATION_FAILED", field=field)
 
 
-def _phone(value: str, field: str) -> str:
+def normalize_phone(value: str, field: str) -> str:
     """Strip spaces and dashes and return the number as digits starting with 08."""
     digits = re.sub(r"[\s-]", "", value)
     if not PHONE_PATTERN.fullmatch(digits):
@@ -79,7 +79,7 @@ def clean_contacts(submitted: list[EmergencyContact]) -> list[EmergencyContact]:
             EmergencyContact(
                 name=_text(contact.name, f"{prefix}.name"),
                 relationship=_text(contact.relationship, f"{prefix}.relationship"),
-                phone=_phone(contact.phone, f"{prefix}.phone"),
+                phone=normalize_phone(contact.phone, f"{prefix}.phone"),
             )
         )
     return contacts
@@ -255,7 +255,7 @@ def create_tenant(
         raise ApiError(409, "ROOM_NOT_VACANT", field="roomId")
 
     name = _text(data.name, "name")
-    phone = _phone(data.phone, "phone")
+    phone = normalize_phone(data.phone, "phone")
     occupation = (data.occupation or "").strip() or None
     contacts = clean_contacts(data.emergency_contacts)
     lease = data.lease
@@ -376,7 +376,7 @@ def update_tenant(
         raise ApiError(403, "ROOM_READ_ONLY")
 
     name = _text(data.name, "name")
-    phone = _phone(data.phone, "phone")
+    phone = normalize_phone(data.phone, "phone")
     occupation = (data.occupation or "").strip() or None
     contacts = clean_contacts(data.emergency_contacts)
     if tenant.activated_at is not None and not contacts:
