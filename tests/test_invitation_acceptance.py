@@ -174,8 +174,9 @@ def test_an_unverified_account_is_rejected(
     client, database, manager, make_user, sign_in, call
 ):
     user = make_user(role=role("manager"), email_verified=False)
+    headers = sign_in(user).headers
     before = snapshot(database)
-    response = call(client, manager.token, sign_in(user).headers)
+    response = call(client, manager.token, headers)
     assert_error(response, 403, "EMAIL_NOT_VERIFIED")
     assert snapshot(database) == before
 
