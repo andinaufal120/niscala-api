@@ -670,7 +670,7 @@ def test_the_user_account_row_is_kept_after_removal(
     remove_manager(client, signed_in.headers, current.id)
     account = user_of(database, current.user_id)
     assert account.name == "Old Name"
-    assert account.role.value == "manager"
+    assert account.role == "manager"
 
 
 def test_the_assignments_of_the_owners_properties_are_removed(
