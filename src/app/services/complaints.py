@@ -24,6 +24,7 @@ from app.schemas.complaints import (
     AiComplaintClassification,
     Complaint,
     ComplaintClassification,
+    ComplaintClassificationInput,
     ComplaintClassificationState,
     ComplaintList,
     ComplaintStatus,
@@ -85,7 +86,26 @@ def _view(
     visible_ai = has_ai and plans[prop.owner_id]
     classification = None
     urgency = None
-    if visible_ai:
+    withheld = has_ai and not visible_ai
+    state = None
+    if complaint.manual_category is not None:
+        urgency = ComplaintUrgency(complaint.manual_urgency)
+        classifier = db.get(UserAccount, complaint.classified_by_id)
+        classification = ComplaintClassification(
+            category=complaint.manual_category,
+            urgency=urgency,
+            suggested_action=None,
+            classified_by_name=classifier.name,
+            original_ai_classification=AiComplaintClassification(
+                category=complaint.ai_category,
+                urgency=ComplaintUrgency(complaint.ai_urgency),
+                suggested_action=complaint.ai_suggested_action,
+            )
+            if visible_ai
+            else None,
+        )
+        withheld = False
+    elif visible_ai:
         urgency = ComplaintUrgency(complaint.ai_urgency)
         classification = ComplaintClassification(
             category=complaint.ai_category,
@@ -94,9 +114,7 @@ def _view(
             classified_by_name=None,
             original_ai_classification=None,
         )
-    withheld = has_ai and not visible_ai
-    state = None
-    if not has_ai:
+    elif not has_ai:
         state = complaint.classification_state
     summary = ComplaintSummary(
         id=complaint.id,
@@ -245,6 +263,42 @@ def change_complaint_status(
         notify_complaint_status_change(complaint, change)
     except Exception:
         logger.exception("Notifying about the status change of %s failed", complaint.id)
+    return _detail(db, tuple(row), {})
+
+
+def classify_complaint_manually(
+    db: Session,
+    user: UserAccount,
+    complaint_id: UUID,
+    data: ComplaintClassificationInput,
+) -> Complaint:
+    """Set the category and urgency of a complaint by hand.
+
+    Submitting the classification already shown changes nothing, so the actor
+    and time of an earlier one are kept. Flushes, never commits. Raises 404
+    COMPLAINT_NOT_FOUND for an unknown or unreadable complaint and 422
+    COMPLAINT_CATEGORY_INVALID for a category outside the list.
+    """
+    row = db.execute(_readable_by(user).where(ComplaintRow.id == complaint_id)).first()
+    if row is None:
+        raise ApiError(404, "COMPLAINT_NOT_FOUND")
+    if data.category not in COMPLAINT_CATEGORIES:
+        raise ApiError(422, "COMPLAINT_CATEGORY_INVALID", field="category")
+    complaint, _, prop, _ = row
+    if complaint.manual_category is not None:
+        shown = (complaint.manual_category, complaint.manual_urgency)
+    elif complaint.ai_category is not None and has_active_subscription(
+        db, prop.owner_id
+    ):
+        shown = (complaint.ai_category, complaint.ai_urgency)
+    else:
+        shown = None
+    if shown != (data.category, data.urgency.value):
+        complaint.manual_category = data.category
+        complaint.manual_urgency = data.urgency.value
+        complaint.classified_by_id = user.id
+        complaint.classified_at = datetime.now(UTC)
+        db.flush()
     return _detail(db, tuple(row), {})
 
 
