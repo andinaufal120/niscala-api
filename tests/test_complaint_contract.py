@@ -774,13 +774,15 @@ def tenant_headers(make_user, sign_in) -> dict[str, str]:
     return sign_in(make_user(role=UserRole.TENANT)).headers
 
 
+@pytest.fixture
+def owner_headers(make_user, sign_in) -> dict[str, str]:
+    return sign_in(make_user()).headers
+
+
 @pytest.mark.parametrize(
     ("method", "url", "body"),
     [
         pytest.param("get", PHOTO_URL, None, id="get_photo"),
-        pytest.param(
-            "put", CLASSIFICATION_URL, VALID_CLASSIFICATION_INPUT, id="classify"
-        ),
     ],
 )
 def test_valid_complaint_request_responds_not_implemented(
@@ -801,16 +803,6 @@ def test_valid_complaint_photo_upload_responds_not_implemented(
     client, filename: str, content: bytes, content_type: str
 ) -> None:
     response = client.put(PHOTO_URL, files={"file": (filename, content, content_type)})
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize("urgency", COMPLAINT_URGENCIES)
-def test_every_complaint_urgency_is_accepted_in_a_classification(
-    client, urgency: str
-) -> None:
-    response = client.put(
-        CLASSIFICATION_URL, json={"category": "Plumbing", "urgency": urgency}
-    )
     assert response.status_code == 501
 
 
@@ -878,9 +870,9 @@ def test_invalid_complaint_input_is_rejected_with_validation_error(
     ],
 )
 def test_invalid_classification_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, owner_headers: dict[str, str], body: dict[str, Any]
 ) -> None:
-    response = client.put(CLASSIFICATION_URL, json=body)
+    response = client.put(CLASSIFICATION_URL, json=body, headers=owner_headers)
     assert response.status_code == 422
 
 
@@ -898,8 +890,10 @@ def test_non_uuid_complaint_id_in_detail_is_rejected_with_validation_error(
     assert response.status_code == 422
 
 
-def test_classification_without_body_is_rejected_with_validation_error(client) -> None:
-    response = client.put(CLASSIFICATION_URL)
+def test_classification_without_body_is_rejected_with_validation_error(
+    client, owner_headers: dict[str, str]
+) -> None:
+    response = client.put(CLASSIFICATION_URL, headers=owner_headers)
     assert response.status_code == 422
 
 
@@ -935,9 +929,11 @@ def test_non_uuid_complaint_id_in_photo_download_is_rejected_with_validation_err
 
 
 def test_non_uuid_complaint_id_in_classification_is_rejected_with_validation_error(
-    client,
+    client, owner_headers: dict[str, str]
 ) -> None:
     response = client.put(
-        f"/complaints/{NOT_A_UUID}/classification", json=VALID_CLASSIFICATION_INPUT
+        f"/complaints/{NOT_A_UUID}/classification",
+        json=VALID_CLASSIFICATION_INPUT,
+        headers=owner_headers,
     )
     assert response.status_code == 422

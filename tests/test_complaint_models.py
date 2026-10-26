@@ -239,6 +239,112 @@ def test_complaint_refuses_an_unknown_ai_urgency(db_session, urgency):
         insert_complaint_sql(db_session, ai_urgency=urgency)
 
 
+# Manual classification
+
+
+def saved_user(db_session):
+    from app.models import UserAccount
+    from app.schemas.auth import UserRole
+
+    user = UserAccount(
+        name="Mira Manager",
+        email=f"{uuid4().hex}@example.com",
+        password_hash=None,
+        role=UserRole.MANAGER,
+    )
+    db_session.add(user)
+    db_session.flush()
+    return user
+
+
+def insert_manual_sql(db_session, **overrides):
+    """Insert a complaint with manual classification columns, bypassing the ORM."""
+    tenant_id, room_id = seed_room(db_session)
+    values = {
+        "id": uuid4(),
+        "tenant_id": tenant_id,
+        "room_id": room_id,
+        "manual_category": None,
+        "manual_urgency": None,
+        "classified_by_id": None,
+        "classified_at": None,
+        **overrides,
+    }
+    db_session.execute(
+        text(
+            "INSERT INTO complaints (id, tenant_id, room_id, description, status, "
+            "manual_category, manual_urgency, classified_by_id, classified_at, "
+            "created_at) VALUES (:id, :tenant_id, :room_id, 'A leaking tap.', 'new', "
+            ":manual_category, :manual_urgency, :classified_by_id, :classified_at, "
+            "now())"
+        ),
+        values,
+    )
+
+
+def test_manual_classification_columns_exist_after_the_migrations(database):
+    columns = {c["name"]: c for c in inspect(database).get_columns("complaints")}
+    for name in (
+        "manual_category",
+        "manual_urgency",
+        "classified_by_id",
+        "classified_at",
+    ):
+        assert name in columns, name
+        assert columns[name]["nullable"] is True, name
+
+
+def test_complaint_has_no_manual_classification_by_default(db_session):
+    row = saved_complaint(db_session)
+    db_session.refresh(row)
+    assert row.manual_category is None
+    assert row.manual_urgency is None
+    assert row.classified_by_id is None
+    assert row.classified_at is None
+
+
+def test_complaint_round_trips_its_manual_classification(db_session):
+    user = saved_user(db_session)
+    classified = datetime(2026, 3, 4, 5, 6, 7, tzinfo=UTC)
+    row = saved_complaint(
+        db_session,
+        ai_category="Listrik",
+        ai_urgency="high",
+        ai_suggested_action="Call an electrician.",
+        manual_category="Air",
+        manual_urgency="low",
+        classified_by_id=user.id,
+        classified_at=classified,
+    )
+    db_session.commit()
+    db_session.expire_all()
+    stored = db_session.get(type(row), row.id)
+    assert stored.manual_category == "Air"
+    assert stored.manual_urgency == "low"
+    assert stored.classified_by_id == user.id
+    assert stored.classified_at == classified
+    assert stored.classified_at.utcoffset() == timedelta(0)
+    assert stored.ai_category == "Listrik"
+    assert stored.ai_urgency == "high"
+    assert stored.ai_suggested_action == "Call an electrician."
+
+
+@pytest.mark.parametrize("urgency", [None, "low", "medium", "high"])
+def test_complaint_accepts_each_manual_urgency_and_null(db_session, urgency):
+    insert_manual_sql(db_session, manual_urgency=urgency)
+
+
+@pytest.mark.parametrize("urgency", ["", "critical", "HIGH", "urgent"])
+def test_complaint_refuses_an_unknown_manual_urgency(db_session, urgency):
+    with pytest.raises(IntegrityError):
+        insert_manual_sql(db_session, manual_urgency=urgency)
+
+
+def test_complaint_refuses_a_classifier_that_is_not_a_user(db_session):
+    with pytest.raises(IntegrityError):
+        insert_manual_sql(db_session, classified_by_id=uuid4())
+
+
 # Status changes
 
 
