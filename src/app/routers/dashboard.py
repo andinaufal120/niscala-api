@@ -1,13 +1,22 @@
-"""Endpoints under /occupancy-dashboard. Declared in the contract; not implemented yet."""
+"""Endpoints under /occupancy-dashboard."""
 
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated
 
+from fastapi import APIRouter, Depends
+
+from app.access import require_roles
+from app.db import SessionDep
+from app.schemas.auth import UserRole
 from app.schemas.dashboard import OccupancyDashboard
+from app.security import CurrentUser
+from app.services import dashboard
 
 router = APIRouter(prefix="/occupancy-dashboard", tags=["dashboard"])
 
+Staff = Annotated[CurrentUser, Depends(require_roles(UserRole.OWNER, UserRole.MANAGER))]
+
 
 @router.get("")
-def get_occupancy_dashboard() -> OccupancyDashboard:
+def get_occupancy_dashboard(caller: Staff, db: SessionDep) -> OccupancyDashboard:
     """Show occupancy figures for each accessible property and a summary across them."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return dashboard.get_occupancy_dashboard(db, caller.user)
