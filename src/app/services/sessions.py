@@ -95,6 +95,18 @@ def _active_sessions_of(user_id: UUID) -> Select[tuple[UserSession]]:
     )
 
 
+def has_other_active_sessions(db: Session, current: CurrentUser) -> bool:
+    """Return whether the caller has an active session besides the current one."""
+    return (
+        db.scalars(
+            _active_sessions_of(current.user.id)
+            .where(UserSession.id != current.session.id)
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
 def list_sessions(db: Session, current: CurrentUser) -> SessionList:
     """List the caller's active sessions, most recently active first."""
     rows = db.scalars(

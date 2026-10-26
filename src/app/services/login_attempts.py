@@ -12,8 +12,10 @@ MAX_FAILED_ATTEMPTS = 5
 LOCK_DURATION = timedelta(minutes=15)
 
 
-def ensure_not_locked(db: Session, email: str) -> None:
-    """Raise 429 TOO_MANY_LOGIN_ATTEMPTS with Retry-After while the email is locked."""
+def ensure_not_locked(
+    db: Session, email: str, code: str = "TOO_MANY_LOGIN_ATTEMPTS"
+) -> None:
+    """Raise 429 with the code and Retry-After while the email is locked."""
     row = db.get(LoginFailure, email)
     if row is None or row.locked_until is None:
         return
@@ -21,7 +23,7 @@ def ensure_not_locked(db: Session, email: str) -> None:
     if remaining > 0:
         raise ApiError(
             429,
-            "TOO_MANY_LOGIN_ATTEMPTS",
+            code,
             headers={"Retry-After": str(ceil(remaining))},
         )
 

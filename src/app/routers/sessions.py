@@ -1,13 +1,12 @@
 """Endpoints for the caller's sessions and password change under /me.
 
-Listing and ending sessions are implemented; the password change is declared in the
-contract but not implemented yet.
+Covers listing and ending sessions and replacing the password.
 """
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, Path, Response, status
 
 from app.db import SessionDep
 from app.schemas.sessions import (
@@ -17,6 +16,7 @@ from app.schemas.sessions import (
 )
 from app.security import CurrentUser, get_verified_user
 from app.services import sessions as session_service
+from app.services.reauthentication import change_password
 
 router = APIRouter(prefix="/me")
 
@@ -56,6 +56,8 @@ def end_my_other_sessions(db: SessionDep, current: VerifiedUser) -> None:
 
 
 @router.post("/password-changes", tags=["account"])
-def change_my_password(body: PasswordChangeInput) -> PasswordChangeResult:
+def change_my_password(
+    body: PasswordChangeInput, db: SessionDep, current: VerifiedUser
+) -> PasswordChangeResult:
     """Replace the caller's password after checking the current one."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return change_password(db, current, body.current_password, body.new_password)
