@@ -18,7 +18,7 @@ niscala-api/
 │   ├── plans.py       # Plan limits per subscription plan, as data
 │   ├── cli.py         # `niscala-api` command: grant-subscription, seed-rent-bills and seed-demo (development tools)
 │   ├── access.py      # require_roles and the property access queries (owner: own, manager: assigned)
-│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints, rent bills, dashboard, demo data)
+│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints, rent bills, dashboard, managers, demo data)
 │   ├── routers/       # One module per resource: parse the request, return a schema
 │   └── schemas/       # Pydantic request and response models; they define the OpenAPI contract
 ├── data/              # common-passwords.txt: the 100,000 most used passwords (SecLists, MIT license)
@@ -58,6 +58,7 @@ The Flutter Android app lives in `andinaufal120/niscala-app`. It generates its D
 - **Database** (`db.py`): `get_session()` yields a SQLAlchemy `Session`; endpoints and dependencies declare it as `SessionDep`, a function-scope dependency. It commits when the handler returns and rolls back when it raises, so a failed request saves nothing. Function scope makes the commit happen before the response is sent, so a failed commit becomes an error response. The database enforces structural integrity only; business rules live in code.
 - **Rent bills** (`services/rent_bills.py`): a bill, its status history and its transfer receipt are three tables. The receipt image is stored in the database as bytes (one per bill, replaced on re-upload) so a failed request saves nothing; the type is read from the file signature. Dates that depend on the calendar day (current period, future-date checks, payment date of a verified receipt) are read in Asia/Jakarta through `today_jakarta()`. Notifying the tenant and regenerating the payment-pattern summary after a status change have named empty hooks (`notify_status_change`, `regenerate_payment_pattern`) until those features are built; bills are created only by the development seed command, since bill generation is undecided.
 - **Complaints** (`services/complaints.py`): a complaint, its status history and its classification are stored together; classification runs after the save in a background task. Moving a complaint to its next status calls `notify_complaint_status_change`, an empty hook until notifications are built; a failing hook is logged and never undoes the change.
+- **Managers** (`services/managers.py`): a Manager is a login account (role manager, shared by every Owner the person works for) plus one `managers` record per Owner, which holds that Owner's nickname and phone and when the Manager activated. Property access still comes from `manager_assignments`, keyed by the account. Invitations belong to either a tenant or a manager record (exactly one is set).
 
 Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, Alembic, psycopg 3, managed with uv.
 
