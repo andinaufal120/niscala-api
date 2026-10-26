@@ -128,10 +128,14 @@ def test_list_item_has_exactly_the_documented_fields(client, make_user, sign_in)
 
 
 def test_list_returns_device_name_and_platform_exactly_as_stored(
-    client, make_user, sign_in
+    client, database, make_user, sign_in
 ):
-    signed_in = sign_in(
-        make_user(), device_name="  Pixel 8 Pro (Ünï) ", platform="Android 14/Beta-2"
+    signed_in = sign_in(make_user())
+    set_session_columns(
+        database,
+        signed_in.session_id,
+        device_name="  Pixel 8 Pro (Ünï) ",
+        platform="Android 14/Beta-2",
     )
     (item,) = listed(client, signed_in)
     assert item["deviceName"] == "  Pixel 8 Pro (Ünï) "
@@ -159,7 +163,7 @@ def test_list_returns_last_active_at_as_utc_iso_with_z(
     client, database, make_user, sign_in
 ):
     signed_in = sign_in(make_user())
-    moment = datetime(2026, 3, 4, 5, 6, 7, tzinfo=UTC)
+    moment = (days_ago(2) - timedelta(minutes=3)).replace(second=7, microsecond=0)
     set_session_columns(database, signed_in.session_id, last_active_at=moment)
     (item,) = listed(client, signed_in)
     assert item["lastActiveAt"].endswith("Z")
