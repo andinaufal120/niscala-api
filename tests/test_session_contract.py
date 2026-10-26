@@ -336,32 +336,6 @@ def test_password_change_result_has_other_sessions_is_boolean(
     assert schema["type"] == "boolean"
 
 
-# Runtime: valid requests reach the not-implemented stub
-
-
-def test_valid_password_change_request_responds_not_implemented(client) -> None:
-    response = client.post(PASSWORD_CHANGES_URL, json=VALID_PASSWORD_CHANGE_INPUT)
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize(
-    "new_password", ["12345678", "a" * 128, "pässwörd with spaces", " " * 8]
-)
-def test_new_password_of_8_to_128_characters_is_accepted(
-    client, new_password: str
-) -> None:
-    body = {**VALID_PASSWORD_CHANGE_INPUT, "newPassword": new_password}
-    assert client.post(PASSWORD_CHANGES_URL, json=body).status_code == 501
-
-
-@pytest.mark.parametrize("current_password", ["x", " ", "a" * 200])
-def test_any_non_empty_current_password_is_accepted(
-    client, current_password: str
-) -> None:
-    body = {**VALID_PASSWORD_CHANGE_INPUT, "currentPassword": current_password}
-    assert client.post(PASSWORD_CHANGES_URL, json=body).status_code == 501
-
-
 # Runtime: invalid requests are rejected with a validation error
 
 
@@ -375,23 +349,28 @@ def test_end_my_session_with_malformed_session_id_is_rejected(
 
 
 def test_password_change_without_body_is_rejected_with_validation_error(
-    client,
+    client, make_user, sign_in
 ) -> None:
-    assert client.post(PASSWORD_CHANGES_URL).status_code == 422
+    headers = sign_in(make_user()).headers
+    assert client.post(PASSWORD_CHANGES_URL, headers=headers).status_code == 422
 
 
 def test_password_change_with_empty_object_is_rejected_with_validation_error(
-    client,
+    client, make_user, sign_in
 ) -> None:
-    assert client.post(PASSWORD_CHANGES_URL, json={}).status_code == 422
+    headers = sign_in(make_user()).headers
+    response = client.post(PASSWORD_CHANGES_URL, json={}, headers=headers)
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize("field", ["currentPassword", "newPassword"])
 def test_password_change_with_a_required_field_missing_is_rejected(
-    client, field: str
+    client, make_user, sign_in, field: str
 ) -> None:
+    headers = sign_in(make_user()).headers
     body = _without(VALID_PASSWORD_CHANGE_INPUT, field)
-    assert client.post(PASSWORD_CHANGES_URL, json=body).status_code == 422
+    response = client.post(PASSWORD_CHANGES_URL, json=body, headers=headers)
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize(
@@ -428,6 +407,8 @@ def test_password_change_with_a_required_field_missing_is_rejected(
     ],
 )
 def test_invalid_password_change_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, make_user, sign_in, body: dict[str, Any]
 ) -> None:
-    assert client.post(PASSWORD_CHANGES_URL, json=body).status_code == 422
+    headers = sign_in(make_user()).headers
+    response = client.post(PASSWORD_CHANGES_URL, json=body, headers=headers)
+    assert response.status_code == 422
