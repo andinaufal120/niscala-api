@@ -6,14 +6,16 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import jwt
-from sqlalchemy import delete, select
+from sqlalchemy import Select, delete, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.errors import ApiError
 from app.models import UsedRefreshToken, UserAccount, UserSession
 from app.schemas.auth import AuthTokens, DeviceInfo
-from app.schemas.sessions import LoginMethod
+from app.schemas.sessions import LoginMethod, SessionList
+from app.schemas.sessions import Session as SessionSchema
+from app.security import CurrentUser
 
 ACCESS_TOKEN_LIFETIME = timedelta(seconds=900)
 SESSION_IDLE_LIMIT = timedelta(days=90)
@@ -80,6 +82,64 @@ def end_session(db: Session, session: UserSession) -> None:
         delete(UsedRefreshToken).where(UsedRefreshToken.session_id == session.id)
     )
     db.flush()
+
+
+def _active_sessions_of(user_id: UUID) -> Select[tuple[UserSession]]:
+    """Select the user's sessions that are not revoked, idle too long or too old."""
+    now = datetime.now(UTC)
+    return select(UserSession).where(
+        UserSession.user_id == user_id,
+        UserSession.revoked_at.is_(None),
+        UserSession.last_active_at >= now - SESSION_IDLE_LIMIT,
+        UserSession.created_at >= now - SESSION_MAX_AGE,
+    )
+
+
+def list_sessions(db: Session, current: CurrentUser) -> SessionList:
+    """List the caller's active sessions, most recently active first."""
+    rows = db.scalars(
+        _active_sessions_of(current.user.id).order_by(
+            UserSession.last_active_at.desc(), UserSession.id
+        )
+    )
+    return SessionList(
+        items=[
+            SessionSchema(
+                id=row.id,
+                device_name=row.device_name,
+                platform=row.platform,
+                login_method=row.login_method,
+                last_active_at=row.last_active_at,
+                is_current=row.id == current.session.id,
+            )
+            for row in rows
+        ]
+    )
+
+
+def end_other_session(db: Session, current: CurrentUser, session_id: UUID) -> None:
+    """End one of the caller's active sessions other than the current one.
+
+    Raises 404 SESSION_NOT_FOUND when the caller has no such active session and
+    409 SESSION_IS_CURRENT when it is the session making the request.
+    """
+    session = db.scalars(
+        _active_sessions_of(current.user.id).where(UserSession.id == session_id)
+    ).one_or_none()
+    if session is None:
+        raise ApiError(404, "SESSION_NOT_FOUND")
+    if session.id == current.session.id:
+        raise ApiError(409, "SESSION_IS_CURRENT")
+    end_session(db, session)
+
+
+def end_other_sessions(db: Session, current: CurrentUser) -> None:
+    """End every active session of the caller except the current one."""
+    others = db.scalars(
+        _active_sessions_of(current.user.id).where(UserSession.id != current.session.id)
+    ).all()
+    for session in others:
+        end_session(db, session)
 
 
 def _fail_and_end(db: Session, session: UserSession) -> ApiError:
