@@ -1,7 +1,7 @@
 """Endpoints under /complaints and /complaint-categories.
 
-Submitting, listing and reading complaints and the category list are implemented;
-the others answer 501.
+Submitting, listing, reading and changing the status of complaints and the
+category list are implemented; the others answer 501.
 """
 
 from typing import Annotated
@@ -46,6 +46,9 @@ Reader = Annotated[
     CurrentUser,
     Depends(require_roles(UserRole.TENANT, UserRole.OWNER, UserRole.MANAGER)),
 ]
+Management = Annotated[
+    CurrentUser, Depends(require_roles(UserRole.OWNER, UserRole.MANAGER))
+]
 Classifier = Annotated[ComplaintClassifier, Depends(get_complaint_classifier)]
 
 
@@ -85,10 +88,13 @@ def get_complaint(complaint_id: ComplaintId, caller: Reader, db: Db) -> Complain
 
 @router.post("/{complaintId}/status-changes", status_code=status.HTTP_201_CREATED)
 def change_complaint_status(
-    complaint_id: ComplaintId, body: ComplaintStatusChangeInput
+    complaint_id: ComplaintId,
+    body: ComplaintStatusChangeInput,
+    caller: Management,
+    db: Db,
 ) -> Complaint:
     """Move a complaint to its next status, optionally with a handling note."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return complaints.change_complaint_status(db, caller.user, complaint_id, body)
 
 
 @router.put("/{complaintId}/classification")
