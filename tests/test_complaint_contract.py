@@ -779,21 +779,6 @@ def tenant_headers(make_user, sign_in) -> dict[str, str]:
     [
         pytest.param("get", PHOTO_URL, None, id="get_photo"),
         pytest.param(
-            "post", STATUS_CHANGES_URL, VALID_STATUS_CHANGE_INPUT, id="change_status"
-        ),
-        pytest.param(
-            "post",
-            STATUS_CHANGES_URL,
-            {**VALID_STATUS_CHANGE_INPUT, "handlingNote": "Technician scheduled."},
-            id="change_status_with_note",
-        ),
-        pytest.param(
-            "post",
-            STATUS_CHANGES_URL,
-            {**VALID_STATUS_CHANGE_INPUT, "handlingNote": None},
-            id="change_status_with_null_note",
-        ),
-        pytest.param(
             "put", CLASSIFICATION_URL, VALID_CLASSIFICATION_INPUT, id="classify"
         ),
     ],
@@ -816,14 +801,6 @@ def test_valid_complaint_photo_upload_responds_not_implemented(
     client, filename: str, content: bytes, content_type: str
 ) -> None:
     response = client.put(PHOTO_URL, files={"file": (filename, content, content_type)})
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize("status", COMPLAINT_STATUSES)
-def test_every_complaint_status_is_accepted_in_a_status_change(
-    client, status: str
-) -> None:
-    response = client.post(STATUS_CHANGES_URL, json={"status": status})
     assert response.status_code == 501
 
 
@@ -879,26 +856,6 @@ def test_invalid_complaint_input_is_rejected_with_validation_error(
     "body",
     [
         pytest.param({}, id="empty_object"),
-        pytest.param({"handlingNote": "Fixed."}, id="missing_status"),
-        pytest.param({"status": None}, id="null_status"),
-        pytest.param({"status": "closed"}, id="unknown_status"),
-        pytest.param({"status": "in_progress"}, id="snake_case_status"),
-        pytest.param({"status": "NEW"}, id="wrong_case_status"),
-        pytest.param({"status": ""}, id="empty_status"),
-        pytest.param({"status": "done", "handlingNote": 5}, id="numeric_handling_note"),
-    ],
-)
-def test_invalid_status_change_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
-) -> None:
-    response = client.post(STATUS_CHANGES_URL, json=body)
-    assert response.status_code == 422
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        pytest.param({}, id="empty_object"),
         pytest.param(
             _without(VALID_CLASSIFICATION_INPUT, "category"), id="no_category"
         ),
@@ -941,17 +898,8 @@ def test_non_uuid_complaint_id_in_detail_is_rejected_with_validation_error(
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize(
-    ("method", "url"),
-    [
-        pytest.param("post", STATUS_CHANGES_URL, id="change_complaint_status"),
-        pytest.param("put", CLASSIFICATION_URL, id="classify_complaint"),
-    ],
-)
-def test_complaint_write_without_body_is_rejected_with_validation_error(
-    client, method: str, url: str
-) -> None:
-    response = client.request(method, url)
+def test_classification_without_body_is_rejected_with_validation_error(client) -> None:
+    response = client.put(CLASSIFICATION_URL)
     assert response.status_code == 422
 
 
@@ -986,25 +934,10 @@ def test_non_uuid_complaint_id_in_photo_download_is_rejected_with_validation_err
     assert client.get(f"/complaints/{NOT_A_UUID}/photo").status_code == 422
 
 
-@pytest.mark.parametrize(
-    ("method", "url", "body"),
-    [
-        pytest.param(
-            "post",
-            f"/complaints/{NOT_A_UUID}/status-changes",
-            VALID_STATUS_CHANGE_INPUT,
-            id="change_complaint_status",
-        ),
-        pytest.param(
-            "put",
-            f"/complaints/{NOT_A_UUID}/classification",
-            VALID_CLASSIFICATION_INPUT,
-            id="classify_complaint",
-        ),
-    ],
-)
-def test_non_uuid_complaint_path_id_is_rejected_with_validation_error(
-    client, method: str, url: str, body: dict[str, Any] | None
+def test_non_uuid_complaint_id_in_classification_is_rejected_with_validation_error(
+    client,
 ) -> None:
-    response = client.request(method, url, json=body)
+    response = client.put(
+        f"/complaints/{NOT_A_UUID}/classification", json=VALID_CLASSIFICATION_INPUT
+    )
     assert response.status_code == 422
