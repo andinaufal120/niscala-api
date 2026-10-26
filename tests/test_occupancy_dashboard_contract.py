@@ -238,5 +238,9 @@ def test_occupancy_enum_is_string_enum_of_occupied_and_vacant(
 # Runtime
 
 
-def test_valid_occupancy_dashboard_request_responds_not_implemented(client) -> None:
-    assert client.get(PATH).status_code == 501
+def test_occupancy_dashboard_request_without_a_token_is_unauthorized(
+    client, database
+) -> None:
+    response = client.get(PATH)
+    assert response.status_code == 401
+    assert response.json()["code"] == "ACCESS_TOKEN_INVALID"
