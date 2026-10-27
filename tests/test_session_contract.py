@@ -339,21 +339,6 @@ def test_password_change_result_has_other_sessions_is_boolean(
 # Runtime: valid requests reach the not-implemented stub
 
 
-@pytest.mark.parametrize(
-    ("method", "url"),
-    [
-        pytest.param("get", SESSIONS_URL, id="list_my_sessions"),
-        pytest.param("delete", SESSION_URL, id="end_my_session"),
-        pytest.param("delete", SESSIONS_URL, id="end_my_other_sessions"),
-    ],
-)
-def test_valid_session_request_responds_not_implemented(
-    client, method: str, url: str
-) -> None:
-    response = client.request(method, url)
-    assert response.status_code == 501
-
-
 def test_valid_password_change_request_responds_not_implemented(client) -> None:
     response = client.post(PASSWORD_CHANGES_URL, json=VALID_PASSWORD_CHANGE_INPUT)
     assert response.status_code == 501
@@ -382,9 +367,11 @@ def test_any_non_empty_current_password_is_accepted(
 
 @pytest.mark.parametrize("session_id", [NOT_A_UUID, "123", "9d8c7b6a-5e4f"])
 def test_end_my_session_with_malformed_session_id_is_rejected(
-    client, session_id: str
+    client, make_user, sign_in, session_id: str
 ) -> None:
-    assert client.delete(f"/me/sessions/{session_id}").status_code == 422
+    headers = sign_in(make_user()).headers
+    response = client.delete(f"/me/sessions/{session_id}", headers=headers)
+    assert response.status_code == 422
 
 
 def test_password_change_without_body_is_rejected_with_validation_error(
