@@ -76,7 +76,7 @@ A shared copy of the API runs on Fly.io at `https://dev-api-niscala.andinaufal.c
 
 Deploy from an up-to-date `main`. A version bump is optional. The `version` in `pyproject.toml` is the version the API reports in its OpenAPI document (`info.version`, shown at `/docs` and `/openapi.json`), so bump it when a release should show a new number. The build installs with `uv sync --locked`, so `pyproject.toml` and `uv.lock` must always agree.
 
-1. Optional: bump the version. Create a branch, change `version` in `pyproject.toml`, then run `uv lock` so `uv.lock` follows. Do not edit `uv.lock` by hand. Check that `git diff --stat` shows only those two files and that `uv lock --check` passes. Commit both together (`chore: bump the version to X.Y.Z`), open a pull request and merge it. The deployed API reports the new version after the next deploy.
+1. Optional: bump the version. Create a branch, change `version` in `pyproject.toml`, then run `uv lock` so `uv.lock` follows. Do not edit `uv.lock` by hand. Check that `git diff --stat` shows only those two files and that `uv lock --check` passes. Commit both together (`chore: bump the version to X.Y.Z`), open a pull request and merge it. The deployed API reports the new version after the next deploy. On your machine `uv run` and `uv sync` reinstall the project, so restart the server to see it.
 2. Update and check your copy of `main`:
 
    ```sh
