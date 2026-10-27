@@ -69,8 +69,33 @@ A shared copy of the API runs on Fly.io at `https://dev-api-niscala.andinaufal.c
 - The machine stops when idle, so the first request after a quiet period takes a few seconds.
 - Verification codes are written to the server log: `fly logs -a niscala-api-dev`.
 - Development commands run on the server: `fly ssh console -a niscala-api-dev -C "niscala-api seed-rent-bills tenant@example.com"` (same for `grant-subscription`).
-- To deploy, run `fly deploy` from an up-to-date `main`. Migrations are applied by the deploy itself.
+- To deploy a new version, see "Deploying" below.
 - Secrets are set with `fly secrets set NAME=value -a niscala-api-dev`.
+
+### Deploying
+
+Deploy from an up-to-date `main`. A version bump is optional because nothing reads the version, but the build installs with `uv sync --locked`, so `pyproject.toml` and `uv.lock` must always agree.
+
+1. Optional: bump the version. Create a branch, change `version` in `pyproject.toml`, then run `uv lock` so `uv.lock` follows. Do not edit `uv.lock` by hand. Check that `git diff --stat` shows only those two files and that `uv lock --check` passes. Commit both together (`chore: bump the version to X.Y.Z`), open a pull request and merge it.
+2. Update and check your copy of `main`:
+
+   ```sh
+   git switch main && git pull
+   git status                           # clean working tree
+   uv run alembic heads                 # exactly one head
+   fly secrets list -a niscala-api-dev  # JWT_SECRET, INVITATION_ENCRYPTION_KEY and the database URL are set
+   ```
+
+3. Deploy:
+
+   ```sh
+   fly deploy -a niscala-api-dev
+   ```
+
+   The deploy builds the image from the `Dockerfile` and runs `alembic upgrade head` as its release command. If a migration fails, the deploy stops and the old machines keep running.
+4. Check that it worked: `fly status -a niscala-api-dev`, `fly logs -a niscala-api-dev`, then open `/docs` on the server and try a login. The first request can be slow because the machine stops when idle.
+
+To roll back, find the previous release with `fly releases -a niscala-api-dev` and run `fly deploy -a niscala-api-dev --image <previous-image>`. A rollback does not undo migrations. To revert one, run `fly ssh console -a niscala-api-dev -C "alembic downgrade -1"`, after checking that the old code works with the older schema.
 
 ## Development
 
