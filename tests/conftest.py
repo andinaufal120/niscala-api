@@ -395,6 +395,115 @@ def assign_manager(database) -> Callable[..., None]:
     return assign
 
 
+@dataclass(frozen=True)
+class StoredManager:
+    """Rows committed by `make_manager`."""
+
+    user: Any
+    record: Any
+    invitation: Any
+    token: str | None
+
+    @property
+    def id(self) -> UUID:
+        """The id of the Owner-Manager record, which is the `managerId` of the API."""
+        return self.record.id
+
+    @property
+    def user_id(self) -> UUID:
+        return self.user.id
+
+
+_manager_numbers = count(1)
+
+
+@pytest.fixture
+def make_manager(database) -> Callable[..., StoredManager]:
+    """Commit a Manager record of an Owner with its assignments and an invitation.
+
+    Without `user` a new manager account is created; pass an existing account to
+    give one person records with several Owners. `activated` fills the activation
+    time (and an email when none is given). `expired`, `used` and `invalidated`
+    shape the invitation; `invitation=False` stores none.
+    """
+    import hashlib
+    import secrets
+    from datetime import UTC, datetime, timedelta
+
+    from cryptography.fernet import Fernet
+    from sqlalchemy.orm import Session
+
+    from app.config import get_settings
+    from app.models import Invitation, Manager, ManagerAssignment, UserAccount
+    from app.schemas.auth import UserRole
+    from app.services.passwords import hash_password
+
+    def factory(
+        owner,
+        properties=(),
+        *,
+        name: str = "Mira Manager",
+        nickname: str | None = None,
+        phone: str = "081234567890",
+        email: str | None = None,
+        password: str | None = None,
+        activated: bool = False,
+        deleted: bool = False,
+        user=None,
+        invitation: bool = True,
+        expired: bool = False,
+        used: bool = False,
+        invalidated: bool = False,
+    ) -> StoredManager:
+        now = datetime.now(UTC)
+        with Session(database, expire_on_commit=False) as db:
+            if user is None:
+                if activated and email is None:
+                    email = f"manager{next(_manager_numbers)}@example.com"
+                user = UserAccount(
+                    name=name,
+                    email=email,
+                    password_hash=hash_password(password) if password else None,
+                    role=UserRole.MANAGER,
+                    email_verified=True,
+                )
+                db.add(user)
+                db.flush()
+            record = Manager(
+                owner_id=owner.id,
+                user_id=user.id,
+                nickname=nickname,
+                phone=phone,
+                activated_at=now if activated else None,
+                deleted_at=now if deleted else None,
+            )
+            db.add(record)
+            db.flush()
+            for property_ in properties:
+                if db.get(ManagerAssignment, (user.id, property_.id)) is None:
+                    db.add(
+                        ManagerAssignment(manager_id=user.id, property_id=property_.id)
+                    )
+            row, token = None, None
+            if invitation:
+                token = secrets.token_urlsafe(32)
+                fernet = Fernet(get_settings().invitation_encryption_key.encode())
+                row = Invitation(
+                    manager_id=record.id,
+                    token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                    token_encrypted=fernet.encrypt(token.encode()).decode(),
+                    created_at=now - timedelta(days=8 if expired else 0),
+                    expires_at=now + timedelta(days=-1 if expired else 7),
+                    used_at=now if used else None,
+                    invalidated_at=now if invalidated else None,
+                )
+                db.add(row)
+            db.commit()
+            return StoredManager(user, record, row, token)
+
+    return factory
+
+
 @pytest.fixture
 def sign_in(database) -> Callable[..., SignedIn]:
     """Start and commit a session for a user and return its tokens."""

@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
-from app.models import Tenant, UserAccount
+from app.models import Manager, Tenant, UserAccount
 from app.schemas.auth import LoginInput, RegisterOwnerInput, UserRole
 from app.services.passwords import (
     check_password_allowed,
@@ -45,12 +45,19 @@ def authenticate(db: Session, data: LoginInput) -> UserAccount:
     """Return the account matching the email and password.
 
     Raises 401 INVALID_CREDENTIALS for an unknown email, a wrong password, an
-    account without a password or a deleted tenant.
+    account without a password, a deleted tenant or a manager whose records are
+    all deleted.
     """
     user = find_by_email(db, data.email)
     if user is not None and user.role == UserRole.TENANT:
         tenant = db.get(Tenant, user.id)
         if tenant is not None and tenant.deleted_at is not None:
+            user = None
+    if user is not None and user.role == UserRole.MANAGER:
+        deletions = db.scalars(
+            select(Manager.deleted_at).where(Manager.user_id == user.id)
+        ).all()
+        if deletions and all(deleted is not None for deleted in deletions):
             user = None
     if (
         user is None

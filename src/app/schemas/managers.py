@@ -22,6 +22,9 @@ class ManagerInput(ApiModel):
     """Fields an Owner sets when adding or editing a manager."""
 
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    nickname: str | None = Field(
+        default=None, description="How the Owner calls the Manager; blank means none."
+    )
     phone: str = Field(min_length=1, description=PHONE_DESCRIPTION)
     property_ids: list[UUID] = Field(
         min_length=1,
@@ -56,6 +59,7 @@ class Manager(ApiModel):
 
     id: UUID
     name: str
+    nickname: str | None
     phone: str = Field(description=PHONE_DESCRIPTION)
     email: str | None = Field(
         description="Null until the Manager sets it during activation."
@@ -72,6 +76,7 @@ class ManagerSummary(ApiModel):
 
     id: UUID
     name: str
+    nickname: str | None
     phone: str = Field(description=PHONE_DESCRIPTION)
     email: str | None = Field(
         description="Null until the Manager sets it during activation."

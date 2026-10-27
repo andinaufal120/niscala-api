@@ -88,12 +88,18 @@ Index(
 
 
 class Invitation(Base):
-    """A single-use link a tenant activates their account with."""
+    """A single-use link a tenant or a manager activates their account with."""
 
     __tablename__ = "invitations"
+    __table_args__ = (
+        CheckConstraint(
+            "(tenant_id IS NULL) <> (manager_id IS NULL)", name="one_invitee"
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.user_id"))
+    tenant_id: Mapped[UUID | None] = mapped_column(ForeignKey("tenants.user_id"))
+    manager_id: Mapped[UUID | None] = mapped_column(ForeignKey("managers.id"))
     token_hash: Mapped[str] = mapped_column(unique=True)
     token_encrypted: Mapped[str]
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
