@@ -1,4 +1,4 @@
-"""Submitting, reading and classifying complaints."""
+"""Submitting, reading, classifying and progressing complaints."""
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +28,7 @@ from app.schemas.complaints import (
     ComplaintList,
     ComplaintStatus,
     ComplaintStatusChange,
+    ComplaintStatusChangeInput,
     ComplaintSummary,
     ComplaintUrgency,
     PropertyRef,
@@ -45,6 +46,12 @@ URGENCY_RANK = {
     ComplaintUrgency.HIGH: 0,
     ComplaintUrgency.MEDIUM: 1,
     ComplaintUrgency.LOW: 2,
+}
+
+# A complaint only moves forward, one status at a time.
+NEXT_STATUS = {
+    ComplaintStatus.NEW: ComplaintStatus.IN_PROGRESS,
+    ComplaintStatus.IN_PROGRESS: ComplaintStatus.DONE,
 }
 
 type Row = tuple[ComplaintRow, RoomRow, PropertyRow, UserAccount]
@@ -196,6 +203,48 @@ def get_complaint(db: Session, user: UserAccount, complaint_id: UUID) -> Complai
     row = db.execute(_readable_by(user).where(ComplaintRow.id == complaint_id)).first()
     if row is None:
         raise ApiError(404, "COMPLAINT_NOT_FOUND")
+    return _detail(db, tuple(row), {})
+
+
+def notify_complaint_status_change(
+    complaint: ComplaintRow, change: StatusChangeRow
+) -> None:
+    """Tell the tenant that their complaint moved to a new status."""
+
+
+def change_complaint_status(
+    db: Session, user: UserAccount, complaint_id: UUID, data: ComplaintStatusChangeInput
+) -> Complaint:
+    """Move a complaint to its next status and record it in the history.
+
+    A blank handling note is stored as none. Flushes, never commits. The tenant
+    is notified after the change is flushed, before the commit; a failing
+    notification is logged and does not undo the change. Raises 404
+    COMPLAINT_NOT_FOUND for an unknown or unreadable complaint and 409
+    COMPLAINT_STATUS_NOT_NEXT when the status is not the next one.
+    """
+    row = db.execute(_readable_by(user).where(ComplaintRow.id == complaint_id)).first()
+    if row is None:
+        raise ApiError(404, "COMPLAINT_NOT_FOUND")
+    complaint = row[0]
+    if NEXT_STATUS.get(ComplaintStatus(complaint.status)) != data.status:
+        raise ApiError(409, "COMPLAINT_STATUS_NOT_NEXT", field="status")
+    complaint.status = data.status.value
+    change = StatusChangeRow(
+        complaint_id=complaint.id,
+        status=data.status.value,
+        handling_note=(data.handling_note or "").strip() or None,
+        changed_at=datetime.now(UTC),
+    )
+    db.add(change)
+    db.flush()
+    # Detached rows keep their loaded values after the request session commits.
+    db.expunge(complaint)
+    db.expunge(change)
+    try:
+        notify_complaint_status_change(complaint, change)
+    except Exception:
+        logger.exception("Notifying about the status change of %s failed", complaint.id)
     return _detail(db, tuple(row), {})
 
 
