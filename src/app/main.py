@@ -1,6 +1,7 @@
 """FastAPI application. Its generated OpenAPI document is the API contract."""
 
 import logging
+from importlib.metadata import version
 
 from fastapi import Depends, FastAPI
 
@@ -33,6 +34,7 @@ app_logger.handlers = [_handler]  # replaced, not appended, so reloads keep one
 
 app = FastAPI(
     title="Niscala API",
+    version=version("niscala-api"),
     generate_unique_id_function=lambda route: route.name,
 )
 register_error_handlers(app)
