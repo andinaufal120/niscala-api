@@ -1,7 +1,7 @@
 """Endpoints under /complaints and /complaint-categories.
 
-Submitting, listing, reading and changing the status of complaints and the
-category list are implemented; the others answer 501.
+Submitting, listing, reading, classifying and changing the status of complaints
+and the category list are implemented; the others answer 501.
 """
 
 from typing import Annotated
@@ -99,10 +99,13 @@ def change_complaint_status(
 
 @router.put("/{complaintId}/classification")
 def classify_complaint(
-    complaint_id: ComplaintId, body: ComplaintClassificationInput
+    complaint_id: ComplaintId,
+    body: ComplaintClassificationInput,
+    caller: Management,
+    db: Db,
 ) -> Complaint:
     """Set a complaint's category and urgency manually."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return complaints.classify_complaint_manually(db, caller.user, complaint_id, body)
 
 
 @router.put("/{complaintId}/photo")

@@ -38,6 +38,10 @@ class Complaint(Base):
             "ai_urgency IS NULL OR " + _in_list("ai_urgency", ComplaintUrgency),
             name="ai_urgency",
         ),
+        CheckConstraint(
+            "manual_urgency IS NULL OR " + _in_list("manual_urgency", ComplaintUrgency),
+            name="manual_urgency",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -49,6 +53,12 @@ class Complaint(Base):
     ai_category: Mapped[str | None]
     ai_urgency: Mapped[str | None]
     ai_suggested_action: Mapped[str | None]
+    manual_category: Mapped[str | None]
+    manual_urgency: Mapped[str | None]
+    classified_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("user_accounts.id")
+    )
+    classified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
