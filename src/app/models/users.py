@@ -9,21 +9,31 @@ from sqlalchemy.orm import Mapped, mapped_column, validates
 from app.models.base import Base
 from app.schemas.auth import UserRole
 from app.schemas.sessions import LoginMethod
+from app.schemas.user_accounts import EditableAccountStatus
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _in_list(column: str, values: type[UserRole | LoginMethod]) -> str:
+def _in_list(
+    column: str, values: type[UserRole | LoginMethod | EditableAccountStatus]
+) -> str:
     return f"{column} IN ({', '.join(repr(v.value) for v in values)})"
 
 
 class UserAccount(Base):
-    """A person who can sign in."""
+    """A person who can sign in.
+
+    `status` holds only what an Admin can set; a deleted account is told apart by
+    `deleted_at` (see `app.services.user_accounts`).
+    """
 
     __tablename__ = "user_accounts"
-    __table_args__ = (CheckConstraint(_in_list("role", UserRole), name="role"),)
+    __table_args__ = (
+        CheckConstraint(_in_list("role", UserRole), name="role"),
+        CheckConstraint(_in_list("status", EditableAccountStatus), name="status"),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str]
@@ -31,6 +41,12 @@ class UserAccount(Base):
     password_hash: Mapped[str | None]
     role: Mapped[UserRole] = mapped_column(String)
     email_verified: Mapped[bool] = mapped_column(default=False)
+    status: Mapped[EditableAccountStatus] = mapped_column(
+        String,
+        default=EditableAccountStatus.ACTIVE,
+        server_default=EditableAccountStatus.ACTIVE.value,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     @validates("email")

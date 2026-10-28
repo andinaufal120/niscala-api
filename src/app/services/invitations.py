@@ -68,3 +68,9 @@ def invitation_url(token: str) -> str:
     """Return the link a tenant opens to activate their account."""
     base = get_settings().invitation_base_url.rstrip("/")
     return f"{base}/invitations/{token}"
+
+
+def email_change_url(token: str) -> str:
+    """Return the link a user opens to confirm a new login email."""
+    base = get_settings().invitation_base_url.rstrip("/")
+    return f"{base}/email-change?token={token}"
