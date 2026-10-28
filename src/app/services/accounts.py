@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
-from app.models import Manager, Tenant, UserAccount
+from app.models import UserAccount
 from app.schemas.auth import (
     LoginInput,
     Password,
@@ -15,11 +15,13 @@ from app.schemas.auth import (
     RegisterOwnerInput,
     UserRole,
 )
+from app.schemas.user_accounts import EditableAccountStatus
 from app.services.passwords import (
     check_password_allowed,
     hash_password,
     verify_password,
 )
+from app.services.user_accounts import is_deleted
 
 
 def find_by_email(db: Session, email: str) -> UserAccount | None:
@@ -89,24 +91,17 @@ def authenticate(db: Session, data: LoginInput) -> UserAccount:
     """Return the account matching the email and password.
 
     Raises 401 INVALID_CREDENTIALS for an unknown email, a wrong password, an
-    account without a password, a deleted tenant or a manager whose records are
-    all deleted.
+    account without a password or a deleted account, then 403 ACCOUNT_INACTIVE
+    for an inactive account whose password was right.
     """
     user = find_by_email(db, data.email)
-    if user is not None and user.role == UserRole.TENANT:
-        tenant = db.get(Tenant, user.id)
-        if tenant is not None and tenant.deleted_at is not None:
-            user = None
-    if user is not None and user.role == UserRole.MANAGER:
-        deletions = db.scalars(
-            select(Manager.deleted_at).where(Manager.user_id == user.id)
-        ).all()
-        if deletions and all(deleted is not None for deleted in deletions):
-            user = None
     if (
         user is None
+        or is_deleted(db, user)
         or user.password_hash is None
         or not verify_password(data.password, user.password_hash)
     ):
         raise ApiError(401, "INVALID_CREDENTIALS")
+    if user.status == EditableAccountStatus.INACTIVE:
+        raise ApiError(403, "ACCOUNT_INACTIVE")
     return user

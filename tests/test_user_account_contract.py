@@ -9,6 +9,7 @@ from conftest import (
     OpenApiDoc,
     nullable_inner,
 )
+from user_account_support import account_url
 
 HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
 
@@ -49,12 +50,6 @@ VALID_USER_ACCOUNT_INPUT = {
 }
 
 USER_ACCOUNTS_URL = "/user-accounts"
-USER_ACCOUNT_URL = f"/user-accounts/{USER_ACCOUNT_ID}"
-
-# Operations that take a user account body: (method, URL).
-USER_ACCOUNT_WRITE_REQUESTS = [
-    pytest.param("put", USER_ACCOUNT_URL, id="update_user_account"),
-]
 
 
 def _without(body: dict[str, Any], *keys: str) -> dict[str, Any]:
@@ -587,64 +582,76 @@ def test_user_account_tenancy_is_nullable_account_tenancy(
     assert openapi.ref_name(nullable_inner(schema)) == "AccountTenancy"
 
 
-# Runtime: valid requests reach the not-implemented stub
+# Runtime: valid requests reach the implemented operations
+
+
+@pytest.fixture
+def target(make_user):
+    """An existing account the Admin reads, edits and deletes."""
+    return make_user(name="Budi Santoso", email="budi@example.com")
 
 
 @pytest.mark.parametrize(
-    ("method", "url", "body"),
+    "query",
     [
-        pytest.param("get", USER_ACCOUNTS_URL, None, id="list_user_accounts"),
-        pytest.param(
-            "get",
-            f"{USER_ACCOUNTS_URL}?email=budi",
-            None,
-            id="list_user_accounts_by_email",
-        ),
-        pytest.param(
-            "get",
-            f"{USER_ACCOUNTS_URL}?role=owner",
-            None,
-            id="list_user_accounts_by_role",
-        ),
-        pytest.param(
-            "get",
-            f"{USER_ACCOUNTS_URL}?includeDeleted=true",
-            None,
-            id="list_user_accounts_including_deleted",
-        ),
-        pytest.param(
-            "get",
-            f"{USER_ACCOUNTS_URL}?includeDeleted=false",
-            None,
-            id="list_user_accounts_excluding_deleted",
-        ),
-        pytest.param(
-            "get",
-            f"{USER_ACCOUNTS_URL}?email=budi&role=tenant&includeDeleted=true",
-            None,
-            id="list_user_accounts_with_all_filters",
-        ),
-        pytest.param("get", USER_ACCOUNT_URL, None, id="get_user_account"),
-        pytest.param(
-            "put", USER_ACCOUNT_URL, VALID_USER_ACCOUNT_INPUT, id="update_user_account"
-        ),
-        pytest.param("delete", USER_ACCOUNT_URL, None, id="delete_user_account"),
+        pytest.param("", id="no_filters"),
+        pytest.param("email=budi", id="email"),
+        pytest.param("role=owner", id="role"),
+        pytest.param("includeDeleted=true", id="including_deleted"),
+        pytest.param("includeDeleted=false", id="excluding_deleted"),
+        pytest.param("email=budi&role=tenant&includeDeleted=true", id="all_filters"),
     ],
 )
-def test_valid_user_account_request_responds_not_implemented(
-    client, method: str, url: str, body: dict[str, Any] | None
-) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 501
+def test_list_user_accounts_accepts_valid_filters(client, admin_in, query: str) -> None:
+    response = client.get(f"{USER_ACCOUNTS_URL}?{query}", headers=admin_in.headers)
+    assert response.status_code == 200
+    assert isinstance(response.json()["items"], list)
 
 
 @pytest.mark.parametrize("role", ["tenant", "owner", "manager", "admin"])
-def test_list_user_accounts_accepts_every_role_filter(client, role: str) -> None:
-    response = client.get(f"{USER_ACCOUNTS_URL}?role={role}")
-    assert response.status_code == 501
+def test_list_user_accounts_accepts_every_role_filter(
+    client, admin_in, role: str
+) -> None:
+    response = client.get(f"{USER_ACCOUNTS_URL}?role={role}", headers=admin_in.headers)
+    assert response.status_code == 200
 
 
-@pytest.mark.parametrize(("method", "url"), USER_ACCOUNT_WRITE_REQUESTS)
+def test_get_user_account_is_not_a_stub(client, admin_in, target) -> None:
+    response = client.get(account_url(target.id), headers=admin_in.headers)
+    assert response.status_code == 200
+    assert response.json()["id"] == str(target.id)
+
+
+def test_update_user_account_is_not_a_stub(client, admin_in, target) -> None:
+    response = client.put(
+        account_url(target.id), headers=admin_in.headers, json=VALID_USER_ACCOUNT_INPUT
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == str(target.id)
+
+
+def test_delete_user_account_is_not_a_stub(client, admin_in, target) -> None:
+    response = client.delete(account_url(target.id), headers=admin_in.headers)
+    assert response.status_code == 204
+
+
+@pytest.mark.parametrize(
+    ("method", "body"),
+    [
+        pytest.param("get", None, id="get_user_account"),
+        pytest.param("put", VALID_USER_ACCOUNT_INPUT, id="update_user_account"),
+        pytest.param("delete", None, id="delete_user_account"),
+    ],
+)
+def test_unknown_user_account_answers_not_found(
+    client, admin_in, method: str, body: dict[str, Any] | None
+) -> None:
+    response = client.request(
+        method, account_url(USER_ACCOUNT_ID), headers=admin_in.headers, json=body
+    )
+    assert response.status_code == 404
+
+
 @pytest.mark.parametrize(
     "extra",
     [
@@ -657,16 +664,24 @@ def test_list_user_accounts_accepts_every_role_filter(client, role: str) -> None
     ],
 )
 def test_user_account_input_edge_body_is_accepted(
-    client, method: str, url: str, extra: dict[str, Any]
+    client, admin_in, mailbox, target, extra: dict[str, Any]
 ) -> None:
-    response = client.request(method, url, json={**VALID_USER_ACCOUNT_INPUT, **extra})
-    assert response.status_code == 501
+    response = client.put(
+        account_url(target.id),
+        headers=admin_in.headers,
+        json={**VALID_USER_ACCOUNT_INPUT, **extra},
+    )
+    assert response.status_code == 200
 
 
 # Runtime: invalid requests are rejected with a validation error
 
 
-@pytest.mark.parametrize(("method", "url"), USER_ACCOUNT_WRITE_REQUESTS)
+def _assert_validation_failed(response) -> None:
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_FAILED"
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -693,42 +708,47 @@ def test_user_account_input_edge_body_is_accepted(
     ],
 )
 def test_invalid_user_account_input_is_rejected_with_validation_error(
-    client, method: str, url: str, change
+    client, admin_in, target, change
 ) -> None:
-    response = client.request(method, url, json=change(VALID_USER_ACCOUNT_INPUT))
-    assert response.status_code == 422
+    response = client.put(
+        account_url(target.id),
+        headers=admin_in.headers,
+        json=change(VALID_USER_ACCOUNT_INPUT),
+    )
+    _assert_validation_failed(response)
 
 
-@pytest.mark.parametrize(("method", "url"), USER_ACCOUNT_WRITE_REQUESTS)
 def test_user_account_write_without_body_is_rejected_with_validation_error(
-    client, method: str, url: str
+    client, admin_in, target
 ) -> None:
-    response = client.request(method, url)
-    assert response.status_code == 422
+    response = client.put(account_url(target.id), headers=admin_in.headers)
+    _assert_validation_failed(response)
+
+
+def test_invalid_body_for_unknown_user_account_answers_not_found(
+    client, admin_in
+) -> None:
+    response = client.put(
+        account_url(USER_ACCOUNT_ID), headers=admin_in.headers, json={}
+    )
+    assert response.status_code == 404
 
 
 @pytest.mark.parametrize(
-    ("method", "url", "body"),
+    ("method", "body"),
     [
-        pytest.param(
-            "get", f"/user-accounts/{NOT_A_UUID}", None, id="get_user_account"
-        ),
-        pytest.param(
-            "put",
-            f"/user-accounts/{NOT_A_UUID}",
-            VALID_USER_ACCOUNT_INPUT,
-            id="update_user_account",
-        ),
-        pytest.param(
-            "delete", f"/user-accounts/{NOT_A_UUID}", None, id="delete_user_account"
-        ),
+        pytest.param("get", None, id="get_user_account"),
+        pytest.param("put", VALID_USER_ACCOUNT_INPUT, id="update_user_account"),
+        pytest.param("delete", None, id="delete_user_account"),
     ],
 )
 def test_non_uuid_user_account_path_id_is_rejected_with_validation_error(
-    client, method: str, url: str, body: dict[str, Any] | None
+    client, admin_in, method: str, body: dict[str, Any] | None
 ) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 422
+    response = client.request(
+        method, account_url(NOT_A_UUID), headers=admin_in.headers, json=body
+    )
+    _assert_validation_failed(response)
 
 
 @pytest.mark.parametrize(
@@ -743,7 +763,7 @@ def test_non_uuid_user_account_path_id_is_rejected_with_validation_error(
     ],
 )
 def test_invalid_list_user_accounts_query_is_rejected_with_validation_error(
-    client, query: str
+    client, admin_in, query: str
 ) -> None:
-    response = client.get(f"{USER_ACCOUNTS_URL}?{query}")
-    assert response.status_code == 422
+    response = client.get(f"{USER_ACCOUNTS_URL}?{query}", headers=admin_in.headers)
+    _assert_validation_failed(response)
