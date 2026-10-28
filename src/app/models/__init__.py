@@ -6,6 +6,7 @@ from app.models.email_change import EmailChangeRequest
 from app.models.email_verification import EmailVerificationCode
 from app.models.login_failure import LoginFailure
 from app.models.managers import Manager
+from app.models.notifications import Notification, NotificationSetting
 from app.models.password_reset import PasswordResetToken
 from app.models.properties import ManagerAssignment, Property
 from app.models.rent_bills import RentBill, RentBillReceipt, RentBillStatusChange
@@ -26,6 +27,8 @@ __all__ = [
     "LoginFailure",
     "Manager",
     "ManagerAssignment",
+    "Notification",
+    "NotificationSetting",
     "PasswordResetToken",
     "Property",
     "RentBill",
