@@ -74,3 +74,9 @@ def email_change_url(token: str) -> str:
     """Return the link a user opens to confirm a new login email."""
     base = get_settings().invitation_base_url.rstrip("/")
     return f"{base}/email-change?token={token}"
+
+
+def password_reset_url(token: str) -> str:
+    """Return the link a user opens to set a new password."""
+    base = get_settings().invitation_base_url.rstrip("/")
+    return f"{base}/password-reset?token={token}"

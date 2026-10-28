@@ -1,4 +1,4 @@
-"""Endpoints under /auth. Declared in the contract; not implemented yet."""
+"""Endpoints under /auth."""
 
 from typing import Annotated
 
@@ -25,7 +25,7 @@ from app.schemas.auth import (
 )
 from app.schemas.sessions import LoginMethod
 from app.security import CurrentUser, bearer_scheme, get_current_user
-from app.services import user_accounts
+from app.services import password_reset, user_accounts
 from app.services.accounts import authenticate, create_owner
 from app.services.email_verification import RESEND_INTERVAL, confirm_code, send_code
 from app.services.login_attempts import (
@@ -148,15 +148,19 @@ def confirm_email_change(body: TokenInput, db: SessionDep) -> None:
     status_code=status.HTTP_202_ACCEPTED,
     response_class=Response,
 )
-def request_password_reset(body: PasswordResetRequestInput) -> None:
+def request_password_reset(
+    body: PasswordResetRequestInput,
+    db: SessionDep,
+    sender: Annotated[EmailSender, Depends(get_email_sender)],
+) -> None:
     """Email a password-reset link; answers the same whether or not the email is registered."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    password_reset.request_reset(db, body.email, sender)
 
 
 @router.post("/password-reset-previews")
-def preview_password_reset(body: TokenInput) -> PasswordResetPreview:
+def preview_password_reset(body: TokenInput, db: SessionDep) -> PasswordResetPreview:
     """Check a password-reset link and return the account email."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return PasswordResetPreview(email=password_reset.preview_reset(db, body.token))
 
 
 @router.post(
@@ -164,6 +168,6 @@ def preview_password_reset(body: TokenInput) -> PasswordResetPreview:
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def reset_password(body: PasswordResetInput) -> None:
+def reset_password(body: PasswordResetInput, db: SessionDep) -> None:
     """Set a new password with a reset link and end every session of the account."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    password_reset.reset_password(db, body.token, body.new_password)
