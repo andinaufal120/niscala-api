@@ -105,6 +105,7 @@ PUBLIC_OPERATIONS = [
     ("post", "/auth/password-reset-requests"),
     ("post", "/auth/password-reset-previews"),
     ("post", "/auth/password-resets"),
+    ("post", "/auth/email-changes"),
     ("post", "/invitations/previews"),
     ("post", "/invitations/activations/password"),
     ("post", "/invitations/activations/google"),
