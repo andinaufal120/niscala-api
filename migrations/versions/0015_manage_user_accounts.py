@@ -22,7 +22,6 @@ def upgrade() -> None:
         "user_accounts",
         sa.Column("status", sa.String(), nullable=False, server_default="active"),
     )
-    op.alter_column("user_accounts", "status", server_default=None)
     op.add_column(
         "user_accounts",
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),

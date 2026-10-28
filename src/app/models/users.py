@@ -42,7 +42,9 @@ class UserAccount(Base):
     role: Mapped[UserRole] = mapped_column(String)
     email_verified: Mapped[bool] = mapped_column(default=False)
     status: Mapped[EditableAccountStatus] = mapped_column(
-        String, default=EditableAccountStatus.ACTIVE
+        String,
+        default=EditableAccountStatus.ACTIVE,
+        server_default=EditableAccountStatus.ACTIVE.value,
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
