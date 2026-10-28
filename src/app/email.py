@@ -21,6 +21,10 @@ class EmailSender(Protocol):
         """Tell the current address that a change to `new_email` was requested."""
         ...
 
+    def send_password_reset_link(self, to: str, url: str) -> None:
+        """Email the password-reset link to the address."""
+        ...
+
 
 class ConsoleEmailSender:
     """Logs emails instead of sending them."""
@@ -33,6 +37,9 @@ class ConsoleEmailSender:
 
     def send_email_change_notice(self, to: str, new_email: str) -> None:
         logger.info("Email change notice for %s: change to %s requested", to, new_email)
+
+    def send_password_reset_link(self, to: str, url: str) -> None:
+        logger.info("Password reset link for %s: %s", to, url)
 
 
 def get_email_sender() -> EmailSender:
