@@ -129,6 +129,16 @@ uv run niscala-api seed-rent-bills tenant@example.com --months 24
 
 Running it again skips periods that already have a bill. It is a development tool, not part of the API.
 
+### Creating an Admin
+
+Admins cannot sign up through the API. This command creates one in the database in `DATABASE_URL`, with a verified email. The password comes from `--password` or, if that is absent, from the `NISCALA_ADMIN_PASSWORD` environment variable, and follows the same rules as sign-up:
+
+```sh
+NISCALA_ADMIN_PASSWORD='a-long-unguessable-password' uv run niscala-api create-admin admin@example.com --name "Sari Admin"
+```
+
+It fails if the email already belongs to an account. Prefer the environment variable, since a `--password` value stays in the shell history.
+
 ## Configuration
 
 Settings are read from environment variables, or from a `.env` file in the project root. Every variable has a default except `JWT_SECRET` and `INVITATION_ENCRYPTION_KEY`, which must be set.
