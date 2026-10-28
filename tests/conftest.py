@@ -576,6 +576,9 @@ def sent_emails(app) -> list[tuple[str, str]]:
         def send_email_change_notice(self, to: str, new_email: str) -> None:
             pass
 
+        def send_password_reset_link(self, to: str, url: str) -> None:
+            pass
+
     sender = RecordingSender()
     app.dependency_overrides[get_email_sender] = lambda: sender
     yield sent
@@ -589,6 +592,7 @@ class Mailbox:
         self.codes: list[tuple[str, str]] = []
         self.links: list[tuple[str, str]] = []
         self.notices: list[tuple[str, str]] = []
+        self.reset_links: list[tuple[str, str]] = []
 
     def send_verification_code(self, to: str, code: str) -> None:
         self.codes.append((to, code))
@@ -599,9 +603,12 @@ class Mailbox:
     def send_email_change_notice(self, to: str, new_email: str) -> None:
         self.notices.append((to, new_email))
 
+    def send_password_reset_link(self, to: str, url: str) -> None:
+        self.reset_links.append((to, url))
+
     @property
     def is_empty(self) -> bool:
-        return not (self.codes or self.links or self.notices)
+        return not (self.codes or self.links or self.notices or self.reset_links)
 
 
 @pytest.fixture
