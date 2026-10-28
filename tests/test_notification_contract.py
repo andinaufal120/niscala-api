@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from conftest import NOT_A_UUID, NOTIFICATION_ID, OpenApiDoc, nullable_inner
+from notification_support import assert_error, settings_items, upload_receipt
 
 HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
 
@@ -129,12 +130,7 @@ READ_ALL_URL = "/notifications/read-all"
 SETTINGS_URL = "/me/notification-settings"
 PUSH_TOKEN_URL = "/me/push-token"
 
-VALID_SETTINGS_INPUT = {
-    "items": [
-        {"category": "newComplaint", "pushEnabled": True, "urgencyScope": "highOnly"},
-        {"category": "receiptUpload", "pushEnabled": False, "urgencyScope": None},
-    ]
-}
+VALID_SETTINGS_INPUT = {"items": settings_items("owner", off=("receiptUpload",))}
 VALID_PUSH_TOKEN_INPUT = {"token": "fcm-device-token-123"}
 
 
@@ -531,45 +527,59 @@ def test_push_token_is_string_of_1_to_1024_characters(openapi: OpenApiDoc) -> No
     assert schema["maxLength"] == 1024
 
 
-# Runtime: valid requests reach the not-implemented stub
+# Runtime: valid requests reach the implemented operations
+
+
+@pytest.fixture
+def owner_notification_id(client, scene, make_rent_bill) -> str:
+    """The id of a notification waiting in the owner's list."""
+    bill = make_rent_bill(scene.tenant.lease)
+    assert upload_receipt(client, scene.tenant_in.headers, bill).status_code == 200
+    response = client.get(NOTIFICATIONS_URL, headers=scene.owner_in.headers)
+    return response.json()["items"][0]["id"]
 
 
 @pytest.mark.parametrize(
-    ("method", "url", "body"),
+    ("method", "url", "body", "status"),
     [
-        pytest.param("get", NOTIFICATIONS_URL, None, id="list"),
-        pytest.param("post", MARK_READ_URL, None, id="mark_read"),
-        pytest.param("post", READ_ALL_URL, None, id="mark_all_read"),
-        pytest.param("get", SETTINGS_URL, None, id="get_settings"),
-        pytest.param("put", SETTINGS_URL, VALID_SETTINGS_INPUT, id="update_settings"),
-        pytest.param("put", PUSH_TOKEN_URL, VALID_PUSH_TOKEN_INPUT, id="push_token"),
+        pytest.param("get", NOTIFICATIONS_URL, None, 200, id="list"),
+        pytest.param("post", READ_ALL_URL, None, 204, id="mark_all_read"),
+        pytest.param("get", SETTINGS_URL, None, 200, id="get_settings"),
+        pytest.param(
+            "put", SETTINGS_URL, VALID_SETTINGS_INPUT, 200, id="update_settings"
+        ),
+        pytest.param(
+            "put", PUSH_TOKEN_URL, VALID_PUSH_TOKEN_INPUT, 204, id="push_token"
+        ),
     ],
 )
-def test_valid_notification_request_responds_not_implemented(
-    client, method: str, url: str, body: dict[str, Any] | None
+def test_valid_notification_request_succeeds_for_a_signed_in_user(
+    client, scene, method: str, url: str, body: dict[str, Any] | None, status: int
 ) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 501
+    response = client.request(method, url, json=body, headers=scene.owner_in.headers)
+    assert response.status_code == status
 
 
-@pytest.mark.parametrize("category", NOTIFICATION_CATEGORIES)
-def test_every_notification_category_is_accepted_in_settings(
-    client, category: str
+def test_marking_an_existing_notification_read_succeeds(
+    client, scene, owner_notification_id: str
 ) -> None:
-    body = {
-        "items": [{"category": category, "pushEnabled": True, "urgencyScope": None}]
-    }
-    assert client.put(SETTINGS_URL, json=body).status_code == 501
+    response = client.post(
+        f"/notifications/{owner_notification_id}/read", headers=scene.owner_in.headers
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == owner_notification_id
 
 
-@pytest.mark.parametrize("scope", [*URGENCY_SCOPES, None])
-def test_every_urgency_scope_is_accepted_in_settings(client, scope: str | None) -> None:
-    body = {
-        "items": [
-            {"category": "newComplaint", "pushEnabled": True, "urgencyScope": scope}
-        ]
-    }
-    assert client.put(SETTINGS_URL, json=body).status_code == 501
+def test_marking_an_unknown_notification_read_is_not_found(client, scene) -> None:
+    response = client.post(MARK_READ_URL, headers=scene.owner_in.headers)
+    assert_error(response, 404, "NOTIFICATION_NOT_FOUND")
+
+
+@pytest.mark.parametrize("scope", URGENCY_SCOPES)
+def test_every_urgency_scope_is_accepted_in_settings(client, scene, scope: str) -> None:
+    body = {"items": settings_items("owner", scope=scope)}
+    response = client.put(SETTINGS_URL, json=body, headers=scene.owner_in.headers)
+    assert response.status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -584,9 +594,17 @@ def test_every_urgency_scope_is_accepted_in_settings(client, scope: str | None) 
     ],
 )
 def test_push_token_of_1_to_1024_characters_after_trimming_is_accepted(
-    client, token: str
+    client, scene, token: str
 ) -> None:
-    assert client.put(PUSH_TOKEN_URL, json={"token": token}).status_code == 501
+    response = client.put(
+        PUSH_TOKEN_URL, json={"token": token}, headers=scene.owner_in.headers
+    )
+    assert response.status_code == 204
+
+
+def assert_validation_failed(response) -> None:
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "VALIDATION_FAILED"
 
 
 # Runtime: invalid requests are rejected with a validation error
@@ -601,9 +619,10 @@ def test_push_token_of_1_to_1024_characters_after_trimming_is_accepted(
     ],
 )
 def test_mark_notification_read_with_malformed_id_is_rejected_with_validation_error(
-    client, method: str, url: str
+    client, scene, method: str, url: str
 ) -> None:
-    assert client.request(method, url).status_code == 422
+    response = client.request(method, url, headers=scene.owner_in.headers)
+    assert_validation_failed(response)
 
 
 @pytest.mark.parametrize(
@@ -622,17 +641,24 @@ def test_mark_notification_read_with_malformed_id_is_rejected_with_validation_er
     ],
 )
 def test_invalid_push_token_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, scene, body: dict[str, Any]
 ) -> None:
-    assert client.put(PUSH_TOKEN_URL, json=body).status_code == 422
+    response = client.put(PUSH_TOKEN_URL, json=body, headers=scene.owner_in.headers)
+    assert_validation_failed(response)
 
 
-def test_push_token_without_body_is_rejected_with_validation_error(client) -> None:
-    assert client.put(PUSH_TOKEN_URL).status_code == 422
+def test_push_token_without_body_is_rejected_with_validation_error(
+    client, scene
+) -> None:
+    response = client.put(PUSH_TOKEN_URL, headers=scene.owner_in.headers)
+    assert_validation_failed(response)
 
 
-def test_settings_update_without_body_is_rejected_with_validation_error(client) -> None:
-    assert client.put(SETTINGS_URL).status_code == 422
+def test_settings_update_without_body_is_rejected_with_validation_error(
+    client, scene
+) -> None:
+    response = client.put(SETTINGS_URL, headers=scene.owner_in.headers)
+    assert_validation_failed(response)
 
 
 @pytest.mark.parametrize(
@@ -743,6 +769,7 @@ def test_settings_update_without_body_is_rejected_with_validation_error(client) 
     ],
 )
 def test_invalid_notification_settings_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, scene, body: dict[str, Any]
 ) -> None:
-    assert client.put(SETTINGS_URL, json=body).status_code == 422
+    response = client.put(SETTINGS_URL, json=body, headers=scene.owner_in.headers)
+    assert_validation_failed(response)

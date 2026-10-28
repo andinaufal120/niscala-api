@@ -1,6 +1,7 @@
 """Pushing a notification to the devices of its recipients."""
 
 from datetime import UTC, datetime, timedelta
+from itertools import count
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +27,7 @@ from notification_support import (
     upload_receipt,
     verify,
 )
+from rent_bill_support import days_ago
 
 DEVICE = {"name": "Pixel 8", "platform": "Android 14"}
 PASSWORD = "T7#vq9-lorem-ipsum"
@@ -109,10 +111,17 @@ def run_event(
             },
         )
 
+    runs = count()
+
+    def period() -> dict:
+        """Each run bills a period of its own, as a lease has one bill per period."""
+        number = next(runs)
+        return {} if number == 0 else {"period_start": days_ago(45 + 40 * number)}
+
     def run(name: str) -> None:
         lease = scene.tenant.lease
         if name == "paymentStatusChanged":
-            bill = awaiting_bill(make_rent_bill, lease)
+            bill = awaiting_bill(make_rent_bill, lease, **period())
             response = verify(client, scene.owner_in.headers, bill)
         elif name == "complaintStatusChanged":
             complaint = make_complaint(scene.tenant, scene.room)
@@ -121,10 +130,12 @@ def run_event(
             response = submit_complaint(client, scene.tenant_in.headers)
         elif name == "receiptUploaded":
             response = upload_receipt(
-                client, scene.tenant_in.headers, make_rent_bill(lease)
+                client, scene.tenant_in.headers, make_rent_bill(lease, **period())
             )
         elif name == "cashPaymentRecorded":
-            response = pay_cash(client, scene.manager_in.headers, make_rent_bill(lease))
+            response = pay_cash(
+                client, scene.manager_in.headers, make_rent_bill(lease, **period())
+            )
         elif name == "tenantActivated":
             newcomer = make_tenant(
                 make_room(scene.prop, number="A2"),

@@ -74,6 +74,7 @@ class UserSession(Base):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reauthenticated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    push_token: Mapped[str | None]
 
 
 class UsedRefreshToken(Base):
