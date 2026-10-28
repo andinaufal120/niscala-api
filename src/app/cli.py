@@ -1,6 +1,7 @@
 """The `niscala-api` command line."""
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 from datetime import UTC
@@ -9,12 +10,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_engine
+from app.errors import ApiError
 from app.models import Lease
 from app.schemas.auth import UserRole
 from app.schemas.subscriptions import PaidPlanCode
 from app.services import demo, rent_bills
-from app.services.accounts import find_by_email
+from app.services.accounts import create_admin, find_by_email
 from app.services.subscriptions import grant_subscription
+
+PASSWORD_VARIABLE = "NISCALA_ADMIN_PASSWORD"
 
 
 def _positive_int(value: str) -> int:
@@ -43,7 +47,36 @@ def _build_parser() -> argparse.ArgumentParser:
         "seed-demo",
         help="create a demo owner, property, room and active tenant, for development",
     )
+    admin = commands.add_parser(
+        "create-admin",
+        help="create an admin account; the password comes from --password "
+        "or the NISCALA_ADMIN_PASSWORD environment variable",
+    )
+    admin.add_argument("email")
+    admin.add_argument("--name", required=True)
+    admin.add_argument("--password")
     return parser
+
+
+def _create_admin(email: str, name: str, password: str | None) -> int:
+    if password is None:
+        password = os.environ.get(PASSWORD_VARIABLE) or None
+    if password is None:
+        print(f"Pass --password or set {PASSWORD_VARIABLE}", file=sys.stderr)
+        return 1
+    with Session(get_engine()) as db:
+        try:
+            user = create_admin(db, name, email, password)
+        except ApiError as error:
+            print(
+                f"Cannot create admin {email.strip().lower()}: "
+                f"{error.message} ({error.code})",
+                file=sys.stderr,
+            )
+            return 1
+        db.commit()
+        print(f"Created admin {user.email}")
+        return 0
 
 
 def _grant_subscription(email: str, plan: PaidPlanCode, days: int) -> int:
@@ -103,6 +136,8 @@ def _seed_demo() -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run a command and return the process exit code."""
     args = _build_parser().parse_args(argv)
+    if args.command == "create-admin":
+        return _create_admin(args.email, args.name, args.password)
     if args.command == "seed-rent-bills":
         return _seed_rent_bills(args.email, args.months)
     if args.command == "seed-demo":
