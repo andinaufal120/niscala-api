@@ -864,7 +864,7 @@ def test_the_same_event_pushes_once_the_request_succeeds(
 ):
     complaint = make_complaint(scene.tenant, scene.room)
     response = change_complaint(client, scene.owner_in.headers, complaint.id)
-    assert response.status_code == 200
+    assert response.status_code == 201
     assert pushes.tokens() == [tokens["tenant_in"]]
 
 
