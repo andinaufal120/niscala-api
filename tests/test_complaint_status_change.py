@@ -166,7 +166,7 @@ def hook_calls(monkeypatch):
     """Record calls to the notification hook as `(complaint, change)` tuples."""
     calls: list[tuple] = []
 
-    def record(complaint, change):
+    def record(db, complaint, change):
         calls.append((complaint, change))
 
     monkeypatch.setattr(
@@ -783,7 +783,7 @@ def test_the_hook_is_not_called_for_an_inaccessible_or_invalid_request(
 def test_a_failing_hook_does_not_undo_the_change(
     client, database, owner_in, complaint, tenant_in, monkeypatch
 ):
-    def explode(complaint, change):
+    def explode(db, complaint, change):
         raise RuntimeError("push service down")
 
     monkeypatch.setattr(

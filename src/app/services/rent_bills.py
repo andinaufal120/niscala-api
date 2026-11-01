@@ -1,5 +1,6 @@
 """Listing and reading rent bills, and moving them through payment."""
 
+import logging
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
@@ -19,6 +20,7 @@ from app.models import Room as RoomRow
 from app.models import UserAccount
 from app.schemas.auth import UserRole
 from app.schemas.complaints import PropertyRef
+from app.schemas.notifications import NotificationRentBill, NotificationType
 from app.schemas.payments import (
     Payment,
     PaymentMethod,
@@ -32,7 +34,9 @@ from app.schemas.payments import (
 )
 from app.schemas.properties import BankAccount
 from app.schemas.tenants import BillingCycle, RoomRef
-from app.services import leases
+from app.services import leases, notifications
+
+logger = logging.getLogger(__name__)
 
 TIMEZONE = ZoneInfo("Asia/Jakarta")
 MAX_RECEIPT_BYTES = 5 * 1024 * 1024
@@ -54,8 +58,69 @@ def today_jakarta() -> date:
     return datetime.now(TIMEZONE).date()
 
 
-def notify_status_change(bill: RentBillRow, change: StatusChangeRow) -> None:
-    """Tell the tenant or management about a payment status change."""
+def notify_status_change(
+    db: Session, bill: RentBillRow, change: StatusChangeRow
+) -> None:
+    """Tell the tenant or management about a payment status change.
+
+    A receipt awaiting verification notifies the property's Owner and Managers.
+    Any other status notifies the bill's tenant, and a cash payment recorded by
+    a Manager (not a manual change) also notifies the Owner.
+    """
+    row = tuple(db.execute(_rows().where(RentBillRow.id == bill.id)).one())
+    summary = _summary(row, today_jakarta(), False)
+    status = PaymentStatus(change.status)
+    facts = NotificationRentBill(
+        rent_bill_id=bill.id,
+        period_start=bill.period_start,
+        period_end=bill.period_end,
+        due_date=bill.due_date,
+        amount=bill.amount,
+        payment_status=status,
+        payment_method=summary.payment.method,
+        reason=change.reason,
+        days_overdue=summary.days_overdue,
+    )
+    prop = summary.property
+    if status == PaymentStatus.AWAITING_VERIFICATION:
+        notifications.notify(
+            db,
+            notifications.management_of(db, prop.id),
+            NotificationType.RECEIPT_UPLOADED,
+            prop.id,
+            rent_bill=facts,
+            tenant=summary.tenant,
+            room=summary.room,
+            property_=prop,
+        )
+        return
+    notifications.notify(
+        db,
+        [summary.tenant.id],
+        NotificationType.PAYMENT_STATUS_CHANGED,
+        prop.id,
+        rent_bill=facts,
+        room=summary.room,
+        property_=prop,
+    )
+    actor = db.get(UserAccount, change.actor_id)
+    if (
+        status == PaymentStatus.PAID
+        and summary.payment.method == PaymentMethod.CASH
+        and not change.manual
+        and actor.role == UserRole.MANAGER
+    ):
+        notifications.notify(
+            db,
+            [row[3].owner_id],
+            NotificationType.CASH_PAYMENT_RECORDED,
+            prop.id,
+            rent_bill=facts,
+            tenant=summary.tenant,
+            room=summary.room,
+            property_=prop,
+            actor_name=actor.name,
+        )
 
 
 def regenerate_payment_pattern(lease_id: UUID) -> None:
@@ -255,7 +320,10 @@ def _record(
     )
     db.add(change)
     db.flush()
-    notify_status_change(bill, change)
+    try:
+        notify_status_change(db, bill, change)
+    except Exception:
+        logger.exception("Notifying about the status change of %s failed", bill.id)
     regenerate_payment_pattern(bill.lease_id)
 
 

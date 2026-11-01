@@ -34,7 +34,10 @@ from app.schemas.complaints import (
     ComplaintUrgency,
     PropertyRef,
 )
+from app.schemas.notifications import NotificationComplaint, NotificationType
+from app.schemas.payments import TenantRef
 from app.schemas.tenants import RoomRef
+from app.services import notifications
 from app.services.subscriptions import has_active_subscription
 
 logger = logging.getLogger(__name__)
@@ -193,6 +196,10 @@ def create_complaint(db: Session, tenant: UserAccount, description: str) -> Comp
         )
     )
     db.flush()
+    try:
+        notify_complaint_submitted(db, row)
+    except Exception:
+        logger.exception("Notifying about the complaint %s failed", row.id)
     return get_complaint(db, tenant, row.id)
 
 
@@ -224,10 +231,55 @@ def get_complaint(db: Session, user: UserAccount, complaint_id: UUID) -> Complai
     return _detail(db, tuple(row), {})
 
 
+def notify_complaint_submitted(db: Session, complaint: ComplaintRow) -> None:
+    """Tell the Owner and Managers of the property that a complaint was submitted."""
+    row = db.execute(_rows().where(ComplaintRow.id == complaint.id)).one()
+    _, room, prop, tenant = row
+    notifications.notify(
+        db,
+        notifications.management_of(db, prop.id),
+        NotificationType.COMPLAINT_SUBMITTED,
+        prop.id,
+        complaint=NotificationComplaint(
+            complaint_id=complaint.id,
+            description=complaint.description,
+            status=ComplaintStatus(complaint.status),
+            category=None,
+            urgency=None,
+            handling_note=None,
+        ),
+        tenant=TenantRef(id=tenant.id, name=tenant.name),
+        room=RoomRef(id=room.id, number=room.number),
+        property_=PropertyRef(id=prop.id, name=prop.name),
+    )
+
+
 def notify_complaint_status_change(
-    complaint: ComplaintRow, change: StatusChangeRow
+    db: Session, complaint: ComplaintRow, change: StatusChangeRow
 ) -> None:
-    """Tell the tenant that their complaint moved to a new status."""
+    """Tell the tenant that their complaint moved to a new status.
+
+    The notification carries the classification as the tenant sees it now.
+    """
+    row = tuple(db.execute(_rows().where(ComplaintRow.id == complaint.id)).one())
+    summary, _ = _view(db, row, {})
+    classification = summary.classification
+    notifications.notify(
+        db,
+        [complaint.tenant_id],
+        NotificationType.COMPLAINT_STATUS_CHANGED,
+        summary.property.id,
+        complaint=NotificationComplaint(
+            complaint_id=complaint.id,
+            description=complaint.description,
+            status=ComplaintStatus(change.status),
+            category=classification and classification.category,
+            urgency=classification and classification.urgency,
+            handling_note=change.handling_note,
+        ),
+        room=summary.room,
+        property_=summary.property,
+    )
 
 
 def change_complaint_status(
@@ -260,7 +312,7 @@ def change_complaint_status(
     db.expunge(complaint)
     db.expunge(change)
     try:
-        notify_complaint_status_change(complaint, change)
+        notify_complaint_status_change(db, complaint, change)
     except Exception:
         logger.exception("Notifying about the status change of %s failed", complaint.id)
     return _detail(db, tuple(row), {})
@@ -354,5 +406,10 @@ def classify_complaint(
                 row.ai_urgency = ComplaintUrgency(result.urgency).value
                 row.ai_suggested_action = result.suggested_action
             db.commit()
+            if (
+                result is not None
+                and ComplaintUrgency(result.urgency) == ComplaintUrgency.HIGH
+            ):
+                notifications.push_high_urgency_complaint(db, complaint_id)
     except Exception:
         logger.exception("Storing the classification of %s failed", complaint_id)

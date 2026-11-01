@@ -95,8 +95,8 @@ class HookCalls:
         self.records: list = []
         self.error = error
 
-    def __call__(self, *args, **kwargs) -> None:
-        self.records.append(args[0] if args else kwargs["record"])
+    def __call__(self, db, record) -> None:
+        self.records.append(record)
         if self.error is not None:
             raise self.error
 

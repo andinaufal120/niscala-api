@@ -3,6 +3,7 @@
 import hashlib
 import logging
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,6 +22,7 @@ from app.models import (
     UserAccount,
 )
 from app.schemas.auth import Account, AuthSession
+from app.schemas.complaints import PropertyRef
 from app.schemas.invitations import (
     ActiveLeaseSummary,
     InvitationAcceptancePreview,
@@ -31,7 +33,11 @@ from app.schemas.invitations import (
     InvitationProperty,
     InvitationRole,
 )
+from app.schemas.notifications import NotificationType
+from app.schemas.payments import TenantRef
 from app.schemas.sessions import LoginMethod
+from app.schemas.tenants import RoomRef
+from app.services import notifications
 from app.services.accounts import find_by_email
 from app.services.email_verification import send_code
 from app.services.passwords import check_password_allowed, hash_password
@@ -43,21 +49,60 @@ logger = logging.getLogger(__name__)
 MIN_CONTACTS = 2
 
 
-def notify_manager_activated(record: Manager) -> None:
-    """Tell interested parties that a Manager record has been activated.
+def notify_manager_activated(db: Session, record: Manager) -> None:
+    """Tell the inviting Owner that a Manager record has been activated.
 
-    Called once after an activation or an acceptance has succeeded. A failure
-    here is logged and never undoes the activation.
+    Called once after an activation or an acceptance has succeeded. The
+    notification names the account now behind the record and has no property.
     """
+    manager = db.get(UserAccount, record.user_id)
+    notifications.notify(
+        db,
+        [record.owner_id],
+        NotificationType.MANAGER_ACTIVATED,
+        None,
+        actor_name=manager.name,
+    )
+
+
+def notify_tenant_activated(db: Session, tenant_user_id: UUID) -> None:
+    """Tell the Owner and Managers of the Tenant's property that they activated."""
+    row = db.execute(
+        select(UserAccount, Room, Property)
+        .select_from(Lease)
+        .join(UserAccount, UserAccount.id == Lease.tenant_id)
+        .join(Room, Room.id == Lease.room_id)
+        .join(Property, Property.id == Room.property_id)
+        .where(Lease.tenant_id == tenant_user_id, Lease.ended_at.is_(None))
+    ).first()
+    if row is None:
+        return
+    user, room, prop = row
+    notifications.notify(
+        db,
+        notifications.management_of(db, prop.id),
+        NotificationType.TENANT_ACTIVATED,
+        prop.id,
+        tenant=TenantRef(id=user.id, name=user.name),
+        room=RoomRef(id=room.id, number=room.number),
+        property_=PropertyRef(id=prop.id, name=prop.name),
+    )
 
 
 def _notify_manager_activated(db: Session, record: Manager) -> None:
     # Detached, the record keeps its loaded attributes after the request commits.
     db.expunge(record)
     try:
-        notify_manager_activated(record)
+        notify_manager_activated(db, record)
     except Exception:
         logger.exception("Manager activation notification failed")
+
+
+def _notify_tenant_activated(db: Session, tenant_user_id: UUID) -> None:
+    try:
+        notify_tenant_activated(db, tenant_user_id)
+    except Exception:
+        logger.exception("Tenant activation notification failed")
 
 
 def _link_status(
@@ -243,9 +288,12 @@ def activate_with_password(
     db.flush()
     tokens = start_session(db, user, data.device, LoginMethod.PASSWORD)
     send_code(db, user, sender)
+    session = AuthSession(**tokens.model_dump(), account=Account.from_user(user))
     if isinstance(found, _ManagerLink):
         _notify_manager_activated(db, found.record)
-    return AuthSession(**tokens.model_dump(), account=Account.from_user(user))
+    else:
+        _notify_tenant_activated(db, user.id)
+    return session
 
 
 def _active_lease(db: Session, user: UserAccount) -> ActiveLeaseSummary | None:

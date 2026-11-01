@@ -622,6 +622,102 @@ def mailbox(app) -> Mailbox:
     app.dependency_overrides.pop(get_email_sender, None)
 
 
+@dataclass(frozen=True)
+class Site:
+    """A property of an owner with one room, its signed-in tenant and a current bill."""
+
+    prop: Any
+    room: Any
+    tenant: StoredTenant
+    tenant_in: SignedIn
+    bill: Any
+
+
+@pytest.fixture
+def make_site(
+    frozen_today,
+    database,
+    make_property,
+    make_room,
+    make_verified_tenant,
+    make_rent_bill,
+    assign_manager,
+    sign_in,
+) -> Callable[..., Site]:
+    """Commit one more property with a bank account, a room, a tenant and a bill.
+
+    Managers given in `managers` are assigned to the property.
+    """
+    from sqlalchemy.orm import Session
+
+    from app.models import Property
+
+    def build(
+        owner,
+        *,
+        name: str = "Kos Anggrek",
+        number: str = "B1",
+        tenant_name: str = "Sari Tenant",
+        managers=(),
+    ) -> Site:
+        prop = make_property(owner, name=name)
+        with Session(database) as db:
+            row = db.get(Property, prop.id)
+            row.bank_name = BANK_ACCOUNT["bankName"]
+            row.bank_account_number = BANK_ACCOUNT["accountNumber"]
+            row.bank_account_holder_name = BANK_ACCOUNT["accountHolderName"]
+            db.commit()
+        for manager in managers:
+            assign_manager(manager, prop)
+        room = make_room(prop, number=number)
+        tenant = make_verified_tenant(room, name=tenant_name)
+        return Site(
+            prop=prop,
+            room=room,
+            tenant=tenant,
+            tenant_in=sign_in(tenant.user),
+            bill=make_rent_bill(tenant.lease),
+        )
+
+    return build
+
+
+class PushOutbox:
+    """A push sender that records every send and can be told to fail.
+
+    `attempts` holds every `(token, notification)` the application tried to
+    send, `sent` only those that did not fail. `fail_tokens` makes sends to
+    those tokens raise; `fail_all` makes every send raise.
+    """
+
+    def __init__(self) -> None:
+        self.attempts: list[tuple[str, Any]] = []
+        self.sent: list[tuple[str, Any]] = []
+        self.fail_tokens: set[str] = set()
+        self.fail_all = False
+
+    def send(self, token: str, notification: Any) -> None:
+        self.attempts.append((token, notification))
+        if self.fail_all or token in self.fail_tokens:
+            raise RuntimeError("push service down")
+        self.sent.append((token, notification))
+
+    def tokens(self) -> list[str]:
+        return [token for token, _ in self.sent]
+
+    def to(self, token: str) -> list[Any]:
+        """The notifications sent to one token."""
+        return [n for t, n in self.sent if t == token]
+
+
+@pytest.fixture
+def pushes(monkeypatch) -> PushOutbox:
+    """Capture the pushes the application sends during one test."""
+    outbox = PushOutbox()
+    monkeypatch.setattr("app.push.get_push_sender", lambda: outbox)
+    return outbox
+
+
 @pytest.fixture
 def admin(make_user):
     """The Admin who makes the calls in the user-account tests."""
