@@ -16,7 +16,7 @@ niscala-api/
 │   ├── email.py       # EmailSender protocol; the console sender only logs the code
 │   ├── ai/            # ComplaintClassifier protocol, the Gemini classifier and the dependency that supplies it
 │   ├── plans.py       # Plan limits per subscription plan, as data
-│   ├── cli.py         # `niscala-api` command: grant-subscription, seed-rent-bills and seed-demo (development tools)
+│   ├── cli.py         # `niscala-api` command: grant-subscription, seed-rent-bills, seed-demo and create-admin (development tools)
 │   ├── access.py      # require_roles and the property access queries (owner: own, manager: assigned)
 │   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints, rent bills, dashboard, managers, demo data)
 │   ├── routers/       # One module per resource: parse the request, return a schema
