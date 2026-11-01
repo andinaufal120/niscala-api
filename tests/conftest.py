@@ -1195,6 +1195,18 @@ def fake_classifier(app) -> FakeClassifier:
     app.dependency_overrides.pop(get_complaint_classifier, None)
 
 
+@pytest.fixture
+def fake_summarizer(app) -> Any:
+    """Install a `FakeSummarizer` as the payment pattern summarizer for one test."""
+    from app.ai.summarizer import get_payment_pattern_summarizer
+    from payment_summary_support import FakeSummarizer
+
+    fake = FakeSummarizer()
+    app.dependency_overrides[get_payment_pattern_summarizer] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(get_payment_pattern_summarizer, None)
+
+
 @pytest.fixture(scope="session")
 def app():
     from app.main import app as fastapi_app
