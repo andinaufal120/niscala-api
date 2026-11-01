@@ -1,14 +1,13 @@
 """Endpoints under /properties: properties and their rooms, facility suggestions, tenants, payment overview and payment patterns.
 
-The property, room, facility-suggestion, tenant and payment overview endpoints
-are implemented; payment patterns is declared in the contract and answers 501.
+All of these endpoints are implemented.
 """
 
 import datetime as dt
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Response, status
 
 from app.access import has_recent_reauthentication, require_roles
 from app.db import SessionDep
@@ -18,7 +17,7 @@ from app.schemas.properties import Property, PropertyInput, PropertyList
 from app.schemas.rooms import FacilitySuggestionList, Room, RoomInput, RoomList
 from app.schemas.tenants import NewTenantInput, Tenant, TenantList
 from app.security import CurrentUser
-from app.services import properties, rent_bills, rooms, tenants
+from app.services import payment_patterns, properties, rent_bills, rooms, tenants
 
 router = APIRouter(prefix="/properties")
 
@@ -125,6 +124,8 @@ def get_payment_overview(
 
 
 @router.get("/{propertyId}/payment-patterns", tags=["rent-bills"])
-def get_payment_patterns(property_id: PropertyId) -> PaymentPatternList:
+def get_payment_patterns(
+    property_id: PropertyId, caller: OwnerOrManager, db: Db
+) -> PaymentPatternList:
     """Show each tenant's payment pattern over their most recent bills."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return payment_patterns.list_payment_patterns(db, caller.user, property_id)
