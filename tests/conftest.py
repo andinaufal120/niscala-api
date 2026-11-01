@@ -186,6 +186,8 @@ _user_numbers = count(1)
 @pytest.fixture
 def make_user(database) -> Callable[..., Any]:
     """Create and commit a `UserAccount`."""
+    from datetime import UTC, datetime
+
     from sqlalchemy.orm import Session
 
     from app.models import UserAccount
@@ -198,9 +200,16 @@ def make_user(database) -> Callable[..., Any]:
         password_hash: str | None = None,
         role: UserRole = UserRole.OWNER,
         email_verified: bool = True,
+        status: str | None = None,
+        deleted: bool = False,
     ) -> UserAccount:
         if email is None:
             email = f"user{next(_user_numbers)}@example.com"
+        extra: dict[str, Any] = {}
+        if status is not None:
+            extra["status"] = status
+        if deleted:
+            extra["deleted_at"] = datetime.now(UTC)
         with Session(database, expire_on_commit=False) as session:
             user = UserAccount(
                 name=name,
@@ -208,6 +217,7 @@ def make_user(database) -> Callable[..., Any]:
                 password_hash=password_hash,
                 role=role,
                 email_verified=email_verified,
+                **extra,
             )
             session.add(user)
             session.commit()
@@ -560,10 +570,62 @@ def sent_emails(app) -> list[tuple[str, str]]:
         def send_verification_code(self, to: str, code: str) -> None:
             sent.append((to, code))
 
+        def send_email_change_link(self, to: str, url: str) -> None:
+            pass
+
+        def send_email_change_notice(self, to: str, new_email: str) -> None:
+            pass
+
     sender = RecordingSender()
     app.dependency_overrides[get_email_sender] = lambda: sender
     yield sent
     app.dependency_overrides.pop(get_email_sender, None)
+
+
+class Mailbox:
+    """An email sender that records every message it is asked to send."""
+
+    def __init__(self) -> None:
+        self.codes: list[tuple[str, str]] = []
+        self.links: list[tuple[str, str]] = []
+        self.notices: list[tuple[str, str]] = []
+
+    def send_verification_code(self, to: str, code: str) -> None:
+        self.codes.append((to, code))
+
+    def send_email_change_link(self, to: str, url: str) -> None:
+        self.links.append((to, url))
+
+    def send_email_change_notice(self, to: str, new_email: str) -> None:
+        self.notices.append((to, new_email))
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.codes or self.links or self.notices)
+
+
+@pytest.fixture
+def mailbox(app) -> Mailbox:
+    """Replace the email sender with a `Mailbox` for one test."""
+    from app.email import get_email_sender
+
+    box = Mailbox()
+    app.dependency_overrides[get_email_sender] = lambda: box
+    yield box
+    app.dependency_overrides.pop(get_email_sender, None)
+
+
+@pytest.fixture
+def admin(make_user):
+    """The Admin who makes the calls in the user-account tests."""
+    from app.schemas.auth import UserRole
+
+    return make_user(name="Ade Admin", role=UserRole.ADMIN, email="ade@example.com")
+
+
+@pytest.fixture
+def admin_in(admin, sign_in) -> SignedIn:
+    return sign_in(admin)
 
 
 @pytest.fixture

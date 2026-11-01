@@ -18,7 +18,7 @@ from app.models import Lease as LeaseRow
 from app.models import Property as PropertyRow
 from app.models import Room as RoomRow
 from app.models import Tenant as TenantRow
-from app.models import UserAccount, UserSession
+from app.models import UserAccount
 from app.schemas.auth import UserRole
 from app.schemas.tenants import (
     BillingCycle,
@@ -440,13 +440,7 @@ def delete_tenant(db: Session, user: UserAccount, tenant_id: UUID) -> None:
         )
         .values(invalidated_at=now)
     )
-    open_sessions = db.scalars(
-        select(UserSession).where(
-            UserSession.user_id == tenant_id, UserSession.revoked_at.is_(None)
-        )
-    ).all()
-    for session in open_sessions:
-        sessions.end_session(db, session)
+    sessions.end_all_sessions(db, tenant_id)
     db.flush()
 
 

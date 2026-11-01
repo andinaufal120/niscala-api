@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.errors import ApiError
 from app.models import Invitation as InvitationRow
 from app.models import Manager as ManagerRow
-from app.models import ManagerAssignment, UserAccount, UserSession
+from app.models import ManagerAssignment, UserAccount
 from app.models import Property as PropertyRow
 from app.schemas.auth import UserRole
 from app.schemas.managers import (
@@ -344,13 +344,7 @@ def delete_manager(db: Session, owner: UserAccount, manager_id: UUID) -> None:
         .limit(1)
     ).first()
     if other_live_record is None:
-        open_sessions = db.scalars(
-            select(UserSession).where(
-                UserSession.user_id == user.id, UserSession.revoked_at.is_(None)
-            )
-        ).all()
-        for session in open_sessions:
-            sessions.end_session(db, session)
+        sessions.end_all_sessions(db, user.id)
     db.flush()
 
 

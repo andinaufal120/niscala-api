@@ -70,6 +70,16 @@ def _occupied_counts(db: Session, property_ids: Iterable[UUID]) -> dict[UUID, in
     return {property_id: count for property_id, count in rows}
 
 
+def count_active_leases(db: Session, owner_id: UUID) -> int:
+    """Count the active leases in the live rooms of the owner's live properties."""
+    property_ids = db.scalars(
+        select(Property.id).where(
+            Property.owner_id == owner_id, Property.deleted_at.is_(None)
+        )
+    ).all()
+    return sum(_occupied_counts(db, property_ids).values())
+
+
 def _detail(
     row: Property, managers: list[ManagerRef], room_count: int, occupied: int
 ) -> PropertyDetail:
@@ -202,6 +212,14 @@ def delete_property(db: Session, owner: UserAccount, property_id: UUID) -> None:
     row = get_accessible_property(db, owner, property_id)
     if _occupied_counts(db, [row.id]).get(row.id, 0) > 0:
         raise ApiError(409, "PROPERTY_HAS_ACTIVE_LEASE")
+    remove_property(db, row)
+
+
+def remove_property(db: Session, row: Property) -> None:
+    """Soft-delete a property and its rooms, and remove its manager assignments.
+
+    Does not check for active leases.
+    """
     now = datetime.now(UTC)
     row.deleted_at = now
     db.execute(

@@ -13,12 +13,12 @@ niscala-api/
 │   ├── db.py          # SQLAlchemy engine and the per-request session dependency
 │   ├── models/        # SQLAlchemy tables: user_accounts, sessions, email_verification_codes (declarative Base with a constraint naming convention)
 │   ├── security.py    # bearerAuth scheme and the get_current_user dependency
-│   ├── email.py       # EmailSender protocol; the console sender only logs the code
+│   ├── email.py       # EmailSender protocol; the console sender only logs codes and links
 │   ├── ai/            # ComplaintClassifier protocol, the Gemini classifier and the dependency that supplies it
 │   ├── plans.py       # Plan limits per subscription plan, as data
 │   ├── cli.py         # `niscala-api` command: grant-subscription, seed-rent-bills, seed-demo and create-admin (development tools)
 │   ├── access.py      # require_roles and the property access queries (owner: own, manager: assigned)
-│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints, rent bills, dashboard, managers, demo data)
+│   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints, rent bills, dashboard, managers, user accounts, demo data)
 │   ├── routers/       # One module per resource: parse the request, return a schema
 │   └── schemas/       # Pydantic request and response models; they define the OpenAPI contract
 ├── data/              # common-passwords.txt: the 100,000 most used passwords (SecLists, MIT license)
@@ -64,7 +64,7 @@ Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, A
 
 ## 4. Data Stores
 
-PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints` and `complaint_status_changes`. Facility tags are a text-array column on the room.
+PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints`, `complaint_status_changes` and `email_change_requests`. Facility tags are a text-array column on the room.
 
 ## 5. External Integrations / APIs
 

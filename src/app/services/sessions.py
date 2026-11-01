@@ -84,6 +84,17 @@ def end_session(db: Session, session: UserSession) -> None:
     db.flush()
 
 
+def end_all_sessions(db: Session, user_id: UUID) -> None:
+    """Revoke every session of the user that is not revoked yet."""
+    open_sessions = db.scalars(
+        select(UserSession).where(
+            UserSession.user_id == user_id, UserSession.revoked_at.is_(None)
+        )
+    ).all()
+    for session in open_sessions:
+        end_session(db, session)
+
+
 def _active_sessions_of(user_id: UUID) -> Select[tuple[UserSession]]:
     """Select the user's sessions that are not revoked, idle too long or too old."""
     now = datetime.now(UTC)

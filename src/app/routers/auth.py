@@ -25,6 +25,7 @@ from app.schemas.auth import (
 )
 from app.schemas.sessions import LoginMethod
 from app.security import CurrentUser, bearer_scheme, get_current_user
+from app.services import user_accounts
 from app.services.accounts import authenticate, create_owner
 from app.services.email_verification import RESEND_INTERVAL, confirm_code, send_code
 from app.services.login_attempts import (
@@ -130,6 +131,16 @@ def confirm_email(
     _require_unverified(current.user)
     confirm_code(db, current.user, body.code)
     return Account.from_user(current.user)
+
+
+@router.post(
+    "/email-changes",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def confirm_email_change(body: TokenInput, db: SessionDep) -> None:
+    """Make the email of an emailed change link the account's login email."""
+    user_accounts.confirm_email_change(db, body.token)
 
 
 @router.post(
