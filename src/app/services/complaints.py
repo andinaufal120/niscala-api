@@ -405,11 +405,11 @@ def classify_complaint(
                 row.ai_category = result.category
                 row.ai_urgency = ComplaintUrgency(result.urgency).value
                 row.ai_suggested_action = result.suggested_action
-            db.commit()
             if (
                 result is not None
                 and ComplaintUrgency(result.urgency) == ComplaintUrgency.HIGH
             ):
                 notifications.push_high_urgency_complaint(db, complaint_id)
+            db.commit()
     except Exception:
         logger.exception("Storing the classification of %s failed", complaint_id)
