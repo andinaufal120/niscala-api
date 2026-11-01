@@ -138,6 +138,31 @@ def test_an_unusable_gemini_outcome_leaves_the_complaint_awaiting(
     assert detail["status"] == "new"
 
 
+def test_a_suggested_action_with_a_link_leaves_the_complaint_awaiting(
+    client, database, headers, gemini
+):
+    gemini(
+        text=json.dumps(
+            {
+                "category": "Listrik",
+                "urgency": "high",
+                "suggestedAction": "Hubungi https://evil.example/teknisi",
+            }
+        )
+    )
+    response = submit(client, headers)
+    assert response.status_code == 201, response.text
+    row = stored(database, response.json()["id"])
+    assert row.classification_state == "awaitingClassification"
+    assert row.ai_category is None
+    assert row.ai_urgency is None
+    assert row.ai_suggested_action is None
+    detail = client.get(f"{COMPLAINTS}/{row.id}", headers=headers).json()
+    assert detail["classificationState"] == "awaitingClassification"
+    assert detail["classification"] is None
+    assert "evil.example" not in json.dumps(detail)
+
+
 def test_without_an_api_key_the_complaint_is_left_awaiting(
     client, database, headers, monkeypatch
 ):

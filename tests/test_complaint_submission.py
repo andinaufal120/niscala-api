@@ -199,16 +199,45 @@ def test_a_rejected_description_saves_nothing(client, database, tenant_in):
     [
         "1234567890",
         "   1234567890   ",
-        "a" * 5000,
+        "a" * 2000,
         "Pintu kamar rusak.\nEngsel lepas.",
     ],
-    ids=["exactly_ten", "ten_trimmed", "five_thousand", "multiline"],
+    ids=["exactly_ten", "ten_trimmed", "two_thousand", "multiline"],
 )
 def test_a_description_of_enough_characters_is_accepted(
     client, database, tenant_in, description
 ):
     response = submit(client, tenant_in.headers, description)
     assert response.status_code == 201, response.text
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "a" * 2001,
+        "a" * 5000,
+        "  " + "a" * 2001 + "  ",
+    ],
+    ids=["two_thousand_and_one", "five_thousand", "too_long_padded"],
+)
+def test_a_too_long_description_is_rejected_on_its_field(
+    client, database, tenant_in, description
+):
+    response = submit(client, tenant_in.headers, description)
+    assert_error(response, 422, "VALIDATION_FAILED", "description")
+
+
+def test_a_rejected_long_description_saves_nothing(client, database, tenant_in):
+    submit(client, tenant_in.headers, "a" * 2001)
+    assert stored_complaints(database) == []
+    assert stored_changes(database) == []
+
+
+def test_padding_does_not_count_toward_the_maximum_length(client, database, tenant_in):
+    padded = "  \n" + "a" * 2000 + "\t  "
+    response = submit(client, tenant_in.headers, padded)
+    assert response.status_code == 201, response.text
+    assert response.json()["description"] == "a" * 2000
 
 
 def test_the_description_is_stored_and_returned_trimmed(client, database, tenant_in):
