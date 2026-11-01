@@ -9,9 +9,14 @@ from google import genai
 from google.genai import types
 
 from app.ai.classifier import ClassificationUnavailable
+from app.ai.summarizer import SummaryUnavailable
 from app.schemas.complaints import AiComplaintClassification, ComplaintUrgency
+from app.schemas.payments import PaymentStatus
+from app.services.payment_patterns import CountedBill, PaymentFacts
 
 TIMEOUT_MS = 10000
+
+MAX_SUMMARY_LENGTH = 500
 
 MAX_SUGGESTED_ACTION_LENGTH = 300
 
@@ -133,3 +138,94 @@ class GeminiComplaintClassifier:
         except Exception as error:
             raise ClassificationUnavailable("The Gemini request failed.") from error
         return _parse(text, categories)
+
+
+_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}},
+    "required": ["summary"],
+}
+
+_SUMMARY_INSTRUCTION = (
+    "You summarize how a boarding house tenant pays rent, for the property "
+    "manager.\n"
+    "The user message is JSON with payment facts and the counted bills "
+    "(due date, status and days late).\n"
+    "Write one or two sentences in Indonesian about the payment pattern.\n"
+    "Use only the given numbers and dates. Include no links or HTML."
+)
+
+_FORBIDDEN_IN_SUMMARY = (
+    (re.compile(r"://|www\.", re.IGNORECASE), "The summary has a link."),
+    (re.compile(r"<[A-Za-z/!]"), "The summary has an HTML tag."),
+)
+
+
+def _summary_contents(facts: PaymentFacts, bills: Sequence[CountedBill]) -> str:
+    return json.dumps(
+        {
+            "facts": {
+                "onTimeCount": facts.on_time_count,
+                "countedBillCount": facts.counted_bill_count,
+                "averageDaysLate": facts.average_days_late,
+                "arrears": facts.arrears,
+                "atRisk": facts.at_risk,
+            },
+            "countedBills": [
+                {
+                    "dueDate": bill.due_date.isoformat(),
+                    "status": PaymentStatus(bill.status).value,
+                    "daysLate": bill.days_late,
+                }
+                for bill in bills
+            ],
+        }
+    )
+
+
+def _parse_summary(text: str | None) -> str:
+    if text is None or not text.strip():
+        raise SummaryUnavailable("The model returned no text.")
+    try:
+        body = json.loads(text)
+    except ValueError as error:
+        raise SummaryUnavailable("The model answer is not JSON.") from error
+    if not isinstance(body, dict) or not isinstance(body.get("summary"), str):
+        raise SummaryUnavailable("The model answer has no summary text.")
+    summary = body["summary"].strip()
+    if not summary:
+        raise SummaryUnavailable("The model gave no summary.")
+    if len(summary) > MAX_SUMMARY_LENGTH:
+        raise SummaryUnavailable("The summary is too long.")
+    for pattern, message in _FORBIDDEN_IN_SUMMARY:
+        if pattern.search(summary):
+            raise SummaryUnavailable(message)
+    return summary
+
+
+class GeminiPaymentPatternSummarizer:
+    """Summarizes payment patterns with a single Gemini request and no retries."""
+
+    def __init__(self, client: genai.Client, model: str) -> None:
+        self._client = client
+        self._model = model
+
+    def summarize(self, facts: PaymentFacts, bills: Sequence[CountedBill]) -> str:
+        config = types.GenerateContentConfig(
+            system_instruction=_SUMMARY_INSTRUCTION,
+            response_mime_type="application/json",
+            response_json_schema=_SUMMARY_SCHEMA,
+            http_options=types.HttpOptions(timeout=TIMEOUT_MS),
+        )
+        try:
+            response = self._client.models.generate_content(
+                model=self._model,
+                contents=_summary_contents(facts, bills),
+                config=config,
+            )
+            text = response.text
+        except SummaryUnavailable:
+            raise
+        except Exception as error:
+            raise SummaryUnavailable("The Gemini request failed.") from error
+        return _parse_summary(text)
