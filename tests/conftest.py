@@ -1198,8 +1198,9 @@ def fake_classifier(app) -> FakeClassifier:
 @pytest.fixture
 def fake_summarizer(app) -> Any:
     """Install a `FakeSummarizer` as the payment pattern summarizer for one test."""
-    from app.ai.summarizer import get_payment_pattern_summarizer
     from payment_summary_support import FakeSummarizer
+
+    from app.ai.summarizer import get_payment_pattern_summarizer
 
     fake = FakeSummarizer()
     app.dependency_overrides[get_payment_pattern_summarizer] = lambda: fake

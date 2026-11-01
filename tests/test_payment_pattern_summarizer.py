@@ -121,9 +121,8 @@ def created_clients(monkeypatch):
 def test_a_configured_key_selects_the_gemini_summarizer(
     gemini_settings, created_clients
 ):
-    from app.ai.summarizer import get_payment_pattern_summarizer
-
     from app.ai.gemini import GeminiPaymentPatternSummarizer
+    from app.ai.summarizer import get_payment_pattern_summarizer
 
     gemini_settings("secret-key")
     assert isinstance(get_payment_pattern_summarizer(), GeminiPaymentPatternSummarizer)

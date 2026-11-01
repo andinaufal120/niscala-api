@@ -395,7 +395,6 @@ def test_a_failing_summarizer_does_not_fail_the_change(
     failure,
 ):
     from app.ai.summarizer import SummaryUnavailable
-
     from app.models import RentBill
 
     fake_summarizer.error = (
