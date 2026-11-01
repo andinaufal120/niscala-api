@@ -374,6 +374,22 @@ def test_complaint_input_description_is_string_of_at_least_ten_characters(
     assert schema["minLength"] == 10
 
 
+def test_complaint_input_description_is_at_most_two_thousand_characters(
+    openapi: OpenApiDoc,
+) -> None:
+    schema = openapi.component("ComplaintInput")["properties"]["description"]
+    assert schema["maxLength"] == 2000
+
+
+def test_too_long_complaint_description_is_rejected_with_validation_error(
+    client, tenant_headers: dict[str, str]
+) -> None:
+    response = client.post(
+        COMPLAINTS_URL, json={"description": "a" * 2001}, headers=tenant_headers
+    )
+    assert response.status_code == 422
+
+
 # ComplaintClassificationInput
 
 
