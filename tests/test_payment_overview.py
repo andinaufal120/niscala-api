@@ -456,7 +456,7 @@ def test_consecutive_bills_are_told_apart_by_the_date(
 ):
     first = make_rent_bill(lease, period_start=days_ago(60), period_end=days_ago(31))
     second = make_rent_bill(lease, period_start=days_ago(30), period_end=days_ago(1))
-    third = make_rent_bill(lease)
+    third = make_rent_bill(lease, period_start=today(), period_end=days_ahead(29))
     expected = {
         days_ago(45): first,
         days_ago(31): first,
