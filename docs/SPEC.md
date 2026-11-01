@@ -278,7 +278,7 @@ Notification types and who receives them:
 | `tenantActivated`      | Owner and Managers of the property         | A Tenant activates their account.                                                                                                                                             |
 | `managerActivated`     | Owner                                      | A Manager activates their account.                                                                                                                                            |
 
-`complaintSubmitted` is created when the complaint is saved, before classification, so it carries no category or urgency. Under `allUrgencies` it is pushed at once; under `highOnly` its push waits for the classification and is sent only when the urgency is *Tinggi*. `billIssued`, `dueDateReminder` and `billOverdue` are not built yet. Push is sent through a push sender that only writes to the server log until FCM is set up (U-23). Errors: `NOTIFICATION_NOT_FOUND` (404); settings whose categories are not exactly the caller's role's `NOTIFICATION_CATEGORIES_INVALID` (422, field `items`).
+`complaintSubmitted` is created when the complaint is saved, before classification, so it carries no category or urgency. Under `allUrgencies` it is pushed at once; under `highOnly` its push waits for the classification and is sent only when the urgency is *Tinggi*. `billIssued`, `dueDateReminder` and `billOverdue` are not built yet. Push is sent through Firebase Cloud Messaging once the event is saved, so an event that fails sends no push (message format: §9). A push is tried once, with no retries beyond the FCM client's own. A token that FCM reports as unregistered or invalid is removed from its session, and any other failure is logged. A server without FCM credentials only writes pushes to its log. Errors: `NOTIFICATION_NOT_FOUND` (404); settings whose categories are not exactly the caller's role's `NOTIFICATION_CATEGORIES_INVALID` (422, field `items`).
 
 A Manager sees only notifications about properties currently assigned to them; a removed assignment hides them immediately. Times are 07:00 in Asia/Jakarta (WIB) for every user. Retention: notifications are kept; there is no automatic deletion.
 
@@ -587,6 +587,18 @@ The response shape of `/health` is undecided (U-1).
 
 Property and room responses carry `editable` (false while view-only after a downgrade, §6 rule 10).
 
+### Push message
+
+*Shared with niscala-app.*
+
+<!-- shared:begin -->
+A push is a Firebase Cloud Messaging message to the device's FCM registration token (Android only), sent for a notification (UC-06) after the event that caused it is saved.
+
+- It has high priority and carries Android localization keys instead of text: `notification_<type>_title` and `notification_<type>_body`, where `<type>` is the notification type codeName (`notification_receiptUploaded_title`). The Android system shows the Indonesian text from the app's string resources, also when the app is not running. The API sends no title or body text.
+- Its data has two string entries: `notificationId` (the UUID of the notification in `GET /notifications`) and `type` (the notification type codeName). The app opens the notification with them.
+- The app MUST provide a title and a body string for every notification type, including the types the API does not create yet.
+<!-- shared:end -->
+
 ## 10. Undecided — do not implement by assumption
 
 When work touches one of these items, stop and raise it in Plan mode. Items that also affect the app are listed in its `docs/SPEC.md` §10 with the same ID.
@@ -601,7 +613,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-9   | The complete list of error codes, and declaring error responses in the OpenAPI document. (The response shape is decided, §6 rule 2.) | §6, §7, all endpoints |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 | U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
-| U-23  | Push delivery through Firebase Cloud Messaging: retry policy and removal of invalid tokens. The contract carries an opaque token string, so it does not depend on this. | UC-06 |
 
 ## 11. Changelog
 
@@ -658,3 +669,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 29-10-2026 | Password reset implemented: only an *Aktif* account with a local password receives the link; errors `PASSWORD_RESET_NOT_FOUND`, `PASSWORD_RESET_USED` and `PASSWORD_RESET_EXPIRED`; a completed reset marks the email verified and clears the failed-login count. Endpoints marked implemented in §9. | NKMA-103 |
 | 29-10-2026 | Notifications (UC-06) implemented for the events that exist: payment status changes, receipt uploads, cash payments recorded by a Manager, complaint status changes, new complaints, and Tenant and Manager activation. `complaintSubmitted` is created at submission; only its push waits for the classification under `highOnly`. Bill-issued, due-date and overdue notifications are not built. Push goes through a sender that only logs. `NOTIFICATION_NOT_FOUND` and `NOTIFICATION_CATEGORIES_INVALID` added. Endpoints marked implemented in §9. | NKMA-104 |
 | 01-11-2026 | Complaint classification hardened against prompt injection: the description is capped at 2000 characters; the complaint is sent apart from the instructions; a suggested action over 300 characters or with a link, an HTML tag or 8 or more digits in a row (spaces, dots and dashes between digits ignored) counts as a failure. | NKMA-105 |
+| 02-11-2026 | U-23 decided: push goes through Firebase Cloud Messaging after the event is saved, is tried once, and a token FCM reports as unregistered or invalid is removed from its session. Push message format added to §9 (shared): high priority, localization keys `notification_<type>_title` and `_body`, and data `notificationId` and `type`. | NKMA-106 |

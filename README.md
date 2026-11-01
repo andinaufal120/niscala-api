@@ -151,8 +151,17 @@ Settings are read from environment variables, or from a `.env` file in the proje
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used for AI features |
 | `GEMINI_API_KEY` | none | Gemini API key |
 | `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |
+| `FIREBASE_CREDENTIALS` | none | Content of a Firebase service account JSON file, on one line; enables push through FCM |
 
 Until a mail service is set up, email verification codes are written to the server log instead of being emailed.
+
+Without `FIREBASE_CREDENTIALS`, push notifications are written to the server log instead of being sent. To send them for real, create a service account key in the Firebase console (Project settings, Service accounts, Generate new private key) and put its JSON on one line in `.env`, or on the deployed server:
+
+```sh
+fly secrets set FIREBASE_CREDENTIALS="$(cat service-account.json)" -a niscala-api-dev
+```
+
+Do not commit the key file.
 
 ## Docs
 
