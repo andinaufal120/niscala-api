@@ -39,8 +39,8 @@ class ComplaintInput(ApiModel):
     """Fields set when submitting a complaint."""
 
     description: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=10)
-    ] = Field(description="At least 10 characters, counted after trimming.")
+        str, StringConstraints(strip_whitespace=True, min_length=10, max_length=2000)
+    ] = Field(description="10 to 2000 characters, counted after trimming.")
 
 
 class ComplaintClassificationInput(ApiModel):
