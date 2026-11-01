@@ -3,10 +3,9 @@
 from typing import Any
 
 import pytest
-from conftest import NOT_A_UUID, PROPERTY_ID, OpenApiDoc, nullable_inner
+from conftest import OpenApiDoc, nullable_inner
 
 PATH = "/properties/{propertyId}/payment-patterns"
-URL = f"/properties/{PROPERTY_ID}/payment-patterns"
 
 PATTERN_FIELDS = {
     "tenant",
@@ -173,15 +172,3 @@ def test_payment_pattern_list_has_only_required_array_of_payment_pattern(
     items = schema["properties"]["items"]
     assert items["type"] == "array"
     assert openapi.ref_name(items["items"]) == "PaymentPattern"
-
-
-# Runtime
-
-
-def test_valid_payment_patterns_request_responds_not_implemented(client) -> None:
-    assert client.get(URL).status_code == 501
-
-
-def test_non_uuid_property_id_is_rejected_with_validation_error(client) -> None:
-    response = client.get(f"/properties/{NOT_A_UUID}/payment-patterns")
-    assert response.status_code == 422

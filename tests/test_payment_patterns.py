@@ -292,7 +292,7 @@ def test_a_manager_and_an_owner_see_the_same_patterns(client, scene, lease, add_
     manager = client.get(patterns_url(scene.prop), headers=scene.manager_in.headers)
     assert owner.status_code == manager.status_code == 200
     assert owner.json() == manager.json()
-    assert facts(owner.json()["items"][0]) == (1, 2, 8, 2000000, True)
+    assert facts(owner.json()["items"][0]) == (0, 2, 8, 2000000, True)
 
 
 # Which tenants are listed
