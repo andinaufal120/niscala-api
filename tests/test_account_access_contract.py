@@ -5,6 +5,8 @@ from typing import Any
 
 import pytest
 from conftest import OpenApiDoc, nullable_inner
+from password_reset_support import login, start_reset
+from user_account_support import set_password
 
 HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
 
@@ -1033,6 +1035,9 @@ IMPLEMENTED_URLS = {
     PASSWORD_ACTIVATION_URL,
     ACCEPTANCE_PREVIEWS_URL,
     ACCEPTANCES_URL,
+    PASSWORD_RESET_REQUESTS_URL,
+    PASSWORD_RESET_PREVIEWS_URL,
+    PASSWORD_RESETS_URL,
 }
 # Implemented endpoints that need a signed-in caller before the body is read.
 SIGNED_IN_URLS = {EMAIL_CONFIRMATION_URL}
@@ -1311,12 +1316,54 @@ def test_invalid_password_reset_input_is_rejected_with_validation_error(
     assert client.post(PASSWORD_RESETS_URL, json=body).status_code == 422
 
 
-@pytest.mark.parametrize("password", ["a" * 8, "a" * 128])
-def test_password_reset_with_8_to_128_character_password_is_accepted(
-    client, password: str
+@pytest.fixture
+def reset_link_token(client, database, make_user, mailbox) -> str:
+    """Token of a live password reset link for an eligible account."""
+    user = make_user(email=VALID_EMAIL)
+    set_password(database, user)
+    return start_reset(client, mailbox, VALID_EMAIL)
+
+
+def test_valid_password_reset_request_is_accepted(
+    client, database, make_user, mailbox
 ) -> None:
-    body = {**VALID_PASSWORD_RESET_INPUT, "newPassword": password}
-    assert client.post(PASSWORD_RESETS_URL, json=body).status_code == 501
+    set_password(database, make_user(email=VALID_EMAIL))
+    response = client.post(PASSWORD_RESET_REQUESTS_URL, json=VALID_RESET_REQUEST_INPUT)
+    assert response.status_code == 202
+    assert response.content == b""
+
+
+def test_valid_password_reset_preview_returns_the_account_email(
+    client, reset_link_token: str
+) -> None:
+    response = client.post(
+        PASSWORD_RESET_PREVIEWS_URL, json={"token": reset_link_token}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"email": VALID_EMAIL}
+
+
+def test_valid_password_reset_completes_with_no_content(
+    client, reset_link_token: str
+) -> None:
+    response = client.post(
+        PASSWORD_RESETS_URL,
+        json={"token": reset_link_token, "newPassword": VALID_PASSWORD},
+    )
+    assert response.status_code == 204
+    assert response.content == b""
+
+
+@pytest.mark.parametrize("length", [8, 128])
+def test_password_reset_with_8_to_128_character_password_is_accepted(
+    client, reset_link_token: str, length: int
+) -> None:
+    password = ("mUk3!xqz-Plover" * 10)[:length]
+    response = client.post(
+        PASSWORD_RESETS_URL, json={"token": reset_link_token, "newPassword": password}
+    )
+    assert response.status_code == 204
+    assert login(client, VALID_EMAIL, password).status_code == 200
 
 
 _CONTACT_CASES = [
