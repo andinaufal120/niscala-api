@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
-from app.access import accessible_properties
+from app.access import accessible_properties, get_accessible_property
 from app.errors import ApiError
 from app.models import Lease as LeaseRow
 from app.models import Property as PropertyRow
@@ -24,6 +24,8 @@ from app.schemas.notifications import NotificationRentBill, NotificationType
 from app.schemas.payments import (
     Payment,
     PaymentMethod,
+    PaymentOverview,
+    PaymentOverviewItem,
     PaymentStatus,
     PaymentStatusChange,
     PaymentStatusChangeInput,
@@ -34,7 +36,8 @@ from app.schemas.payments import (
 )
 from app.schemas.properties import BankAccount
 from app.schemas.tenants import BillingCycle, RoomRef
-from app.services import leases, notifications
+from app.services import leases, notifications, tenants
+from app.services.rooms import natural_number_key
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +267,50 @@ def list_rent_bills(
     today = today_jakarta()
     return RentBillList(
         items=[_summary(row, today, row[0].id in with_receipt) for row in rows]
+    )
+
+
+def payment_overview(
+    db: Session, user: UserAccount, property_id: UUID, on: date
+) -> PaymentOverview:
+    """Show each tenant with an active lease in a property and the bill covering a date.
+
+    Tenants are ordered by room number, then name. A tenant without a bill
+    covering the date has a null bill. Overdue days and the current-period flag
+    are read against today, not the given date. Raises 404 PROPERTY_NOT_FOUND
+    for an unknown or inaccessible property.
+    """
+    parent = get_accessible_property(db, user, property_id)
+    found = sorted(
+        tenants._find(db, RoomRow.property_id == parent.id),
+        key=lambda f: (natural_number_key(f[3].number), f[1].name, f[1].id),
+    )
+    rows = {
+        row[0].lease_id: tuple(row)
+        for row in db.execute(
+            _rows().where(
+                LeaseRow.id.in_([f[2].id for f in found]),
+                RentBillRow.period_start <= on,
+                RentBillRow.period_end >= on,
+            )
+        )
+    }
+    with_receipt = _with_receipt(db, [row[0].id for row in rows.values()])
+    today = today_jakarta()
+    return PaymentOverview(
+        date=on,
+        items=[
+            PaymentOverviewItem(
+                tenant=TenantRef(id=account.id, name=account.name),
+                room=RoomRef(id=room.id, number=room.number),
+                bill=_summary(
+                    rows[lease.id], today, rows[lease.id][0].id in with_receipt
+                )
+                if lease.id in rows
+                else None,
+            )
+            for _, account, lease, room in found
+        ],
     )
 
 

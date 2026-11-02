@@ -1,7 +1,7 @@
 """Endpoints under /properties: properties and their rooms, facility suggestions, tenants, payment overview and payment patterns.
 
-The property, room, facility-suggestion and tenant endpoints are implemented;
-the others are declared in the contract and answer 501.
+The property, room, facility-suggestion, tenant and payment overview endpoints
+are implemented; payment patterns is declared in the contract and answers 501.
 """
 
 import datetime as dt
@@ -18,7 +18,7 @@ from app.schemas.properties import Property, PropertyInput, PropertyList
 from app.schemas.rooms import FacilitySuggestionList, Room, RoomInput, RoomList
 from app.schemas.tenants import NewTenantInput, Tenant, TenantList
 from app.security import CurrentUser
-from app.services import properties, rooms, tenants
+from app.services import properties, rent_bills, rooms, tenants
 
 router = APIRouter(prefix="/properties")
 
@@ -114,10 +114,14 @@ def list_tenants(property_id: PropertyId, caller: OwnerOrManager, db: Db) -> Ten
 @router.get("/{propertyId}/payment-overview", tags=["rent-bills"])
 def get_payment_overview(
     property_id: PropertyId,
+    caller: OwnerOrManager,
+    db: Db,
     date: Annotated[dt.date | None, Query()] = None,
 ) -> PaymentOverview:
     """Show each tenant's bill covering a date, defaulting to today."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return rent_bills.payment_overview(
+        db, caller.user, property_id, date or rent_bills.today_jakarta()
+    )
 
 
 @router.get("/{propertyId}/payment-patterns", tags=["rent-bills"])
