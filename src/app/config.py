@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     gemini_model: str = "gemini-3.5-flash-lite"
     gemini_api_key: str | None = None
+    firebase_credentials: str | None = None
     invitation_base_url: str = "https://niscala.app"
     database_url: str = "postgresql+psycopg://niscala:niscala@localhost:5432/niscala"
     jwt_secret: str

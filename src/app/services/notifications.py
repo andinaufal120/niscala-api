@@ -4,10 +4,11 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, event, or_, select, text
 from sqlalchemy.orm import Session
 
 from app import push
+from app.db import get_engine
 from app.errors import ApiError
 from app.models import ManagerAssignment, Property, UserAccount, UserSession
 from app.models import Notification as NotificationRow
@@ -27,6 +28,9 @@ from app.schemas.notifications import (
 from app.services.sessions import _active_sessions_of
 
 logger = logging.getLogger(__name__)
+
+# Key in `Session.info` of the pushes waiting for the outermost commit.
+PENDING_PUSHES = "pending_pushes"
 
 CATEGORY_OF_TYPE = {
     NotificationType.BILL_ISSUED: NotificationCategory.BILLING,
@@ -93,10 +97,11 @@ def _schema(row: NotificationRow) -> Notification:
 def _deliver(
     db: Session, row: NotificationRow, complaint_scope: NotificationUrgencyScope
 ) -> None:
-    """Push the notification to every live device of its recipient, if wanted.
+    """Queue the push to every live device of its recipient, if wanted.
 
-    A new complaint is only pushed to a recipient whose setting has the given
-    urgency scope. A failing device is logged and never stops the others.
+    The queued pushes are sent after the session's outermost commit and dropped
+    on rollback. A new complaint is only pushed to a recipient whose setting has
+    the given urgency scope.
     """
     try:
         type_ = NotificationType(row.type)
@@ -121,11 +126,48 @@ def _deliver(
     except Exception:
         logger.exception("Preparing the push of notification %s failed", row.id)
         return
+    pending = db.info.setdefault(PENDING_PUSHES, [])
     for device in devices:
+        pending.append((device.id, device.push_token, notification, sender))
+
+
+def _clear_token(session_id: UUID, token: str) -> None:
+    """Remove a dead token from its session unless it was replaced meanwhile."""
+    with Session(get_engine()) as db:
+        db.execute(
+            text(
+                "UPDATE sessions SET push_token = NULL "
+                "WHERE id = :id AND push_token = :token"
+            ),
+            {"id": session_id, "token": token},
+        )
+        db.commit()
+
+
+@event.listens_for(Session, "after_commit")
+def _send_pending_pushes(db: Session) -> None:
+    """Send the pushes queued on the session once its outermost commit succeeded.
+
+    A failing device is logged and never stops the others; nothing is raised.
+    """
+    if db.in_nested_transaction():
+        # A savepoint was released; the outer transaction may still roll back.
+        return
+    for session_id, token, notification, sender in db.info.pop(PENDING_PUSHES, []):
         try:
-            sender.send(device.push_token, notification)
+            sender.send(token, notification)
+        except push.InvalidPushToken:
+            try:
+                _clear_token(session_id, token)
+            except Exception:
+                logger.exception("Removing a dead push token failed")
         except Exception:
-            logger.exception("Pushing notification %s failed", row.id)
+            logger.exception("Pushing notification %s failed", notification.id)
+
+
+@event.listens_for(Session, "after_rollback")
+def _drop_pending_pushes(db: Session) -> None:
+    db.info.pop(PENDING_PUSHES, None)
 
 
 def notify(

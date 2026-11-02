@@ -687,17 +687,28 @@ class PushOutbox:
 
     `attempts` holds every `(token, notification)` the application tried to
     send, `sent` only those that did not fail. `fail_tokens` makes sends to
-    those tokens raise; `fail_all` makes every send raise.
+    those tokens raise; `fail_all` makes every send raise. `invalid_tokens`
+    makes sends to those tokens raise `InvalidPushToken`, as a dead device
+    token does. `before_send`, when set, is called with `(token, notification)`
+    at the start of every send, so a test can look at the world at that moment.
     """
 
     def __init__(self) -> None:
         self.attempts: list[tuple[str, Any]] = []
         self.sent: list[tuple[str, Any]] = []
         self.fail_tokens: set[str] = set()
+        self.invalid_tokens: set[str] = set()
         self.fail_all = False
+        self.before_send: Callable[[str, Any], None] | None = None
 
     def send(self, token: str, notification: Any) -> None:
         self.attempts.append((token, notification))
+        if self.before_send is not None:
+            self.before_send(token, notification)
+        if token in self.invalid_tokens:
+            from app.push import InvalidPushToken
+
+            raise InvalidPushToken("device token is no longer valid")
         if self.fail_all or token in self.fail_tokens:
             raise RuntimeError("push service down")
         self.sent.append((token, notification))
@@ -715,6 +726,109 @@ def pushes(monkeypatch) -> PushOutbox:
     """Capture the pushes the application sends during one test."""
     outbox = PushOutbox()
     monkeypatch.setattr("app.push.get_push_sender", lambda: outbox)
+    return outbox
+
+
+@pytest.fixture
+def firebase_credentials(monkeypatch) -> Callable[..., None]:
+    """Control `FIREBASE_CREDENTIALS` for one test, ignoring any `.env` file.
+
+    Call the returned function with the value to set, or with no argument to
+    leave the setting unset. The settings and the cached push sender are reset
+    before and after the test.
+    """
+    from app import push
+    from app.config import Settings, get_settings
+
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    monkeypatch.delenv("FIREBASE_CREDENTIALS", raising=False)
+
+    def forget() -> None:
+        get_settings.cache_clear()
+        for value in vars(push).values():
+            clear = getattr(value, "cache_clear", None)
+            if callable(clear):
+                clear()
+
+    def configure(value: str | None = None) -> None:
+        if value is None:
+            monkeypatch.delenv("FIREBASE_CREDENTIALS", raising=False)
+        else:
+            monkeypatch.setenv("FIREBASE_CREDENTIALS", value)
+        forget()
+
+    forget()
+    yield configure
+    forget()
+
+
+class FakeFirebase:
+    """Stands in for the Firebase app setup, so no credentials or network are used."""
+
+    def __init__(self) -> None:
+        self.certificates: list[Any] = []
+        self.initializations: list[dict[str, Any]] = []
+        self.apps: list[object] = []
+
+
+@pytest.fixture
+def fake_firebase(monkeypatch) -> FakeFirebase:
+    """Replace the Firebase credential loading and app initialisation."""
+    import firebase_admin
+    from firebase_admin import credentials
+
+    from app import push
+
+    fake = FakeFirebase()
+
+    def certificate(source: Any) -> Any:
+        fake.certificates.append(source)
+        return ("certificate", len(fake.certificates))
+
+    def initialize_app(credential=None, options=None, name="[DEFAULT]") -> object:
+        app_ = object()
+        fake.apps.append(app_)
+        fake.initializations.append(
+            {"credential": credential, "options": options, "name": name}
+        )
+        return app_
+
+    monkeypatch.setattr(credentials, "Certificate", certificate)
+    monkeypatch.setattr(firebase_admin, "initialize_app", initialize_app)
+    if hasattr(push, "initialize_app"):
+        monkeypatch.setattr(push, "initialize_app", initialize_app)
+    return fake
+
+
+class FcmOutbox:
+    """Records the messages given to `firebase_admin.messaging.send`.
+
+    `sent` holds `(message, app)` for each call. `errors` maps a device token
+    to the exception sending to it raises; `error` raises for every token.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[Any, Any]] = []
+        self.errors: dict[str, BaseException] = {}
+        self.error: BaseException | None = None
+
+    def send(self, message: Any, app: Any = None, **kwargs: Any) -> str:
+        self.sent.append((message, app))
+        if message.token in self.errors:
+            raise self.errors[message.token]
+        if self.error is not None:
+            raise self.error
+        return f"projects/test/messages/{len(self.sent)}"
+
+    def tokens(self) -> list[str]:
+        return [message.token for message, _ in self.sent]
+
+
+@pytest.fixture
+def fcm(monkeypatch) -> FcmOutbox:
+    """Capture what would be sent to Firebase Cloud Messaging."""
+    outbox = FcmOutbox()
+    monkeypatch.setattr("app.push.messaging.send", outbox.send)
     return outbox
 
 

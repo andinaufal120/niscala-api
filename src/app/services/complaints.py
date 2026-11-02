@@ -410,6 +410,8 @@ def classify_complaint(
                 result is not None
                 and ComplaintUrgency(result.urgency) == ComplaintUrgency.HIGH
             ):
+                # The pushes are queued here and sent by the commit after it.
                 notifications.push_high_urgency_complaint(db, complaint_id)
+                db.commit()
     except Exception:
         logger.exception("Storing the classification of %s failed", complaint_id)
