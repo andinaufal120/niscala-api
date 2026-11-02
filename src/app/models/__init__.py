@@ -8,6 +8,7 @@ from app.models.login_failure import LoginFailure
 from app.models.managers import Manager
 from app.models.notifications import Notification, NotificationSetting
 from app.models.password_reset import PasswordResetToken
+from app.models.payment_patterns import PaymentPatternSummary
 from app.models.properties import ManagerAssignment, Property
 from app.models.rent_bills import RentBill, RentBillReceipt, RentBillStatusChange
 from app.models.rooms import Room
@@ -30,6 +31,7 @@ __all__ = [
     "Notification",
     "NotificationSetting",
     "PasswordResetToken",
+    "PaymentPatternSummary",
     "Property",
     "RentBill",
     "RentBillReceipt",

@@ -161,7 +161,7 @@ These apply to every use case below. Use cases do not repeat them.
 4. **Failure is atomic:** a request that fails saves nothing, so the user can retry. The only partial outcomes are the ones a use case states (an invitation, a notification or an AI call failing after the main save).
 5. **Empty lists** are a successful response with no items, not an error.
 6. **Subscription gating:** the API decides whether the Owner of the property has an active paid subscription (plan Basic or Pro, paid period running). Without one, gated content (AI classification, payment-pattern summary) is withheld, and the response says so. The rest of the response is unaffected.
-7. **AI failure** (error or timeout) never blocks or rolls back saving data (policy: U-8).
+7. **AI failure** (error or timeout) never blocks or rolls back saving data (policies: UC-02, UC-26).
 8. **Soft delete** keeps history. Soft-deleted records are hidden from normal lists but kept for the history the use cases name.
 9. **Transport:** HTTPS only (NFR-08).
 10. **Plan limits:** the Owner's plan sets the maximum number of properties and the maximum number of rooms per property (§8.3, UC-31). Adding past a limit is rejected with an error code (UC-10, UC-14). After a downgrade takes effect, the properties and rooms the Owner did not keep are **view-only**: their data, leases and tenants cannot be changed (error codes `PROPERTY_READ_ONLY`, `ROOM_READ_ONLY`), but bills are still generated and payments and complaints are still processed. Responses carry `editable` on properties and rooms so the app does not compute this.
@@ -397,7 +397,7 @@ Owner, and Manager on an assigned property, only. A target that is not the next 
 - a bill paid exactly on its due date is on time, and an average that falls exactly halfway between two whole days rounds up;
 - the stored AI summary, or none yet.
 
-Without an active subscription, facts and flags are returned and the summary is withheld. Reading this data never triggers AI generation; summaries are regenerated when a payment status changes.
+Without an active subscription, facts and flags are returned and the summary is withheld (flagged as withheld when one is stored). Reading this data never triggers AI generation. A payment-status change (UC-05, UC-07, UC-08, UC-09) removes the Tenant's stored summary. After the change is saved and committed, a new summary is generated if the Owner has an active subscription then: one Gemini request (model `GEMINI_MODEL`), no retry, at most 10 seconds, given the facts above and each counted bill's due date, status and days late, and no names or free text. It asks for one or two Indonesian sentences for management. An error, a timeout, an empty answer, or one over 500 characters or containing a link or an HTML tag counts as a failure and leaves no summary. A result computed from facts that changed while it ran is discarded. Without a configured API key no summary is generated.
 
 ### 8.3 Owner only (Pemilik Kost)
 
@@ -610,7 +610,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-1   | `/health` response shape.                                                                                                        | §9, NKMA-22               |
 | U-4   | Invitation and password-reset link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01, NFR-11 |
 | U-6   | Bill generation (FR-31): when bills are created, how the amount is set, and proration.                                           | UC-04, UC-08, UC-25       |
-| U-8   | AI calls for the payment-pattern summary (UC-26): timeout, retries, fallback, and when it runs. (Decided for complaint classification, UC-02.) | UC-26 |
 | U-9   | The complete list of error codes, and declaring error responses in the OpenAPI document. (The response shape is decided, §6 rule 2.) | §6, §7, all endpoints |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 | U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
@@ -673,3 +672,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 02-11-2026 | U-23 decided: push goes through Firebase Cloud Messaging after the event is saved, is tried once, and a token FCM reports as unregistered or invalid is removed from its session. Push message format added to §9 (shared): high priority, localization keys `notification_<type>_title` and `_body`, and data `notificationId` and `type`. | NKMA-106 |
 | 02-11-2026 | Payment status of all tenants (UC-25) implemented: Tenants with an active lease, by room number then name; the bill whose period contains the date, or none. Endpoint marked implemented in §9. | NKMA-62 |
 | 02-11-2026 | Payment-pattern facts and at-risk flag (UC-26) implemented for Tenants with an active lease; the summary is none until generation is built. Endpoint marked implemented in §9. | NKMA-74 |
+| 02-11-2026 | U-8 decided: payment-pattern summaries are cleared by a payment-status change and regenerated after commit when the Owner is subscribed (one attempt, 10 s, facts and counted bills only, 500-character answer without links or HTML); a failure leaves none. Removed from §10. | NKMA-72 |

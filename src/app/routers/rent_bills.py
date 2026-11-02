@@ -3,9 +3,20 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Path,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 
 from app.access import require_roles
+from app.ai.summarizer import PaymentPatternSummarizer, get_payment_pattern_summarizer
 from app.db import SessionDep
 from app.errors import ErrorBody
 from app.schemas.auth import UserRole
@@ -18,7 +29,7 @@ from app.schemas.payments import (
     RentBillList,
 )
 from app.security import CurrentUser
-from app.services import rent_bills
+from app.services import payment_patterns, rent_bills
 
 router = APIRouter(prefix="/rent-bills", tags=["rent-bills"])
 
@@ -32,11 +43,28 @@ Reader = Annotated[
     CurrentUser,
     Depends(require_roles(UserRole.TENANT, UserRole.OWNER, UserRole.MANAGER)),
 ]
+Summarizer = Annotated[
+    PaymentPatternSummarizer, Depends(get_payment_pattern_summarizer)
+]
 
 
 def _errors(*statuses: int) -> dict[int | str, dict]:
     """Declare error responses with the uniform error body."""
     return {code: {"model": ErrorBody} for code in statuses}
+
+
+def _commit_and_summarize(
+    db: Db,
+    background_tasks: BackgroundTasks,
+    summarizer: PaymentPatternSummarizer,
+    changed: RentBill,
+) -> RentBill:
+    """Commit a status change, then regenerate the lease's summary in the background."""
+    lease_id = rent_bills.lease_id_of(db, changed.id)
+    # Commit now so the background task sees the change.
+    db.commit()
+    background_tasks.add_task(payment_patterns.regenerate_summary, lease_id, summarizer)
+    return changed
 
 
 @router.get("", responses=_errors(403))
@@ -67,10 +95,13 @@ def upload_receipt(
     file: Annotated[UploadFile, File(json_schema_extra={"format": "binary"})],
     caller: Tenant,
     db: Db,
+    summarizer: Summarizer,
+    background_tasks: BackgroundTasks,
 ) -> RentBill:
     """Attach a transfer receipt image and mark the bill as awaiting verification."""
     content = file.file.read(rent_bills.MAX_RECEIPT_BYTES + 1)
-    return rent_bills.upload_receipt(db, caller.user, rent_bill_id, content)
+    changed = rent_bills.upload_receipt(db, caller.user, rent_bill_id, content)
+    return _commit_and_summarize(db, background_tasks, summarizer, changed)
 
 
 @router.get(
@@ -88,9 +119,16 @@ def get_receipt(rent_bill_id: RentBillId, caller: Reader, db: Db) -> Response:
 
 
 @router.post("/{rentBillId}/verification", responses=_errors(403, 404, 409))
-def verify_receipt(rent_bill_id: RentBillId, caller: Management, db: Db) -> RentBill:
+def verify_receipt(
+    rent_bill_id: RentBillId,
+    caller: Management,
+    db: Db,
+    summarizer: Summarizer,
+    background_tasks: BackgroundTasks,
+) -> RentBill:
     """Accept a transfer receipt and mark the bill as paid."""
-    return rent_bills.verify_receipt(db, caller.user, rent_bill_id)
+    changed = rent_bills.verify_receipt(db, caller.user, rent_bill_id)
+    return _commit_and_summarize(db, background_tasks, summarizer, changed)
 
 
 @router.post("/{rentBillId}/rejection", responses=_errors(403, 404, 409))
@@ -99,9 +137,12 @@ def reject_receipt(
     body: ReceiptRejectionInput,
     caller: Management,
     db: Db,
+    summarizer: Summarizer,
+    background_tasks: BackgroundTasks,
 ) -> RentBill:
     """Reject a transfer receipt with a reason."""
-    return rent_bills.reject_receipt(db, caller.user, rent_bill_id, body.reason)
+    changed = rent_bills.reject_receipt(db, caller.user, rent_bill_id, body.reason)
+    return _commit_and_summarize(db, background_tasks, summarizer, changed)
 
 
 @router.post("/{rentBillId}/cash-payment", responses=_errors(403, 404, 409))
@@ -110,11 +151,14 @@ def record_cash_payment(
     body: CashPaymentInput,
     caller: Management,
     db: Db,
+    summarizer: Summarizer,
+    background_tasks: BackgroundTasks,
 ) -> RentBill:
     """Record a cash payment and mark the bill as paid."""
-    return rent_bills.record_cash_payment(
+    changed = rent_bills.record_cash_payment(
         db, caller.user, rent_bill_id, body.received_on
     )
+    return _commit_and_summarize(db, background_tasks, summarizer, changed)
 
 
 @router.post(
@@ -127,6 +171,9 @@ def change_payment_status(
     body: PaymentStatusChangeInput,
     caller: Management,
     db: Db,
+    summarizer: Summarizer,
+    background_tasks: BackgroundTasks,
 ) -> RentBill:
     """Manually set a bill's payment status, with a reason."""
-    return rent_bills.change_payment_status(db, caller.user, rent_bill_id, body)
+    changed = rent_bills.change_payment_status(db, caller.user, rent_bill_id, body)
+    return _commit_and_summarize(db, background_tasks, summarizer, changed)

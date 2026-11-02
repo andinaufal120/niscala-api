@@ -36,7 +36,7 @@ from app.schemas.payments import (
 )
 from app.schemas.properties import BankAccount
 from app.schemas.tenants import BillingCycle, RoomRef
-from app.services import leases, notifications, tenants
+from app.services import leases, notifications, payment_patterns, tenants
 from app.services.rooms import natural_number_key
 
 logger = logging.getLogger(__name__)
@@ -126,8 +126,11 @@ def notify_status_change(
         )
 
 
-def regenerate_payment_pattern(lease_id: UUID) -> None:
-    """Refresh the payment pattern of the lease's tenant after a payment change."""
+def lease_id_of(db: Session, rent_bill_id: UUID) -> UUID:
+    """Return the id of the lease a bill belongs to."""
+    return db.scalars(
+        select(RentBillRow.lease_id).where(RentBillRow.id == rent_bill_id)
+    ).one()
 
 
 def _rows() -> Select[Row]:
@@ -371,7 +374,7 @@ def _record(
         notify_status_change(db, bill, change)
     except Exception:
         logger.exception("Notifying about the status change of %s failed", bill.id)
-    regenerate_payment_pattern(bill.lease_id)
+    payment_patterns.clear_summary(db, bill.lease_id)
 
 
 def _receipt_type(content: bytes) -> str:
