@@ -1,7 +1,7 @@
 """Endpoints under /complaints and /complaint-categories.
 
-Submitting, listing, reading, classifying and changing the status of complaints
-and the category list are implemented; the others answer 501.
+Submitting, listing, reading, classifying, changing the status of and attaching
+a photo to complaints, and the category list.
 """
 
 from typing import Annotated
@@ -12,7 +12,6 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
-    HTTPException,
     Path,
     Response,
     UploadFile,
@@ -35,6 +34,7 @@ from app.schemas.complaints import (
 )
 from app.security import CurrentUser, get_verified_user
 from app.services import complaints
+from app.services.rent_bills import MAX_RECEIPT_BYTES
 
 router = APIRouter(prefix="/complaints", tags=["complaints"])
 categories_router = APIRouter(prefix="/complaint-categories", tags=["complaints"])
@@ -112,9 +112,12 @@ def classify_complaint(
 def upload_complaint_photo(
     complaint_id: ComplaintId,
     file: Annotated[UploadFile, File(json_schema_extra={"format": "binary"})],
+    caller: Tenant,
+    db: Db,
 ) -> Complaint:
     """Attach or replace the complaint photo."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    content = file.file.read(MAX_RECEIPT_BYTES + 1)
+    return complaints.upload_complaint_photo(db, caller.user, complaint_id, content)
 
 
 @router.get(
@@ -122,9 +125,10 @@ def upload_complaint_photo(
     response_class=Response,
     responses={200: {"content": {"image/jpeg": {}, "image/png": {}}}},
 )
-def get_complaint_photo(complaint_id: ComplaintId) -> Response:
+def get_complaint_photo(complaint_id: ComplaintId, caller: Reader, db: Db) -> Response:
     """Return the complaint photo."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    photo = complaints.get_complaint_photo(db, caller.user, complaint_id)
+    return Response(content=photo.content, media_type=photo.content_type)
 
 
 @categories_router.get("")

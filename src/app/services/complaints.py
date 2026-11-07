@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import Select, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.access import accessible_properties
 from app.ai.classifier import ComplaintClassifier
@@ -14,6 +14,7 @@ from app.config import COMPLAINT_CATEGORIES
 from app.db import get_engine
 from app.errors import ApiError
 from app.models import Complaint as ComplaintRow
+from app.models import ComplaintPhoto as PhotoRow
 from app.models import ComplaintStatusChange as StatusChangeRow
 from app.models import Lease as LeaseRow
 from app.models import Property as PropertyRow
@@ -38,6 +39,7 @@ from app.schemas.notifications import NotificationComplaint, NotificationType
 from app.schemas.payments import TenantRef
 from app.schemas.tenants import RoomRef
 from app.services import notifications
+from app.services.rent_bills import MAX_RECEIPT_BYTES, RECEIPT_SIGNATURES
 from app.services.subscriptions import has_active_subscription
 
 logger = logging.getLogger(__name__)
@@ -127,7 +129,8 @@ def _view(
         room=RoomRef(id=room.id, number=room.number),
         tenant_name=tenant.name,
         created_at=complaint.created_at,
-        has_photo=False,
+        has_photo=db.get(PhotoRow, complaint.id, options=[defer(PhotoRow.content)])
+        is not None,
         classification=classification,
         classification_state=state and ComplaintClassificationState(state),
         classification_withheld=withheld,
@@ -352,6 +355,56 @@ def classify_complaint_manually(
         complaint.classified_at = datetime.now(UTC)
         db.flush()
     return _detail(db, tuple(row), {})
+
+
+def _photo_type(content: bytes) -> str:
+    """Return the image type of the bytes, decided from their signature."""
+    if len(content) > MAX_RECEIPT_BYTES:
+        raise ApiError(422, "PHOTO_TOO_LARGE", field="file")
+    for signature, content_type in RECEIPT_SIGNATURES.items():
+        if content.startswith(signature):
+            return content_type
+    raise ApiError(422, "PHOTO_TYPE_INVALID", field="file")
+
+
+def upload_complaint_photo(
+    db: Session, user: UserAccount, complaint_id: UUID, content: bytes
+) -> Complaint:
+    """Store the photo of a complaint, replacing any earlier one.
+
+    Only the tenant who submitted it gets this far. Flushes, never commits.
+    Checks in order: complaint (404 COMPLAINT_NOT_FOUND), still new (409
+    COMPLAINT_NOT_NEW), size (422 PHOTO_TOO_LARGE) and a PNG or JPEG signature
+    (422 PHOTO_TYPE_INVALID).
+    """
+    row = db.execute(_readable_by(user).where(ComplaintRow.id == complaint_id)).first()
+    if row is None:
+        raise ApiError(404, "COMPLAINT_NOT_FOUND")
+    if row[0].status != ComplaintStatus.NEW:
+        raise ApiError(409, "COMPLAINT_NOT_NEW")
+    content_type = _photo_type(content)
+    photo = db.get(PhotoRow, complaint_id)
+    if photo is None:
+        photo = PhotoRow(complaint_id=complaint_id)
+        db.add(photo)
+    photo.content = content
+    photo.content_type = content_type
+    photo.uploaded_at = datetime.now(UTC)
+    db.flush()
+    return _detail(db, tuple(row), {})
+
+
+def get_complaint_photo(db: Session, user: UserAccount, complaint_id: UUID) -> PhotoRow:
+    """Return the photo of a complaint the user may read.
+
+    Raises 404 COMPLAINT_NOT_FOUND for an unknown or unreadable complaint and
+    404 PHOTO_NOT_FOUND when it has no photo.
+    """
+    get_complaint(db, user, complaint_id)
+    photo = db.get(PhotoRow, complaint_id)
+    if photo is None:
+        raise ApiError(404, "PHOTO_NOT_FOUND")
+    return photo
 
 
 def _classify_within_timeout(
