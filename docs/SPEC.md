@@ -377,7 +377,7 @@ Checks run in this order: role, tenant access (`TENANT_NOT_FOUND`), property vie
 
 **UC-24 Change complaint status** (FR-16) · The target MUST be the next status: *Baru* → *Diproses*, or *Diproses* → *Selesai*. Any other target is rejected, and so is any change once the complaint is *Selesai*. An optional handling note is stored with the change and returned to the Tenant (UC-03).
 
-Owner, and Manager on an assigned property, only. A target that is not the next status, or any change once the complaint is *Selesai*, answers `COMPLAINT_STATUS_NOT_NEXT` (409, field `status`). A blank handling note is stored as none. Allowed on a view-only property. Notifying the Tenant (`complaintStatusChanged`) is not built yet.
+Owner, and Manager on an assigned property, only. A target that is not the next status, or any change once the complaint is *Selesai*, answers `COMPLAINT_STATUS_NOT_NEXT` (409, field `status`). A blank handling note is stored as none. Allowed on a view-only property.
 
 **UC-36 Classify complaint manually** (FR-32) · Management sets category and urgency on a complaint whose classification state is *Menunggu Klasifikasi* or *Belum Diklasifikasi*, or corrects an AI classification. The category MUST be one of the complaint categories, which an endpoint returns (list contents: U-16).
 - Stored: the original AI result (if any), the manual values, the actor and the timestamp.
@@ -673,3 +673,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 02-11-2026 | Payment-pattern facts and at-risk flag (UC-26) implemented for Tenants with an active lease; the summary is none until generation is built. Endpoint marked implemented in §9. | NKMA-74 |
 | 02-11-2026 | U-8 decided: payment-pattern summaries are cleared by a payment-status change and regenerated after commit when the Owner is subscribed (one attempt, 10 s, facts and counted bills only, 500-character answer without links or HTML); a failure leaves none. Removed from §10. | NKMA-72 |
 | 03-11-2026 | U-1 decided: `/health` answers `200 {status: ok}`, or `503 {status: unavailable}` when the database check fails (no error code, an exception to §6 rule 2). Removed from §10. | NKMA-22 |
+| 07-11-2026 | UC-24: the stale note that `complaintStatusChanged` is not built is removed; the Tenant has been notified since in-app notifications were built. | NKMA-109 |
