@@ -41,6 +41,8 @@ class UserAccount(Base):
     password_hash: Mapped[str | None]
     role: Mapped[UserRole] = mapped_column(String)
     email_verified: Mapped[bool] = mapped_column(default=False)
+    google_subject: Mapped[str | None] = mapped_column(unique=True)
+    google_email: Mapped[str | None]
     status: Mapped[EditableAccountStatus] = mapped_column(
         String,
         default=EditableAccountStatus.ACTIVE,

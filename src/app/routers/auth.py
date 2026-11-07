@@ -2,11 +2,12 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 
 from app.db import SessionDep
 from app.email import EmailSender, get_email_sender
 from app.errors import ApiError
+from app.google import GoogleVerifier, get_google_verifier
 from app.models import UserAccount
 from app.schemas.auth import (
     Account,
@@ -26,7 +27,12 @@ from app.schemas.auth import (
 from app.schemas.sessions import LoginMethod
 from app.security import CurrentUser, bearer_scheme, get_current_user
 from app.services import password_reset, user_accounts
-from app.services.accounts import authenticate, create_owner
+from app.services.accounts import (
+    authenticate,
+    authenticate_google,
+    create_google_owner,
+    create_owner,
+)
 from app.services.email_verification import RESEND_INTERVAL, confirm_code, send_code
 from app.services.login_attempts import (
     clear_failures,
@@ -57,9 +63,15 @@ def register_owner(
 
 
 @router.post("/register/google", status_code=status.HTTP_201_CREATED)
-def register_owner_with_google(body: GoogleAuthInput) -> AuthSession:
+def register_owner_with_google(
+    body: GoogleAuthInput,
+    db: SessionDep,
+    verifier: Annotated[GoogleVerifier, Depends(get_google_verifier)],
+) -> AuthSession:
     """Sign up an Owner with Google and start a session."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    user = create_google_owner(db, verifier, body.id_token)
+    tokens = start_session(db, user, body.device, LoginMethod.GOOGLE)
+    return AuthSession(**tokens.model_dump(), account=Account.from_user(user))
 
 
 @router.post("/login")
@@ -80,9 +92,15 @@ def login(body: LoginInput, db: SessionDep) -> AuthSession:
 
 
 @router.post("/login/google")
-def login_with_google(body: GoogleAuthInput) -> AuthSession:
-    """Log in with Google and start a session."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+def login_with_google(
+    body: GoogleAuthInput,
+    db: SessionDep,
+    verifier: Annotated[GoogleVerifier, Depends(get_google_verifier)],
+) -> AuthSession:
+    """Log in with Google and start a session; failures are not counted."""
+    user = authenticate_google(db, verifier, body.id_token)
+    tokens = start_session(db, user, body.device, LoginMethod.GOOGLE)
+    return AuthSession(**tokens.model_dump(), account=Account.from_user(user))
 
 
 @router.post("/refresh")

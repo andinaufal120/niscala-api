@@ -108,7 +108,7 @@ class Account(ApiModel):
             role=user.role,
             email_verified=user.email_verified,
             has_password=user.password_hash is not None,
-            google_email=None,
+            google_email=user.google_email,
         )
 
 

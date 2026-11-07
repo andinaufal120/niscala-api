@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
+from app.google import GoogleIdentity, GoogleVerifier, verify_google_token
 from app.models import UserAccount
 from app.schemas.auth import (
     LoginInput,
@@ -49,6 +50,72 @@ def create_owner(db: Session, data: RegisterOwnerInput) -> UserAccount:
     )
     db.add(user)
     db.flush()
+    return user
+
+
+def require_new_google_identity(db: Session, identity: GoogleIdentity) -> None:
+    """Check that an identity may start a new account.
+
+    Raises 422 GOOGLE_EMAIL_UNVERIFIED (field `idToken`) for an unverified
+    email, 409 GOOGLE_ACCOUNT_ALREADY_REGISTERED when the subject is linked to
+    an account, then 409 EMAIL_ALREADY_REGISTERED (field `email`) when the
+    email belongs to an account, deleted or not.
+    """
+    if not identity.email_verified:
+        raise ApiError(422, "GOOGLE_EMAIL_UNVERIFIED", field="idToken")
+    if find_by_google_subject(db, identity.subject) is not None:
+        raise ApiError(409, "GOOGLE_ACCOUNT_ALREADY_REGISTERED")
+    if find_by_email(db, identity.email) is not None:
+        raise ApiError(409, "EMAIL_ALREADY_REGISTERED", field="email")
+
+
+def find_by_google_subject(db: Session, subject: str) -> UserAccount | None:
+    """Return the account linked to this Google subject, deleted ones included."""
+    return db.scalars(
+        select(UserAccount).where(UserAccount.google_subject == subject)
+    ).one_or_none()
+
+
+def create_google_owner(
+    db: Session, verifier: GoogleVerifier, id_token: str
+) -> UserAccount:
+    """Create an owner with a verified email and no password; flushes, never commits.
+
+    The name is the token's name, or the part of the email before the @. Raises
+    the errors of `verify_google_token` and `require_new_google_identity`.
+    """
+    identity = verify_google_token(verifier, id_token)
+    require_new_google_identity(db, identity)
+    email = identity.email.strip().lower()
+    user = UserAccount(
+        name=(identity.name or "").strip() or email.split("@")[0],
+        email=email,
+        password_hash=None,
+        role=UserRole.OWNER,
+        email_verified=True,
+        google_subject=identity.subject,
+        google_email=identity.email,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def authenticate_google(
+    db: Session, verifier: GoogleVerifier, id_token: str
+) -> UserAccount:
+    """Return the account linked to the token's Google subject.
+
+    The email is never used to find the account. Raises 401 GOOGLE_TOKEN_INVALID,
+    401 INVALID_CREDENTIALS for an unknown or deleted identity, then 403
+    ACCOUNT_INACTIVE.
+    """
+    identity = verify_google_token(verifier, id_token)
+    user = find_by_google_subject(db, identity.subject)
+    if user is None or is_deleted(db, user):
+        raise ApiError(401, "INVALID_CREDENTIALS")
+    if user.status == EditableAccountStatus.INACTIVE:
+        raise ApiError(403, "ACCOUNT_INACTIVE")
     return user
 
 
