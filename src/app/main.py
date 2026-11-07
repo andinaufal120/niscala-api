@@ -11,6 +11,7 @@ from app.routers import (
     auth,
     complaints,
     dashboard,
+    health,
     invitations,
     managers,
     me,
@@ -41,6 +42,7 @@ register_error_handlers(app)
 # Routers whose operations all need a session. The auth and invitations routers
 # declare the requirement per operation because some of their operations are public.
 session = [Depends(bearer_scheme)]
+app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(invitations.router)
 app.include_router(account.router, dependencies=session)

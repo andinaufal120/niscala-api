@@ -51,7 +51,7 @@ The Flutter Android app lives in `andinaufal120/niscala-app`. It generates its D
 
 ### 3.2. Backend
 
-- **Routers** (`routers/`): FastAPI `APIRouter`s grouped by resource. Endpoints not implemented yet answer `501`.
+- **Routers** (`routers/`): FastAPI `APIRouter`s grouped by resource. Endpoints not implemented yet answer `501`. `routers/health.py` is public and checks the database with `SELECT 1`.
 - **Schemas** (`schemas/`): Pydantic models on `ApiModel`, which exposes snake_case attributes as camelCase fields.
 - **Errors** (`errors.py`): every error response is `{"code", "field", "message"}`. Services raise `ApiError(status_code, code, message, field)`. Request validation errors become `VALIDATION_FAILED` with the first failing field. Any other `HTTPException` gets its status phrase as code (`NOT_FOUND`), and an unexpected exception becomes `INTERNAL_ERROR` without leaking its text.
 - **Settings** (`config.py`): `get_settings()` returns a cached `Settings` read from the environment.

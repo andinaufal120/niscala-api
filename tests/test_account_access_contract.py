@@ -113,6 +113,13 @@ PUBLIC_OPERATIONS = [
     ("post", "/invitations/activations/google"),
 ]
 
+# Operations that need no session and are not account access entry points.
+OTHER_PUBLIC_OPERATIONS = [
+    ("get", "/health"),
+]
+
+ALL_PUBLIC_OPERATIONS = [*PUBLIC_OPERATIONS, *OTHER_PUBLIC_OPERATIONS]
+
 # (method, path, request body schema)
 REQUEST_BODIES = [
     ("post", "/auth/register", "RegisterOwnerInput"),
@@ -543,7 +550,7 @@ def _all_operations(openapi: OpenApiDoc) -> list[tuple[str, str]]:
 def test_every_operation_except_the_public_ones_requires_bearer_auth(
     openapi: OpenApiDoc,
 ) -> None:
-    public = set(PUBLIC_OPERATIONS)
+    public = set(ALL_PUBLIC_OPERATIONS)
     missing = [
         (method, path)
         for method, path in _all_operations(openapi)
@@ -558,13 +565,13 @@ def test_public_operations_declare_no_security_requirement(
 ) -> None:
     secured = [
         (method, path)
-        for method, path in PUBLIC_OPERATIONS
+        for method, path in ALL_PUBLIC_OPERATIONS
         if openapi.operation(method, path).get("security")
     ]
     assert secured == []
 
 
-def test_public_operations_are_exactly_the_account_access_entry_points(
+def test_public_operations_are_exactly_the_account_access_entry_points_and_the_other_public_ones(
     openapi: OpenApiDoc,
 ) -> None:
     unsecured = {
@@ -572,7 +579,7 @@ def test_public_operations_are_exactly_the_account_access_entry_points(
         for method, path in _all_operations(openapi)
         if not openapi.operation(method, path).get("security")
     }
-    assert unsecured == set(PUBLIC_OPERATIONS)
+    assert unsecured == set(ALL_PUBLIC_OPERATIONS)
 
 
 @pytest.mark.parametrize(
