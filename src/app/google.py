@@ -65,15 +65,17 @@ class GoogleIdTokenVerifier:
         )
 
 
-def verify_google_token(verifier: GoogleVerifier, id_token: str) -> GoogleIdentity:
+def verify_google_token(
+    verifier: GoogleVerifier, id_token: str, field: str = "idToken"
+) -> GoogleIdentity:
     """Return the identity of a Google ID token.
 
-    Raises 401 GOOGLE_TOKEN_INVALID (field `idToken`) when it cannot be trusted.
+    Raises 401 GOOGLE_TOKEN_INVALID (naming `field`) when it cannot be trusted.
     """
     try:
         return verifier.verify(id_token)
     except GoogleTokenInvalid:
-        raise ApiError(401, "GOOGLE_TOKEN_INVALID", field="idToken") from None
+        raise ApiError(401, "GOOGLE_TOKEN_INVALID", field=field) from None
 
 
 def get_google_verifier() -> GoogleVerifier:
