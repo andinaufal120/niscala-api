@@ -531,8 +531,9 @@ def test_an_unverified_account_gets_email_not_verified(
 ):
     user = make_password_user(make_user, email_verified=False)
     google.add("new-token", subject="sub-new")
+    headers = sign_in(user).headers
     before = snapshot(database)
-    response = link(client, sign_in(user).headers, token="new-token")
+    response = link(client, headers, token="new-token")
     assert_error(response, 403, "EMAIL_NOT_VERIFIED")
     assert snapshot(database) == before
 
