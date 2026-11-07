@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.email import EmailSender
 from app.errors import ApiError
+from app.google import GoogleVerifier, verify_google_token
 from app.models import EmergencyContact as ContactRow
 from app.models import (
     Invitation,
@@ -21,12 +22,13 @@ from app.models import (
     Tenant,
     UserAccount,
 )
-from app.schemas.auth import Account, AuthSession
+from app.schemas.auth import Account, AuthSession, AuthTokens
 from app.schemas.complaints import PropertyRef
 from app.schemas.invitations import (
     ActiveLeaseSummary,
     InvitationAcceptancePreview,
     InvitationBlocker,
+    InvitationGoogleActivationInput,
     InvitationLinkStatus,
     InvitationPasswordActivationInput,
     InvitationPreview,
@@ -36,9 +38,9 @@ from app.schemas.invitations import (
 from app.schemas.notifications import NotificationType
 from app.schemas.payments import TenantRef
 from app.schemas.sessions import LoginMethod
-from app.schemas.tenants import RoomRef
+from app.schemas.tenants import EmergencyContact, RoomRef
 from app.services import notifications
-from app.services.accounts import find_by_email
+from app.services.accounts import find_by_email, require_new_google_identity
 from app.services.email_verification import send_code
 from app.services.passwords import check_password_allowed, hash_password
 from app.services.sessions import start_session
@@ -258,18 +260,66 @@ def activate_with_password(
     check_password_allowed(data.password, name=name, email=email)
     if find_by_email(db, email) is not None:
         raise ApiError(409, "EMAIL_ALREADY_REGISTERED", field="email")
-    contacts = []
-    if isinstance(found, _TenantLink) and found.contacts_required:
-        if data.emergency_contacts is None:
-            raise ApiError(422, "VALIDATION_FAILED", field="emergencyContacts")
-        contacts = clean_contacts(data.emergency_contacts)
+    contacts = _required_contacts(found, data.emergency_contacts)
 
-    now = datetime.now(UTC)
     user = found.user
     user.name = name
     user.email = email
     user.password_hash = hash_password(data.password)
     user.email_verified = False
+    _consume_link(db, found, contacts)
+    tokens = start_session(db, user, data.device, LoginMethod.PASSWORD)
+    send_code(db, user, sender)
+    return _finish_activation(db, found, tokens)
+
+
+def activate_with_google(
+    db: Session, data: InvitationGoogleActivationInput, verifier: GoogleVerifier
+) -> AuthSession:
+    """Complete the invited account with a Google identity.
+
+    Checks in order: link (404 INVITATION_NOT_FOUND, 409 INVITATION_USED, 409
+    INVITATION_EXPIRED), the token (401 GOOGLE_TOKEN_INVALID, 422
+    GOOGLE_EMAIL_UNVERIFIED, 409 GOOGLE_ACCOUNT_ALREADY_REGISTERED, 409
+    EMAIL_ALREADY_REGISTERED; the email is the token's, never the request's),
+    and for a Tenant, emergency contacts when fewer than two are stored (422
+    VALIDATION_FAILED). The account has no password and a verified email.
+    Flushes, never commits; the caller's transaction makes it all-or-nothing.
+    """
+    found = _find(db, data.token)
+    _require_usable(found)
+    identity = verify_google_token(verifier, data.id_token)
+    require_new_google_identity(db, identity)
+    contacts = _required_contacts(found, data.emergency_contacts)
+
+    user = found.user
+    user.name = data.name.strip()
+    user.email = identity.email
+    user.password_hash = None
+    user.email_verified = True
+    user.google_subject = identity.subject
+    user.google_email = identity.email
+    _consume_link(db, found, contacts)
+    tokens = start_session(db, user, data.device, LoginMethod.GOOGLE)
+    return _finish_activation(db, found, tokens)
+
+
+def _required_contacts(
+    found: _TenantLink | _ManagerLink, given: list[EmergencyContact] | None
+) -> list[EmergencyContact]:
+    if not isinstance(found, _TenantLink) or not found.contacts_required:
+        return []
+    if given is None:
+        raise ApiError(422, "VALIDATION_FAILED", field="emergencyContacts")
+    return clean_contacts(given)
+
+
+def _consume_link(
+    db: Session,
+    found: _TenantLink | _ManagerLink,
+    contacts: list[EmergencyContact],
+) -> None:
+    now = datetime.now(UTC)
     if isinstance(found, _TenantLink):
         found.tenant.activated_at = now
     else:
@@ -277,7 +327,7 @@ def activate_with_password(
     found.invitation.used_at = now
     db.add_all(
         ContactRow(
-            tenant_id=user.id,
+            tenant_id=found.user.id,
             name=c.name,
             relationship=c.relationship,
             phone=c.phone,
@@ -286,13 +336,16 @@ def activate_with_password(
         for position, c in enumerate(contacts)
     )
     db.flush()
-    tokens = start_session(db, user, data.device, LoginMethod.PASSWORD)
-    send_code(db, user, sender)
-    session = AuthSession(**tokens.model_dump(), account=Account.from_user(user))
+
+
+def _finish_activation(
+    db: Session, found: _TenantLink | _ManagerLink, tokens: AuthTokens
+) -> AuthSession:
+    session = AuthSession(**tokens.model_dump(), account=Account.from_user(found.user))
     if isinstance(found, _ManagerLink):
         _notify_manager_activated(db, found.record)
     else:
-        _notify_tenant_activated(db, user.id)
+        _notify_tenant_activated(db, found.user.id)
     return session
 
 
