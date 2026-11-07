@@ -1035,7 +1035,10 @@ def test_active_lease_summary_end_date_is_nullable_date_string(
 
 IMPLEMENTED_URLS = {
     REGISTER_URL,
+    REGISTER_GOOGLE_URL,
     LOGIN_URL,
+    LOGIN_GOOGLE_URL,
+    GOOGLE_ACTIVATION_URL,
     REFRESH_URL,
     EMAIL_CONFIRMATION_URL,
     INVITATION_PREVIEWS_URL,
@@ -1076,17 +1079,23 @@ def test_valid_account_access_request_responds_not_implemented(
 
 
 @pytest.mark.parametrize("count", [2, 3, 4])
-def test_google_activation_with_2_to_4_emergency_contacts_is_accepted(
-    client, count: int
+def test_google_activation_with_2_to_4_emergency_contacts_passes_validation(
+    client, database, count: int
 ) -> None:
     contacts = [{**VALID_CONTACT, "name": f"Contact {i}"} for i in range(count)]
     body = {**VALID_GOOGLE_ACTIVATION_INPUT, "emergencyContacts": contacts}
-    assert client.post(GOOGLE_ACTIVATION_URL, json=body).status_code == 501
+    response = client.post(GOOGLE_ACTIVATION_URL, json=body)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
 
 
-def test_google_activation_with_null_emergency_contacts_is_accepted(client) -> None:
+def test_google_activation_with_null_emergency_contacts_passes_validation(
+    client, database
+) -> None:
     body = {**VALID_GOOGLE_ACTIVATION_INPUT, "emergencyContacts": None}
-    assert client.post(GOOGLE_ACTIVATION_URL, json=body).status_code == 501
+    response = client.post(GOOGLE_ACTIVATION_URL, json=body)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
 
 
 @pytest.mark.parametrize("count", [2, 3, 4])
