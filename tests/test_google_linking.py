@@ -412,8 +412,9 @@ def test_every_role_gets_google_email_unverified(
 
     google.add("role-token", subject="sub-role", email_verified=False)
     user = make_password_user(make_user, email="role@example.com", role=UserRole(role))
+    headers = sign_in(user).headers
     before = snapshot(database)
-    response = link(client, sign_in(user).headers, token="role-token")
+    response = link(client, headers, token="role-token")
     assert_error(response, 422, "GOOGLE_EMAIL_UNVERIFIED", "idToken")
     assert snapshot(database) == before
 
