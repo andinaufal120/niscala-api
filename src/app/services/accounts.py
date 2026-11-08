@@ -77,18 +77,21 @@ def find_by_google_subject(db: Session, subject: str) -> UserAccount | None:
 
 
 def create_google_owner(
-    db: Session, verifier: GoogleVerifier, id_token: str
+    db: Session, verifier: GoogleVerifier, id_token: str, name: str | None = None
 ) -> UserAccount:
     """Create an owner with a verified email and no password; flushes, never commits.
 
-    The name is the token's name, or the part of the email before the @. Raises
-    the errors of `verify_google_token` and `require_new_google_identity`.
+    The name is the requested `name` when given, else the token's name, else
+    the part of the email before the @. The token's name and the email part
+    are trimmed, cut to 100 characters and trimmed again. Raises the errors of
+    `verify_google_token` and `require_new_google_identity`.
     """
     identity = verify_google_token(verifier, id_token)
     require_new_google_identity(db, identity)
     email = identity.email.strip().lower()
+    fallback = (identity.name or "").strip()[:100].strip() or email.split("@")[0][:100]
     user = UserAccount(
-        name=(identity.name or "").strip() or email.split("@")[0],
+        name=name or fallback,
         email=email,
         password_hash=None,
         role=UserRole.OWNER,

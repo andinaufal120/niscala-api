@@ -69,7 +69,7 @@ def register_owner_with_google(
     verifier: Annotated[GoogleVerifier, Depends(get_google_verifier)],
 ) -> AuthSession:
     """Sign up an Owner with Google and start a session."""
-    user = create_google_owner(db, verifier, body.id_token)
+    user = create_google_owner(db, verifier, body.id_token, body.name)
     tokens = start_session(db, user, body.device, LoginMethod.GOOGLE)
     return AuthSession(**tokens.model_dump(), account=Account.from_user(user))
 

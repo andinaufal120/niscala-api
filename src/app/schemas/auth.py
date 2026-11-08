@@ -68,6 +68,10 @@ class GoogleAuthInput(ApiModel):
 
     id_token: OpaqueToken
     device: DeviceInfo
+    name: PersonName | None = Field(
+        default=None,
+        description="Name of the new account. Used by sign-up only; ignored by login.",
+    )
 
 
 class RefreshInput(ApiModel):
