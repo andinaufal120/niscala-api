@@ -111,7 +111,7 @@ Agents maintain the project docs (`docs/SPEC.md`, `ARCHITECTURE.md`, `README.md`
 
 ## CI
 
-`.github/workflows/` runs the checks (`ci.yml`: `ruff format --check`, `ruff check` and `pytest` on every PR and push to `main`), Claude Code PR review (`claude-code-review.yml`) and `@claude` mentions (`claude.yml`).
+`.github/workflows/` runs the checks (`ci.yml`: `ruff format --check`, `ruff check` and `pytest` on every PR and push to `main`), Claude Code PR review (`claude-code-review.yml`) and `@claude` mentions (`claude.yml`). `cd.yml` deploys to Fly.io when CI passes on `main` and the version in `pyproject.toml` has no tag yet. Agents MUST NOT bump the version unless asked.
 
 ## Code review
 
