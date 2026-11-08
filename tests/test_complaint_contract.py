@@ -83,11 +83,7 @@ COMPLAINTS_URL = "/complaints"
 COMPLAINT_URL = f"/complaints/{COMPLAINT_ID}"
 STATUS_CHANGES_URL = f"{COMPLAINT_URL}/status-changes"
 CLASSIFICATION_URL = f"{COMPLAINT_URL}/classification"
-PHOTO_URL = f"{COMPLAINT_URL}/photo"
 CATEGORIES_URL = "/complaint-categories"
-
-PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 16
 
 COMPLAINT_COMPONENTS = [
     "ComplaintStatus",
@@ -780,7 +776,7 @@ def test_complaint_category_list_items_is_required_array_of_strings(
     assert items["items"]["type"] == "string"
 
 
-# Runtime: valid requests reach the not-implemented stub
+# Runtime: invalid requests are rejected with a validation error
 
 
 @pytest.fixture
@@ -793,36 +789,6 @@ def tenant_headers(make_user, sign_in) -> dict[str, str]:
 @pytest.fixture
 def owner_headers(make_user, sign_in) -> dict[str, str]:
     return sign_in(make_user()).headers
-
-
-@pytest.mark.parametrize(
-    ("method", "url", "body"),
-    [
-        pytest.param("get", PHOTO_URL, None, id="get_photo"),
-    ],
-)
-def test_valid_complaint_request_responds_not_implemented(
-    client, method: str, url: str, body: dict[str, Any] | None
-) -> None:
-    response = client.request(method, url, json=body)
-    assert response.status_code == 501
-
-
-@pytest.mark.parametrize(
-    ("filename", "content", "content_type"),
-    [
-        pytest.param("photo.png", PNG_BYTES, "image/png", id="png"),
-        pytest.param("photo.jpg", JPEG_BYTES, "image/jpeg", id="jpeg"),
-    ],
-)
-def test_valid_complaint_photo_upload_responds_not_implemented(
-    client, filename: str, content: bytes, content_type: str
-) -> None:
-    response = client.put(PHOTO_URL, files={"file": (filename, content, content_type)})
-    assert response.status_code == 501
-
-
-# Runtime: invalid requests are rejected with a validation error
 
 
 @pytest.mark.parametrize(
@@ -911,37 +877,6 @@ def test_classification_without_body_is_rejected_with_validation_error(
 ) -> None:
     response = client.put(CLASSIFICATION_URL, headers=owner_headers)
     assert response.status_code == 422
-
-
-def test_non_uuid_complaint_id_in_photo_upload_is_rejected_with_validation_error(
-    client,
-) -> None:
-    response = client.put(
-        f"/complaints/{NOT_A_UUID}/photo",
-        files={"file": ("photo.png", PNG_BYTES, "image/png")},
-    )
-    assert response.status_code == 422
-
-
-def test_complaint_photo_upload_without_file_is_rejected_with_validation_error(
-    client,
-) -> None:
-    assert client.put(PHOTO_URL).status_code == 422
-
-
-def test_complaint_photo_upload_with_wrong_form_field_is_rejected_with_validation_error(
-    client,
-) -> None:
-    response = client.put(
-        PHOTO_URL, files={"photo": ("photo.png", PNG_BYTES, "image/png")}
-    )
-    assert response.status_code == 422
-
-
-def test_non_uuid_complaint_id_in_photo_download_is_rejected_with_validation_error(
-    client,
-) -> None:
-    assert client.get(f"/complaints/{NOT_A_UUID}/photo").status_code == 422
 
 
 def test_non_uuid_complaint_id_in_classification_is_rejected_with_validation_error(
