@@ -95,7 +95,6 @@ def test_jobs_secret_is_read_from_the_environment(monkeypatch):
 
 def test_the_session_cleanup_is_the_first_daily_job():
     from app.services.jobs import DAILY_JOBS
-
     from app.services.sessions import end_expired_sessions
 
     assert len(DAILY_JOBS) >= 1
@@ -212,10 +211,9 @@ def test_run_daily_jobs_is_silent_when_every_job_succeeds(database, caplog):
 def test_run_daily_jobs_without_arguments_runs_the_default_jobs(
     database, make_user, db_session
 ):
-    from app.services.jobs import run_daily_jobs
-
     from app.models import UserSession
     from app.schemas.sessions import LoginMethod
+    from app.services.jobs import run_daily_jobs
 
     user = make_user()
     row = UserSession(
