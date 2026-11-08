@@ -154,6 +154,7 @@ Settings are read from environment variables, or from a `.env` file in the proje
 | `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |
 | `FIREBASE_CREDENTIALS` | none | Content of a Firebase service account JSON file, on one line; enables push through FCM |
 | `GOOGLE_CLIENT_IDS` | none | Comma-separated OAuth client IDs accepted as the audience of Google ID tokens; without it Google sign-in is refused |
+| `JOBS_SECRET` | none | Bearer secret for `POST /internal/jobs/daily`; without it (or blank) that endpoint answers 404 |
 
 Until a mail service is set up, email verification codes are written to the server log instead of being emailed.
 

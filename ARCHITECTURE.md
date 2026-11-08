@@ -63,6 +63,7 @@ The Flutter Android app lives in `andinaufal120/niscala-app`. It generates its D
 - **Complaints** (`services/complaints.py`): a complaint, its status history and its classification are stored together; classification runs after the save in a background task. Moving a complaint to its next status calls `notify_complaint_status_change`, which creates the tenant's notification; a failing notification is logged and never undoes the change.
 - **Managers** (`services/managers.py`): a Manager is a login account (role manager, shared by every Owner the person works for) plus one `managers` record per Owner, which holds that Owner's nickname and phone and when the Manager activated. Property access still comes from `manager_assignments`, keyed by the account. Invitations belong to either a tenant or a manager record (exactly one is set).
 - **Notifications** (`services/notifications.py`): events call small hooks (`notify_status_change`, `notify_complaint_status_change`, `notify_complaint_submitted`, `notify_tenant_activated`, `notify_manager_activated`) that store one row per recipient with a snapshot of the facts as they were. Rows are created in a savepoint in the event's own transaction, so a failure is logged and never undoes the event. A push is queued for every live session of a recipient that has a token, when the category is switched on, and sent through `push.get_push_sender()` only after the outermost commit of the event's session (a rollback drops the queue). Each push is tried once; when FCM reports a token as unregistered or invalid, `push_token` is cleared on that session (only if it still holds that token). The late push of a high-urgency complaint to `highOnly` recipients is queued before the classification commit. Bill-issued, due-date and overdue notifications are not built.
+- **Daily jobs** (`routers/jobs.py`, `services/jobs.py`): `POST /internal/jobs/daily` is left out of the OpenAPI document and needs `Authorization: Bearer <JOBS_SECRET>` (404 when the secret is unset). It runs each job in its own transaction; a failure is logged, the rest still run, and the answer is 500. Jobs are idempotent, so a repeated run is harmless. Jobs: ending sessions past the idle or 1-year limit.
 
 Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, Alembic, psycopg 3, managed with uv.
 
@@ -102,7 +103,25 @@ PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Sc
 
 ## 6. Deployment & Infrastructure
 
-The shared development server is the Fly.io app `niscala-api-dev` at `https://dev-api-niscala.andinaufal.com` (also reachable at `niscala-api-dev.fly.dev`), in region `sin` (Singapore, next to the database). It is built from `Dockerfile` and configured in `fly.toml`. Its database is the Supabase project *niscala-api-dev* (ap-southeast-1), reached through the Supavisor session pooler, with Supabase's Data API turned off because only the backend uses the database. `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY`, `GEMINI_API_KEY`, `FIREBASE_CREDENTIALS` and `GOOGLE_CLIENT_IDS` are Fly secrets (`GOOGLE_CLIENT_IDS` holds public OAuth client IDs, not a secret value). Deploys are manual (`fly deploy`), and each one runs `alembic upgrade head` as Fly's release command before the new version starts. The machine stops when idle and starts again on the next request. Production is *not set up yet.* GitHub Actions runs format, lint and test checks (`ci.yml`) and Claude Code review on pull requests (`.github/workflows/`).
+The shared development server is the Fly.io app `niscala-api-dev` at `https://dev-api-niscala.andinaufal.com` (also reachable at `niscala-api-dev.fly.dev`), in region `sin` (Singapore, next to the database). It is built from `Dockerfile` and configured in `fly.toml`. Its database is the Supabase project *niscala-api-dev* (ap-southeast-1), reached through the Supavisor session pooler, with Supabase's Data API turned off because only the backend uses the database. `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY`, `GEMINI_API_KEY`, `FIREBASE_CREDENTIALS` and `GOOGLE_CLIENT_IDS` and `JOBS_SECRET` are Fly secrets (`GOOGLE_CLIENT_IDS` holds public OAuth client IDs, not a secret value). Deploys are manual (`fly deploy`), and each one runs `alembic upgrade head` as Fly's release command before the new version starts. The machine stops when idle and starts again on the next request. Production is *not set up yet.* GitHub Actions runs format, lint and test checks (`ci.yml`) and Claude Code review on pull requests (`.github/workflows/`).
+
+Supabase `pg_cron` calls the daily jobs endpoint at 00:00 UTC (07:00 WIB) through `pg_net`, with the secret read from Supabase Vault (`jobs_secret`):
+
+```sql
+select cron.schedule(
+  'niscala-daily-jobs',
+  '0 0 * * *',
+  $$ select net.http_post(
+    url := 'https://dev-api-niscala.andinaufal.com/internal/jobs/daily',
+    headers := jsonb_build_object(
+      'Authorization',
+      'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'jobs_secret')
+    )
+  ) $$
+);
+```
+
+The extensions `pg_cron` and `pg_net` and the Vault secret are set up in the Supabase dashboard, not by a migration.
 
 ## 7. Security Considerations
 
@@ -122,8 +141,6 @@ The shared development server is the Fly.io app `niscala-api-dev` at `https://de
 ## 9. Future Considerations
 
 Open architecture questions are listed in `docs/SPEC.md` §10 (for example U-9 error codes in OpenAPI, U-15 conflict detection, TBD-3 Google Play integration).
-
-Not built yet: a cleanup job for sessions that passed the idle or maximum age limit without a later refresh attempt. Their `used_refresh_tokens` rows stay until that attempt ends the session.
 
 ## 10. Project Identification
 

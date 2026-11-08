@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     invitation_base_url: str = "https://niscala.app"
     database_url: str = "postgresql+psycopg://niscala:niscala@localhost:5432/niscala"
     jwt_secret: str
+    jobs_secret: str | None = None
     invitation_encryption_key: str
     google_client_ids: Annotated[list[str], NoDecode] = []
 
