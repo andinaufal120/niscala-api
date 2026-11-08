@@ -120,6 +120,11 @@ def stored_receipts(database) -> list:
         return list(db.scalars(select(RentBillReceipt)))
 
 
+def stored_content(file_store, row) -> bytes:
+    """The bytes the file store holds for a receipt or photo row."""
+    return file_store.objects[row.storage_key][0]
+
+
 def snapshot(database, bill) -> tuple:
     """Everything stored about a bill, to compare before and after a request."""
     row = stored_bill(database, bill)
@@ -132,7 +137,10 @@ def snapshot(database, bill) -> tuple:
             (c.id, c.status, c.method, c.reason, c.manual, c.actor_id)
             for c in stored_changes(database, bill)
         ],
-        [(r.content, r.content_type, r.uploaded_at) for r in stored_receipts(database)],
+        [
+            (r.storage_key, r.content_type, r.uploaded_at)
+            for r in stored_receipts(database)
+        ],
     )
 
 

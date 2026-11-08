@@ -27,6 +27,11 @@ _SETTINGS_FROM_ENVIRONMENT = (
     "GEMINI_API_KEY",
     "FIREBASE_CREDENTIALS",
     "GOOGLE_CLIENT_IDS",
+    "R2_ACCOUNT_ID",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+    "R2_BUCKET",
+    "FILE_STORAGE_DIR",
 )
 
 
@@ -768,6 +773,18 @@ class PushOutbox:
         return [n for t, n in self.sent if t == token]
 
 
+@pytest.fixture(autouse=True)
+def file_store(app):
+    """Keep uploaded files in memory for one test, so none reach disk or network."""
+    from app.storage import get_file_store
+    from file_store_support import MemoryFileStore
+
+    store = MemoryFileStore()
+    app.dependency_overrides[get_file_store] = lambda: store
+    yield store
+    app.dependency_overrides.pop(get_file_store, None)
+
+
 @pytest.fixture
 def pushes(monkeypatch) -> PushOutbox:
     """Capture the pushes the application sends during one test."""
@@ -1127,15 +1144,17 @@ def scene(
 
 
 @pytest.fixture
-def make_rent_bill(database) -> Callable[..., Any]:
+def make_rent_bill(database, file_store) -> Callable[..., Any]:
     """Commit a `RentBill` for a lease with its status history and optional receipt.
 
     The default bill covers today, is unpaid and is not yet due. `changes` is a
     list of `(status, method, reason, manual, actor_id, changed_at)`; by default
     one unpaid entry made by the system at the creation time. `receipt` is an
-    optional `(content, content_type, uploaded_at)`.
+    optional `(content, content_type, uploaded_at)`; its bytes are put in the
+    file store under a fresh key.
     """
     from datetime import UTC, datetime, timedelta
+    from uuid import uuid4
 
     from sqlalchemy.orm import Session
 
@@ -1191,10 +1210,12 @@ def make_rent_bill(database) -> Callable[..., Any]:
                 )
             if receipt is not None:
                 content, content_type, uploaded_at = receipt
+                key = f"receipts/{row.id}/{uuid4()}"
+                file_store.put(key, content, content_type)
                 db.add(
                     RentBillReceipt(
                         rent_bill_id=row.id,
-                        content=content,
+                        storage_key=key,
                         content_type=content_type,
                         uploaded_at=uploaded_at,
                     )
