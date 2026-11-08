@@ -214,7 +214,7 @@ COMPONENT_FIELDS: dict[str, tuple[set[str], set[str]]] = {
         {"name", "email", "password", "device"},
     ),
     "LoginInput": ({"email", "password", "device"}, {"email", "password", "device"}),
-    "GoogleAuthInput": ({"idToken", "device"}, {"idToken", "device"}),
+    "GoogleAuthInput": ({"idToken", "device", "name"}, {"idToken", "device"}),
     "RefreshInput": ({"refreshToken"}, {"refreshToken"}),
     "AuthTokens": (TOKEN_FIELDS, TOKEN_FIELDS),
     "Account": (ACCOUNT_FIELDS, ACCOUNT_FIELDS),
@@ -749,6 +749,29 @@ def test_person_name_is_string_of_1_to_100_characters(
     assert schema["maxLength"] == 100
 
 
+def test_google_auth_name_is_optional_string_of_1_to_100_characters(
+    openapi: OpenApiDoc,
+) -> None:
+    schema = nullable_inner(_field(openapi, "GoogleAuthInput", "name"))
+    assert schema["type"] == "string"
+    assert schema["minLength"] == 1
+    assert schema["maxLength"] == 100
+    assert "name" not in openapi.component("GoogleAuthInput")["required"]
+
+
+def test_google_auth_name_is_described_as_used_by_sign_up_only(
+    openapi: OpenApiDoc,
+) -> None:
+    schema = _field(openapi, "GoogleAuthInput", "name")
+    assert "sign-up" in schema["description"]
+    assert "login" in schema["description"]
+
+
+def test_register_google_accepts_a_name_in_the_body(openapi: OpenApiDoc) -> None:
+    assert openapi.request_schema_ref("post", REGISTER_GOOGLE_URL) == "GoogleAuthInput"
+    assert "name" in _property_names(openapi.component("GoogleAuthInput"))
+
+
 @pytest.mark.parametrize(("component", "field"), REQUIRED_EMAIL_FIELDS)
 def test_required_email_field_is_email_string(
     openapi: OpenApiDoc, component: str, field: str
@@ -1035,7 +1058,10 @@ def test_active_lease_summary_end_date_is_nullable_date_string(
 
 IMPLEMENTED_URLS = {
     REGISTER_URL,
+    REGISTER_GOOGLE_URL,
     LOGIN_URL,
+    LOGIN_GOOGLE_URL,
+    GOOGLE_ACTIVATION_URL,
     REFRESH_URL,
     EMAIL_CONFIRMATION_URL,
     INVITATION_PREVIEWS_URL,
@@ -1076,17 +1102,23 @@ def test_valid_account_access_request_responds_not_implemented(
 
 
 @pytest.mark.parametrize("count", [2, 3, 4])
-def test_google_activation_with_2_to_4_emergency_contacts_is_accepted(
-    client, count: int
+def test_google_activation_with_2_to_4_emergency_contacts_passes_validation(
+    client, database, count: int
 ) -> None:
     contacts = [{**VALID_CONTACT, "name": f"Contact {i}"} for i in range(count)]
     body = {**VALID_GOOGLE_ACTIVATION_INPUT, "emergencyContacts": contacts}
-    assert client.post(GOOGLE_ACTIVATION_URL, json=body).status_code == 501
+    response = client.post(GOOGLE_ACTIVATION_URL, json=body)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
 
 
-def test_google_activation_with_null_emergency_contacts_is_accepted(client) -> None:
+def test_google_activation_with_null_emergency_contacts_passes_validation(
+    client, database
+) -> None:
     body = {**VALID_GOOGLE_ACTIVATION_INPUT, "emergencyContacts": None}
-    assert client.post(GOOGLE_ACTIVATION_URL, json=body).status_code == 501
+    response = client.post(GOOGLE_ACTIVATION_URL, json=body)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
 
 
 @pytest.mark.parametrize("count", [2, 3, 4])

@@ -1,16 +1,17 @@
 """Endpoints under /invitations.
 
-The preview, the password activation and the acceptance of Tenant and Manager
-invitations are implemented (accepting a Tenant invitation answers 501); the
-Google activation is declared in the contract and answers 501.
+The preview, the password and Google activations and the acceptance of Tenant
+and Manager invitations are implemented (accepting a Tenant invitation answers
+501).
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 
 from app.db import SessionDep
 from app.email import EmailSender, get_email_sender
+from app.google import GoogleVerifier, get_google_verifier
 from app.schemas.auth import AuthSession, TokenInput
 from app.schemas.invitations import (
     InvitationAcceptancePreview,
@@ -43,9 +44,11 @@ def activate_invitation_with_password(
 @router.post("/activations/google", status_code=status.HTTP_201_CREATED)
 def activate_invitation_with_google(
     body: InvitationGoogleActivationInput,
+    db: SessionDep,
+    verifier: Annotated[GoogleVerifier, Depends(get_google_verifier)],
 ) -> AuthSession:
     """Consume an invitation link, create the account with Google and start a session."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return activation.activate_with_google(db, body, verifier)
 
 
 @router.post("/acceptance-previews")

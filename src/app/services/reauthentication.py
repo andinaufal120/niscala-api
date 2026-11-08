@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
+from app.google import GoogleVerifier, verify_google_token
 from app.schemas.sessions import PasswordChangeResult
 from app.security import CurrentUser
 from app.services.login_attempts import (
@@ -79,8 +80,39 @@ def reauthenticate_with_password(
             record_failure(db, email)
             db.commit()
         raise ApiError(422, "PASSWORD_INCORRECT", field="password")
+    return _mark_reauthenticated(db, current)
+
+
+def reauthenticate_with_google(
+    db: Session, current: CurrentUser, verifier: GoogleVerifier, id_token: str
+) -> datetime:
+    """Mark the session as re-authenticated and return when that stops counting.
+
+    Shares the failed-login counter of the account's email. Raises 429
+    TOO_MANY_LOGIN_ATTEMPTS while locked, 401 GOOGLE_TOKEN_INVALID (field
+    `idToken`, not counted), 409 GOOGLE_NOT_LINKED for an account without a
+    Google identity (not counted), and 422 GOOGLE_ACCOUNT_MISMATCH (field
+    `idToken`) for a token of another identity, after committing the recorded
+    failure.
+    """
+    user = current.user
+    email = user.email
     if email is not None:
-        clear_failures(db, email)
+        ensure_not_locked(db, email)
+    identity = verify_google_token(verifier, id_token)
+    if user.google_subject is None:
+        raise ApiError(409, "GOOGLE_NOT_LINKED")
+    if identity.subject != user.google_subject:
+        if email is not None:
+            record_failure(db, email)
+            db.commit()
+        raise ApiError(422, "GOOGLE_ACCOUNT_MISMATCH", field="idToken")
+    return _mark_reauthenticated(db, current)
+
+
+def _mark_reauthenticated(db: Session, current: CurrentUser) -> datetime:
+    if current.user.email is not None:
+        clear_failures(db, current.user.email)
     now = datetime.now(UTC)
     current.session.reauthenticated_at = now
     return now + REAUTHENTICATION_WINDOW

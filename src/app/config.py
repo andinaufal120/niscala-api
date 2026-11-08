@@ -1,8 +1,10 @@
 """Application settings read from environment variables and an optional .env file."""
 
 from functools import cache
+from typing import Annotated, Any
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 COMPLAINT_CATEGORIES = (
     "Listrik",
@@ -26,6 +28,15 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://niscala:niscala@localhost:5432/niscala"
     jwt_secret: str
     invitation_encryption_key: str
+    google_client_ids: Annotated[list[str], NoDecode] = []
+
+    @field_validator("google_client_ids", mode="before")
+    @classmethod
+    def _split_client_ids(cls, value: Any) -> Any:
+        """Read a comma-separated list, dropping blanks and surrounding spaces."""
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
 
 
 @cache

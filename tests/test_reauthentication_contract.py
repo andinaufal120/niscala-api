@@ -35,11 +35,6 @@ COMPONENT_FIELDS: dict[str, tuple[set[str], set[str]]] = {
     "Reauthentication": ({"reauthenticatedUntil"}, {"reauthenticatedUntil"}),
 }
 
-VALID_BODIES = {
-    PASSWORD_URL: {"password": "correct horse battery"},
-    GOOGLE_URL: {"idToken": "eyJhbGciOiJSUzI1NiJ9.payload.signature"},
-}
-
 
 def _property_names(schema: dict[str, Any]) -> set[str]:
     return set(schema.get("properties", {}))
@@ -183,15 +178,6 @@ def test_property_input_has_no_reauthentication_field(openapi: OpenApiDoc) -> No
     assert not {p for p in properties if "reauth" in p.lower()}
 
 
-# Runtime: valid requests reach the not-implemented stub
-
-
-def test_valid_google_reauthentication_request_responds_not_implemented(
-    client,
-) -> None:
-    assert client.post(GOOGLE_URL, json=VALID_BODIES[GOOGLE_URL]).status_code == 501
-
-
 @pytest.fixture
 def auth_headers(make_user, sign_in) -> dict[str, str]:
     """Headers of a signed-in caller, so validation runs behind authentication."""
@@ -245,6 +231,7 @@ def test_password_reauthentication_with_snake_case_or_wrong_field_is_rejected(
 
 
 def test_google_reauthentication_with_snake_case_field_name_is_rejected(
-    client,
+    client, auth_headers
 ) -> None:
-    assert client.post(GOOGLE_URL, json={"id_token": "token"}).status_code == 422
+    response = client.post(GOOGLE_URL, json={"id_token": "token"}, headers=auth_headers)
+    assert response.status_code == 422
