@@ -45,7 +45,7 @@ class Complaint(Base):
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.user_id"))
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id"))
     room_id: Mapped[UUID] = mapped_column(ForeignKey("rooms.id"))
     description: Mapped[str]
     status: Mapped[str]

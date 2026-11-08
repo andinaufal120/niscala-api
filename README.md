@@ -121,7 +121,7 @@ Running it again replaces the Owner's current period. It is a development tool, 
 
 ### Seeding rent bills (development only)
 
-Bills are not generated automatically yet. This command creates the billing history of a Tenant's active lease in the database in `DATABASE_URL`: paid bills for the past periods (some paid late) and an unpaid bill for the current period.
+Bills are not generated automatically yet. This command creates the billing history of a Tenant's active lease (the oldest one, when the account rents in several places) in the database in `DATABASE_URL`: paid bills for the past periods (some paid late) and an unpaid bill for the current period.
 
 ```sh
 uv run niscala-api seed-rent-bills tenant@example.com              # last 12 periods

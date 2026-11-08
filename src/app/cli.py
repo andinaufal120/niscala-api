@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_engine
 from app.errors import ApiError
-from app.models import Lease
+from app.models import Lease, Tenant
 from app.schemas.auth import UserRole
 from app.schemas.subscriptions import PaidPlanCode
 from app.services import demo, rent_bills
@@ -100,9 +100,10 @@ def _seed_rent_bills(email: str, months: int) -> int:
         lease = (
             user
             and db.scalars(
-                select(Lease).where(
-                    Lease.tenant_id == user.id, Lease.ended_at.is_(None)
-                )
+                select(Lease)
+                .join(Tenant, Tenant.id == Lease.tenant_id)
+                .where(Tenant.user_id == user.id, Lease.ended_at.is_(None))
+                .order_by(Lease.created_at, Lease.id)
             ).first()
         )
         if lease is None or lease.start_date is None:

@@ -1,8 +1,7 @@
 """Endpoints under /invitations.
 
 The preview, the password and Google activations and the acceptance of Tenant
-and Manager invitations are implemented (accepting a Tenant invitation answers
-501).
+and Manager invitations are implemented.
 """
 
 from typing import Annotated
@@ -14,6 +13,7 @@ from app.email import EmailSender, get_email_sender
 from app.google import GoogleVerifier, get_google_verifier
 from app.schemas.auth import AuthSession, TokenInput
 from app.schemas.invitations import (
+    InvitationAcceptanceInput,
     InvitationAcceptancePreview,
     InvitationGoogleActivationInput,
     InvitationPasswordActivationInput,
@@ -67,9 +67,9 @@ def preview_invitation_acceptance(
     response_class=Response,
 )
 def accept_invitation(
-    body: TokenInput,
+    body: InvitationAcceptanceInput,
     db: SessionDep,
     current: Annotated[CurrentUser, Depends(get_verified_user)],
 ) -> None:
     """Accept an invitation with the caller's existing account."""
-    activation.accept_invitation(db, body.token, current.user)
+    activation.accept_invitation(db, body, current.user)

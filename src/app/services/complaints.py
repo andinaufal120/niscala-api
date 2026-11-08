@@ -19,6 +19,7 @@ from app.models import ComplaintStatusChange as StatusChangeRow
 from app.models import Lease as LeaseRow
 from app.models import Property as PropertyRow
 from app.models import Room as RoomRow
+from app.models import Tenant as TenantRow
 from app.models import UserAccount
 from app.schemas.auth import UserRole
 from app.schemas.complaints import (
@@ -68,14 +69,18 @@ def _rows() -> Select[Row]:
         select(ComplaintRow, RoomRow, PropertyRow, UserAccount)
         .join(RoomRow, RoomRow.id == ComplaintRow.room_id)
         .join(PropertyRow, PropertyRow.id == RoomRow.property_id)
-        .join(UserAccount, UserAccount.id == ComplaintRow.tenant_id)
+        .join(TenantRow, TenantRow.id == ComplaintRow.tenant_id)
+        .join(UserAccount, UserAccount.id == TenantRow.user_id)
     )
 
 
 def _readable_by(user: UserAccount) -> Select[Row]:
-    """Select the complaints the user may read."""
+    """Select the complaints the user may read.
+
+    A tenant reads the complaints of all their records.
+    """
     if user.role == UserRole.TENANT:
-        return _rows().where(ComplaintRow.tenant_id == user.id)
+        return _rows().where(TenantRow.user_id == user.id)
     properties = accessible_properties(user).subquery()
     return _rows().where(PropertyRow.id.in_(select(properties.c.id)))
 
@@ -158,20 +163,33 @@ def _detail(db: Session, row: Row, plans: dict[UUID, bool]) -> Complaint:
     )
 
 
-def create_complaint(db: Session, tenant: UserAccount, description: str) -> Complaint:
-    """Save a new complaint in the room of the tenant's active lease.
+def create_complaint(
+    db: Session, tenant: UserAccount, description: str, room_id: UUID
+) -> Complaint:
+    """Save a new complaint in a room the tenant has an active lease on.
 
-    The state is `notClassified` when the property owner has no running paid
-    subscription, otherwise `classifying`. Flushes, never commits. Raises 403
-    NO_ACTIVE_LEASE when the tenant has no active lease.
+    The complaint belongs to the tenant record holding that lease. The state is
+    `notClassified` when the property owner has no running paid subscription,
+    otherwise `classifying`. Flushes, never commits. Raises 403
+    NO_ACTIVE_LEASE when the tenant has no active lease and 404 ROOM_NOT_FOUND
+    (field `roomId`) when the room is not the room of one of them.
     """
-    lease = db.scalars(
-        select(LeaseRow).where(
-            LeaseRow.tenant_id == tenant.id, LeaseRow.ended_at.is_(None)
+    leases = list(
+        db.scalars(
+            select(LeaseRow)
+            .join(TenantRow, TenantRow.id == LeaseRow.tenant_id)
+            .where(
+                TenantRow.user_id == tenant.id,
+                TenantRow.deleted_at.is_(None),
+                LeaseRow.ended_at.is_(None),
+            )
         )
-    ).first()
-    if lease is None:
+    )
+    if not leases:
         raise ApiError(403, "NO_ACTIVE_LEASE")
+    lease = next((item for item in leases if item.room_id == room_id), None)
+    if lease is None:
+        raise ApiError(404, "ROOM_NOT_FOUND", field="roomId")
     owner_id = db.scalars(
         select(PropertyRow.owner_id)
         .join(RoomRow, RoomRow.property_id == PropertyRow.id)
@@ -184,7 +202,7 @@ def create_complaint(db: Session, tenant: UserAccount, description: str) -> Comp
     )
     now = datetime.now(UTC)
     row = ComplaintRow(
-        tenant_id=tenant.id,
+        tenant_id=lease.tenant_id,
         room_id=lease.room_id,
         description=description,
         status=ComplaintStatus.NEW.value,
@@ -251,7 +269,7 @@ def notify_complaint_submitted(db: Session, complaint: ComplaintRow) -> None:
             urgency=None,
             handling_note=None,
         ),
-        tenant=TenantRef(id=tenant.id, name=tenant.name),
+        tenant=TenantRef(id=complaint.tenant_id, name=tenant.name),
         room=RoomRef(id=room.id, number=room.number),
         property_=PropertyRef(id=prop.id, name=prop.name),
     )
@@ -269,7 +287,7 @@ def notify_complaint_status_change(
     classification = summary.classification
     notifications.notify(
         db,
-        [complaint.tenant_id],
+        [row[3].id],
         NotificationType.COMPLAINT_STATUS_CHANGED,
         summary.property.id,
         complaint=NotificationComplaint(

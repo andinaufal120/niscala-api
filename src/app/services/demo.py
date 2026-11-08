@@ -110,11 +110,12 @@ def seed_demo(db: Session) -> bool:
     )
 
     now = datetime.now(UTC)
-    account = db.get_one(UserAccount, created.id)
+    record = db.get_one(Tenant, created.id)
+    account = db.get_one(UserAccount, record.user_id)
     account.email = TENANT_EMAIL
     account.password_hash = hash_password(PASSWORD)
     account.email_verified = True
-    db.get_one(Tenant, created.id).activated_at = now
+    record.activated_at = now
     db.execute(
         update(Invitation)
         .where(Invitation.tenant_id == created.id, Invitation.invalidated_at.is_(None))

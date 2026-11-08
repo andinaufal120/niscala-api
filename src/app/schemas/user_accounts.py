@@ -61,7 +61,7 @@ class AccountPropertyRef(ApiModel):
 
 
 class AccountTenancy(ApiModel):
-    """The room a Tenant account currently leases."""
+    """A room a Tenant account currently leases."""
 
     property_name: str
     room_number: str
@@ -90,8 +90,9 @@ class UserAccount(ApiModel):
     )
     active_lease_count: int = Field(
         ge=0,
-        description="Owner: across owned properties. Tenant: 0 or 1. Otherwise 0.",
+        description="Owner: across owned properties. Tenant: across their records. "
+        "Otherwise 0.",
     )
-    tenancy: AccountTenancy | None = Field(
-        description="Tenant with an active lease; otherwise null."
+    tenancies: list[AccountTenancy] = Field(
+        description="A Tenant's active leases; empty for other roles."
     )

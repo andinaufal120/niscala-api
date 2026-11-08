@@ -64,7 +64,9 @@ def create_complaint(
 
     The complaint is saved before it is classified in the background.
     """
-    created = complaints.create_complaint(db, caller.user, body.description)
+    created = complaints.create_complaint(
+        db, caller.user, body.description, body.room_id
+    )
     # Commit now so the background task sees the row.
     db.commit()
     if created.classification_state == ComplaintClassificationState.CLASSIFYING:

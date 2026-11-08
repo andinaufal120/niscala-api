@@ -114,8 +114,9 @@ class CurrentLeaseProperty(ApiModel):
 
 
 class CurrentLease(ApiModel):
-    """The calling tenant's active lease."""
+    """One of the calling tenant's active leases."""
 
+    tenant_id: UUID = Field(description="The Tenant record the lease belongs to.")
     room: CurrentLeaseRoom
     property: CurrentLeaseProperty
     start_date: date | None
@@ -124,10 +125,12 @@ class CurrentLease(ApiModel):
     billing_cycle: BillingCycle
 
 
-class CurrentLeaseResult(ApiModel):
-    """The calling tenant's lease."""
+class CurrentLeaseList(ApiModel):
+    """The calling tenant's active leases."""
 
-    lease: CurrentLease | None = Field(description="Null when the lease has ended.")
+    items: list[CurrentLease] = Field(
+        description="Ordered by property name, then room number."
+    )
 
 
 class TenantInvitation(ApiModel):
