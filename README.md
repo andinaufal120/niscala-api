@@ -154,6 +154,11 @@ Settings are read from environment variables, or from a `.env` file in the proje
 | `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |
 | `FIREBASE_CREDENTIALS` | none | Content of a Firebase service account JSON file, on one line; enables push through FCM |
 | `GOOGLE_CLIENT_IDS` | none | Comma-separated OAuth client IDs accepted as the audience of Google ID tokens; without it Google sign-in is refused |
+| `R2_ACCOUNT_ID` | none | Cloudflare account ID of the R2 bucket that stores receipts and complaint photos |
+| `R2_ACCESS_KEY_ID` | none | Access key ID of an R2 API token with read and write access to the bucket |
+| `R2_SECRET_ACCESS_KEY` | none | Secret access key of that token |
+| `R2_BUCKET` | none | Name of the R2 bucket; keep it private |
+| `FILE_STORAGE_DIR` | `var/files` | Local directory for uploaded files, used when any of the four `R2_*` variables is missing or blank |
 
 Until a mail service is set up, email verification codes are written to the server log instead of being emailed.
 
@@ -164,6 +169,8 @@ fly secrets set FIREBASE_CREDENTIALS="$(cat service-account.json)" -a niscala-ap
 ```
 
 Do not commit the key file.
+
+Without all four `R2_*` variables, uploaded files are written to `FILE_STORAGE_DIR` on the machine running the API, and a warning is logged. That is fine for local development but not for the deployed server, whose disk is not kept between deploys.
 
 ## Docs
 
