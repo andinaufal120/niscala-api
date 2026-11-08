@@ -115,7 +115,7 @@ The shared development server is the Fly.io app `niscala-api-dev` at `https://de
 ## 8. Development & Testing Environment
 
 - `uv sync` installs dependencies; `uv run pytest` runs the tests; `uv run ruff check` and `uv run ruff format` lint and format.
-- Tests that touch the database start a throwaway PostgreSQL container (testcontainers), so Docker must be running. Tests that don't need it run without Docker. Tables are emptied after each test.
+- Tests run in parallel with pytest-xdist (`-n auto --dist loadfile` in `pyproject.toml`); `uv run pytest -n0` runs them serially, e.g. for debugging. Tests that touch the database start a throwaway PostgreSQL container (testcontainers), one per worker, so Docker must be running. Tests that don't need it run without Docker. Tables are emptied after each test.
 - `uv run alembic upgrade head` applies migrations to the database in `DATABASE_URL`.
 - Tests come first: `test-writer` and `implementer` subagents (`.claude/agents/`) work in two steps, as described in `CLAUDE.md`.
 

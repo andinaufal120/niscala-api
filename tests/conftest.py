@@ -17,6 +17,9 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, text
 
+# Tests parametrized over sets or dicts of strings collect in hash order. The
+# parallel workers inherit this seed so that they all collect the same order.
+os.environ.setdefault("PYTHONHASHSEED", "0")
 os.environ.setdefault("JWT_SECRET", "test-secret-0123456789abcdef0123456789abcdef")
 os.environ.setdefault("INVITATION_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
