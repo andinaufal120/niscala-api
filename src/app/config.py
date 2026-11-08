@@ -1,6 +1,7 @@
 """Application settings read from environment variables and an optional .env file."""
 
 from functools import cache
+from pathlib import Path
 from typing import Annotated, Any
 
 from pydantic import field_validator
@@ -25,6 +26,11 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     firebase_credentials: str | None = None
     invitation_base_url: str = "https://niscala.app"
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket: str | None = None
+    file_storage_dir: Path = Path("var/files")
     database_url: str = "postgresql+psycopg://niscala:niscala@localhost:5432/niscala"
     jwt_secret: str
     invitation_encryption_key: str

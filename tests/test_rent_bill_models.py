@@ -4,7 +4,6 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pytest
-from rent_bill_support import png
 from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -68,9 +67,9 @@ def test_the_tables_exist_with_their_columns(database):
         "actor_id",
         "changed_at",
     }
-    assert columns("rent_bill_receipts") >= {
+    assert columns("rent_bill_receipts") == {
         "rent_bill_id",
-        "content",
+        "storage_key",
         "content_type",
         "uploaded_at",
     }
@@ -255,66 +254,87 @@ def test_a_status_change_actor_must_be_an_existing_account(db_session, lease):
         db_session.commit()
 
 
-def test_a_receipt_keeps_its_bytes_and_type(db_session, lease):
+def new_receipt(bill_id, **overrides):
+    from app.models import RentBillReceipt
+
+    fields = {
+        "rent_bill_id": bill_id,
+        "storage_key": f"receipts/{bill_id}/{uuid4()}",
+        "content_type": "image/png",
+        "uploaded_at": datetime.now(UTC),
+    }
+    return RentBillReceipt(**{**fields, **overrides})
+
+
+def test_a_receipt_keeps_its_storage_key_and_type(db_session, lease):
     from app.models import RentBillReceipt
 
     bill = new_bill(lease)
     db_session.add(bill)
     db_session.flush()
-    content = png(2048)
-    db_session.add(
-        RentBillReceipt(
-            rent_bill_id=bill.id,
-            content=content,
-            content_type="image/png",
-            uploaded_at=datetime.now(UTC),
-        )
-    )
+    key = f"receipts/{bill.id}/{uuid4()}"
+    db_session.add(new_receipt(bill.id, storage_key=key))
     db_session.commit()
     stored = db_session.get(RentBillReceipt, bill.id)
-    assert bytes(stored.content) == content
+    assert stored.storage_key == key
     assert stored.content_type == "image/png"
     assert stored.uploaded_at.tzinfo is not None
 
 
-def test_a_bill_has_at_most_one_receipt(db_session, lease):
+def test_a_receipt_has_no_content_attribute():
     from app.models import RentBillReceipt
 
+    assert not hasattr(RentBillReceipt, "content")
+    assert "content" not in RentBillReceipt.__table__.c
+
+
+def test_the_receipt_columns_are_required(database):
+    columns = {
+        c["name"]: c for c in inspect(database).get_columns("rent_bill_receipts")
+    }
+    assert all(not c["nullable"] for c in columns.values())
+
+
+@pytest.mark.parametrize("column", ["storage_key", "content_type", "uploaded_at"])
+def test_required_receipt_columns_reject_null(db_session, lease, column):
     bill = new_bill(lease)
     db_session.add(bill)
     db_session.flush()
-    db_session.add(
-        RentBillReceipt(
-            rent_bill_id=bill.id,
-            content=png(),
-            content_type="image/png",
-            uploaded_at=datetime.now(UTC),
-        )
-    )
+    db_session.add(new_receipt(bill.id, **{column: None}))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+
+
+def test_a_bill_has_at_most_one_receipt(db_session, lease):
+    bill = new_bill(lease)
+    db_session.add(bill)
+    db_session.flush()
+    db_session.add(new_receipt(bill.id))
     db_session.commit()
     with Session(db_session.get_bind()) as other:
-        other.add(
-            RentBillReceipt(
-                rent_bill_id=bill.id,
-                content=png(),
-                content_type="image/png",
-                uploaded_at=datetime.now(UTC),
-            )
-        )
+        other.add(new_receipt(bill.id))
         with pytest.raises(IntegrityError):
             other.commit()
 
 
-def test_a_receipt_needs_an_existing_bill(db_session):
-    from app.models import RentBillReceipt
-
-    db_session.add(
-        RentBillReceipt(
-            rent_bill_id=uuid4(),
-            content=png(),
-            content_type="image/png",
-            uploaded_at=datetime.now(UTC),
-        )
+def test_two_receipts_cannot_share_a_storage_key(db_session, lease):
+    first = new_bill(lease)
+    second = new_bill(
+        lease,
+        period_start=date(2026, 11, 1),
+        period_end=date(2026, 11, 30),
+        due_date=date(2026, 11, 5),
     )
+    db_session.add_all([first, second])
+    db_session.flush()
+    db_session.add(new_receipt(first.id, storage_key="receipts/shared"))
+    db_session.commit()
+    db_session.add(new_receipt(second.id, storage_key="receipts/shared"))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+
+
+def test_a_receipt_needs_an_existing_bill(db_session):
+    db_session.add(new_receipt(uuid4()))
     with pytest.raises(IntegrityError):
         db_session.commit()

@@ -8,7 +8,6 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
-    LargeBinary,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -83,6 +82,6 @@ class RentBillReceipt(Base):
     rent_bill_id: Mapped[UUID] = mapped_column(
         ForeignKey("rent_bills.id"), primary_key=True
     )
-    content: Mapped[bytes] = mapped_column(LargeBinary)
+    storage_key: Mapped[str] = mapped_column(unique=True)
     content_type: Mapped[str]
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
