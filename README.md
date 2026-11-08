@@ -74,7 +74,9 @@ A shared copy of the API runs on Fly.io at `https://dev-api-niscala.andinaufal.c
 
 ### Deploying
 
-Deploy from an up-to-date `main`. A version bump is optional. The `version` in `pyproject.toml` is the version the API reports in its OpenAPI document (`info.version`, shown at `/docs` and `/openapi.json`), so bump it when a release should show a new number. The build installs with `uv sync --locked`, so `pyproject.toml` and `uv.lock` must always agree.
+A deploy starts by itself when a new version reaches `main`: after CI passes on `main`, the `CD` workflow (`.github/workflows/cd.yml`) checks whether the `version` in `pyproject.toml` already has a `v<version>` tag. If not, it runs `fly deploy` and then pushes that tag. A merge without a version bump deploys nothing, and a failed deploy is tried again by the next CI run on `main`. The workflow needs the GitHub secret `FLY_API_TOKEN` (`fly tokens create deploy -a niscala-api-dev`). The steps below are for releasing by hand.
+
+Deploy from an up-to-date `main`. A version bump is optional by hand, and is what starts the automatic deploy. The `version` in `pyproject.toml` is the version the API reports in its OpenAPI document (`info.version`, shown at `/docs` and `/openapi.json`), so bump it when a release should show a new number. The build installs with `uv sync --locked`, so `pyproject.toml` and `uv.lock` must always agree.
 
 1. Optional: bump the version. Create a branch, change `version` in `pyproject.toml`, then run `uv lock` so `uv.lock` follows. Do not edit `uv.lock` by hand. Check that `git diff --stat` shows only those two files and that `uv lock --check` passes. Commit both together (`chore: bump the version to X.Y.Z`), open a pull request and merge it. The deployed API reports the new version after the next deploy. On your machine `uv run` and `uv sync` reinstall the project, so restart the server to see it.
 2. Update and check your copy of `main`:
@@ -154,6 +156,12 @@ Settings are read from environment variables, or from a `.env` file in the proje
 | `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |
 | `FIREBASE_CREDENTIALS` | none | Content of a Firebase service account JSON file, on one line; enables push through FCM |
 | `GOOGLE_CLIENT_IDS` | none | Comma-separated OAuth client IDs accepted as the audience of Google ID tokens; without it Google sign-in is refused |
+| `JOBS_SECRET` | none | Bearer secret for `POST /internal/jobs/daily`; without it (or blank) that endpoint answers 404 |
+| `R2_ACCOUNT_ID` | none | Cloudflare account ID of the R2 bucket that stores receipts and complaint photos |
+| `R2_ACCESS_KEY_ID` | none | Access key ID of an R2 API token with read and write access to the bucket |
+| `R2_SECRET_ACCESS_KEY` | none | Secret access key of that token |
+| `R2_BUCKET` | none | Name of the R2 bucket; keep it private |
+| `FILE_STORAGE_DIR` | `var/files` | Local directory for uploaded files, used when any of the four `R2_*` variables is missing or blank |
 
 Until a mail service is set up, email verification codes are written to the server log instead of being emailed.
 
@@ -164,6 +172,8 @@ fly secrets set FIREBASE_CREDENTIALS="$(cat service-account.json)" -a niscala-ap
 ```
 
 Do not commit the key file.
+
+Without all four `R2_*` variables, uploaded files are written to `FILE_STORAGE_DIR` on the machine running the API, and a warning is logged. That is fine for local development but not for the deployed server, whose disk is not kept between deploys.
 
 ## Docs
 

@@ -1,10 +1,10 @@
 """Attaching, replacing and reading the photo of a complaint."""
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from complaint_support import submit_complaint
-from rent_bill_support import GIF_BYTES, MEGABYTE, jpeg, png
+from rent_bill_support import GIF_BYTES, MEGABYTE, jpeg, png, stored_content
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -116,7 +116,10 @@ def snapshot(database, complaint) -> tuple:
             (c.id, c.status, c.handling_note)
             for c in stored_changes(database, complaint)
         ],
-        [(p.content, p.content_type, p.uploaded_at) for p in stored_photos(database)],
+        [
+            (p.storage_key, p.content_type, p.uploaded_at)
+            for p in stored_photos(database)
+        ],
     )
 
 
@@ -371,19 +374,20 @@ def test_the_response_carries_the_status_history(
 
 
 def test_the_photo_is_stored_with_its_bytes_and_type(
-    client, database, complaint, tenant_in
+    client, database, complaint, tenant_in, file_store
 ):
     content = png(4096)
     upload(client, tenant_in.headers, complaint, content)
     (photo,) = stored_photos(database)
     assert photo.complaint_id == complaint.id
-    assert bytes(photo.content) == content
+    assert stored_content(file_store, photo) == content
+    assert file_store.objects[photo.storage_key][1] == "image/png"
     assert photo.content_type == "image/png"
     assert photo.uploaded_at.tzinfo is not None
 
 
 def test_a_jpeg_photo_is_accepted_and_keeps_its_type(
-    client, database, complaint, tenant_in
+    client, database, complaint, tenant_in, file_store
 ):
     content = jpeg(4096)
     response = upload(
@@ -391,8 +395,88 @@ def test_a_jpeg_photo_is_accepted_and_keeps_its_type(
     )
     assert response.status_code == 200, response.text
     (photo,) = stored_photos(database)
-    assert bytes(photo.content) == content
+    assert stored_content(file_store, photo) == content
+    assert file_store.objects[photo.storage_key][1] == "image/jpeg"
     assert photo.content_type == "image/jpeg"
+
+
+# Object storage
+
+
+def test_an_upload_puts_exactly_one_object_in_the_store(
+    client, database, complaint, tenant_in, file_store
+):
+    upload(client, tenant_in.headers, complaint)
+    assert len(file_store.objects) == 1
+
+
+def test_the_storage_key_names_the_complaint_and_a_fresh_uuid(
+    client, database, complaint, tenant_in, file_store
+):
+    upload(client, tenant_in.headers, complaint)
+    (photo,) = stored_photos(database)
+    prefix, _, tail = photo.storage_key.rpartition("/")
+    assert prefix == f"complaint-photos/{complaint.id}"
+    assert UUID(tail).version == 4
+    assert file_store.keys == {photo.storage_key}
+
+
+def test_the_stored_row_has_no_content_attribute(
+    client, database, complaint, tenant_in
+):
+    upload(client, tenant_in.headers, complaint)
+    (photo,) = stored_photos(database)
+    assert not hasattr(photo, "content")
+
+
+def test_the_download_reads_the_bytes_and_type_from_the_store(
+    client, database, complaint, tenant_in, owner_in, file_store
+):
+    upload(client, tenant_in.headers, complaint, png(300))
+    (photo,) = stored_photos(database)
+    file_store.objects[photo.storage_key] = (jpeg(300), "image/jpeg")
+    response = download(client, owner_in.headers, complaint)
+    assert response.status_code == 200
+    assert response.content == jpeg(300)
+
+
+def test_a_photo_row_without_its_object_answers_an_internal_error(
+    app, database, complaint, tenant_in, owner_in, file_store
+):
+    from fastapi.testclient import TestClient
+
+    tolerant = TestClient(app, raise_server_exceptions=False)
+    upload(tolerant, tenant_in.headers, complaint)
+    file_store.objects.clear()
+    response = download(tolerant, owner_in.headers, complaint)
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_ERROR"
+
+
+def test_a_failing_store_saves_nothing_and_answers_an_internal_error(
+    app, database, complaint, tenant_in, file_store
+):
+    from fastapi.testclient import TestClient
+
+    tolerant = TestClient(app, raise_server_exceptions=False)
+    before = snapshot(database, complaint)
+    file_store.fail_on_put = True
+    response = upload(tolerant, tenant_in.headers, complaint)
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert snapshot(database, complaint) == before
+    assert file_store.objects == {}
+    file_store.fail_on_put = False
+    assert upload(tolerant, tenant_in.headers, complaint).status_code == 200
+
+
+def test_a_forbidden_upload_leaves_the_store_untouched(
+    client, database, complaint, owner_in, manager_in, neighbour_in, file_store
+):
+    for headers in (owner_in.headers, manager_in.headers, neighbour_in.headers):
+        upload(client, headers, complaint)
+    assert file_store.calls == []
+    assert file_store.objects == {}
 
 
 def test_the_uploaded_photo_can_be_downloaded_by_everyone_with_access(
@@ -446,7 +530,36 @@ def test_a_photo_can_be_attached_to_a_freshly_submitted_complaint(
 # Replacing
 
 
-def test_a_second_upload_replaces_the_first(client, database, complaint, tenant_in):
+def test_a_second_upload_gets_a_new_key_and_removes_the_old_object(
+    client, database, complaint, tenant_in, file_store
+):
+    upload(client, tenant_in.headers, complaint, png(1000))
+    (first,) = stored_photos(database)
+    old_key = first.storage_key
+    upload(client, tenant_in.headers, complaint, jpeg(2000), "image/jpeg")
+    (second,) = stored_photos(database)
+    assert second.storage_key != old_key
+    assert second.storage_key.startswith(f"complaint-photos/{complaint.id}/")
+    assert old_key not in file_store.objects
+    assert file_store.keys == {second.storage_key}
+
+
+def test_a_failing_delete_of_the_old_object_does_not_fail_the_replacement(
+    client, database, complaint, tenant_in, file_store
+):
+    upload(client, tenant_in.headers, complaint, png(1000))
+    file_store.fail_on_delete = True
+    new_content = jpeg(2000)
+    response = upload(client, tenant_in.headers, complaint, new_content, "image/jpeg")
+    assert response.status_code == 200, response.text
+    (photo,) = stored_photos(database)
+    assert stored_content(file_store, photo) == new_content
+    assert download(client, tenant_in.headers, complaint).content == new_content
+
+
+def test_a_second_upload_replaces_the_first(
+    client, database, complaint, tenant_in, file_store
+):
     upload(client, tenant_in.headers, complaint, png(1000))
     new_content = jpeg(2000)
     response = upload(
@@ -455,7 +568,7 @@ def test_a_second_upload_replaces_the_first(client, database, complaint, tenant_
     assert response.status_code == 200, response.text
     assert response.json()["hasPhoto"] is True
     (photo,) = stored_photos(database)
-    assert bytes(photo.content) == new_content
+    assert stored_content(file_store, photo) == new_content
     assert photo.content_type == "image/jpeg"
     fetched = download(client, tenant_in.headers, complaint)
     assert fetched.content == new_content
@@ -472,13 +585,16 @@ def test_a_replacement_of_the_same_type_swaps_the_bytes(
     assert download(client, owner_in.headers, complaint).content == new_content
 
 
-def test_many_uploads_leave_one_photo(client, database, complaint, tenant_in):
+def test_many_uploads_leave_one_photo(
+    client, database, complaint, tenant_in, file_store
+):
     for size in (100, 200, 300):
         assert (
             upload(client, tenant_in.headers, complaint, png(size)).status_code == 200
         )
     (photo,) = stored_photos(database)
-    assert len(bytes(photo.content)) == 300
+    assert len(stored_content(file_store, photo)) == 300
+    assert file_store.keys == {photo.storage_key}
 
 
 def test_a_replacement_does_not_touch_the_photo_of_another_complaint(
@@ -747,14 +863,14 @@ def test_a_part_with_another_name_is_rejected_on_the_file_field(
     ids=["exactly_five_png", "exactly_five_jpeg", "just_under_png", "small_jpeg"],
 )
 def test_a_file_within_five_megabytes_is_accepted(
-    client, database, complaint, tenant_in, size, make
+    client, database, complaint, tenant_in, file_store, size, make
 ):
     content = make(size)
     content_type = "image/png" if make is png else "image/jpeg"
     response = upload(client, tenant_in.headers, complaint, content, content_type)
     assert response.status_code == 200, response.text
     (photo,) = stored_photos(database)
-    assert len(bytes(photo.content)) == size
+    assert len(stored_content(file_store, photo)) == size
 
 
 @pytest.mark.parametrize("make", [png, jpeg], ids=["png", "jpeg"])
@@ -772,32 +888,58 @@ def test_a_file_over_five_megabytes_is_rejected_on_the_file_field(
 
 
 def test_a_rejected_file_leaves_an_existing_photo_untouched(
-    client, database, complaint, tenant_in, owner_in
+    client, database, complaint, tenant_in, owner_in, file_store
 ):
     original = png(1000)
     upload(client, tenant_in.headers, complaint, original)
     before = snapshot(database, complaint)
+    stored_before = dict(file_store.objects)
     response = upload(client, tenant_in.headers, complaint, GIF_BYTES, "image/gif")
     assert_error(response, 422, "PHOTO_TYPE_INVALID", "file")
     assert snapshot(database, complaint) == before
     (photo,) = stored_photos(database)
-    assert bytes(photo.content) == original
+    assert stored_content(file_store, photo) == original
+    assert file_store.objects == stored_before
     assert download(client, owner_in.headers, complaint).content == original
     assert detail(client, tenant_in.headers, complaint)["hasPhoto"] is True
 
 
 def test_an_oversized_file_leaves_an_existing_photo_untouched(
-    client, database, complaint, tenant_in
+    client, database, complaint, tenant_in, file_store
 ):
     original = jpeg(1000)
     upload(client, tenant_in.headers, complaint, original, "image/jpeg")
     before = snapshot(database, complaint)
+    stored_before = dict(file_store.objects)
     response = upload(client, tenant_in.headers, complaint, png(5 * MEGABYTE + 1))
     assert_error(response, 422, "PHOTO_TOO_LARGE", "file")
     assert snapshot(database, complaint) == before
     (photo,) = stored_photos(database)
-    assert bytes(photo.content) == original
+    assert stored_content(file_store, photo) == original
+    assert file_store.objects == stored_before
     assert photo.content_type == "image/jpeg"
+
+
+def test_a_rejected_file_puts_nothing_in_the_store(
+    client, database, complaint, tenant_in, file_store
+):
+    upload(client, tenant_in.headers, complaint, GIF_BYTES, "image/gif")
+    upload(client, tenant_in.headers, complaint, png(5 * MEGABYTE + 1))
+    assert file_store.calls == []
+    assert file_store.objects == {}
+
+
+def test_a_refused_upload_to_a_started_complaint_leaves_the_store_untouched(
+    client, database, tenant, room, make_complaint, tenant_in, file_store
+):
+    started = make_complaint(tenant, room)
+    upload(client, tenant_in.headers, started)
+    other = seeded_complaint(make_complaint, tenant, room, "inProgress")
+    stored_before = dict(file_store.objects)
+    calls_before = list(file_store.calls)
+    assert_error(upload(client, tenant_in.headers, other), 409, "COMPLAINT_NOT_NEW")
+    assert file_store.objects == stored_before
+    assert file_store.calls == calls_before
 
 
 def test_a_failed_upload_leaves_the_complaint_saved_and_a_retry_works(
@@ -847,17 +989,19 @@ def test_a_seeded_photo_is_readable(client, database, complaint, tenant_in, add_
 
 
 @pytest.fixture
-def add_photo(database):
+def add_photo(database, file_store):
     from datetime import UTC, datetime
 
     from app.models.complaints import ComplaintPhoto
 
     def add(complaint, content: bytes, content_type: str) -> None:
+        key = f"complaint-photos/{complaint.id}/{uuid4()}"
+        file_store.put(key, content, content_type)
         with Session(database) as db:
             db.add(
                 ComplaintPhoto(
                     complaint_id=complaint.id,
-                    content=content,
+                    storage_key=key,
                     content_type=content_type,
                     uploaded_at=datetime.now(UTC),
                 )

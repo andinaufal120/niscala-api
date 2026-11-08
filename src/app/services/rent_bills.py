@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, select
@@ -39,6 +39,7 @@ from app.schemas.properties import BankAccount
 from app.schemas.tenants import BillingCycle, RoomRef
 from app.services import leases, notifications, payment_patterns, tenants
 from app.services.rooms import natural_number_key
+from app.storage import FileStore, save_file
 
 logger = logging.getLogger(__name__)
 
@@ -327,17 +328,24 @@ def get_rent_bill(db: Session, user: UserAccount, rent_bill_id: UUID) -> RentBil
     return _detail(db, _find(db, user, rent_bill_id))
 
 
-def get_receipt(db: Session, user: UserAccount, rent_bill_id: UUID) -> ReceiptRow:
-    """Return the receipt of a bill the user may read.
+def get_receipt(
+    db: Session, store: FileStore, user: UserAccount, rent_bill_id: UUID
+) -> tuple[bytes, str]:
+    """Return the image bytes and type of the receipt of a bill the user may read.
 
-    Raises 404 RENT_BILL_NOT_FOUND for an unknown or unreadable bill and 404
-    RECEIPT_NOT_FOUND for a bill without a receipt.
+    Raises 404 RENT_BILL_NOT_FOUND for an unknown or unreadable bill, 404
+    RECEIPT_NOT_FOUND for a bill without a receipt, and 500 INTERNAL_ERROR when
+    the stored file is missing or the store fails.
     """
     bill = _find(db, user, rent_bill_id)[0]
     receipt = db.get(ReceiptRow, bill.id)
     if receipt is None:
         raise ApiError(404, "RECEIPT_NOT_FOUND")
-    return receipt
+    try:
+        return store.get(receipt.storage_key), receipt.content_type
+    except Exception:
+        logger.exception("Reading the receipt of %s failed", bill.id)
+        raise ApiError(500, "INTERNAL_ERROR") from None
 
 
 def _record(
@@ -390,7 +398,11 @@ def _receipt_type(content: bytes) -> str:
 
 
 def upload_receipt(
-    db: Session, user: UserAccount, rent_bill_id: UUID, content: bytes
+    db: Session,
+    store: FileStore,
+    user: UserAccount,
+    rent_bill_id: UUID,
+    content: bytes,
 ) -> RentBill:
     """Store a transfer receipt image and mark the bill as awaiting verification.
 
@@ -399,7 +411,8 @@ def upload_receipt(
     RENT_BILL_NOT_UPLOADABLE), property bank account (409
     PROPERTY_BANK_ACCOUNT_MISSING), file size (422 RECEIPT_TOO_LARGE) and a PNG
     or JPEG signature (422 RECEIPT_TYPE_INVALID). A new receipt replaces the old
-    one and clears a previous rejection reason.
+    one and clears a previous rejection reason. The file goes to the store under
+    a new key; the replaced file is deleted after the commit.
     """
     bill, _, _, prop, _ = _find(db, user, rent_bill_id, lock=True)
     if PaymentStatus(bill.payment_status) not in UPLOADABLE:
@@ -409,17 +422,26 @@ def upload_receipt(
     content_type = _receipt_type(content)
     now = datetime.now(UTC)
     receipt = db.get(ReceiptRow, bill.id)
+    key = f"receipts/{bill.id}/{uuid4()}"
+    save_file(
+        db,
+        store,
+        key,
+        content,
+        content_type,
+        replaces=receipt and receipt.storage_key,
+    )
     if receipt is None:
         db.add(
             ReceiptRow(
                 rent_bill_id=bill.id,
-                content=content,
+                storage_key=key,
                 content_type=content_type,
                 uploaded_at=now,
             )
         )
     else:
-        receipt.content = content
+        receipt.storage_key = key
         receipt.content_type = content_type
         receipt.uploaded_at = now
     _record(db, bill, user, PaymentStatus.AWAITING_VERIFICATION)

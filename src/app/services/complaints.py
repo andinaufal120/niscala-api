@@ -3,10 +3,10 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import Select, select
-from sqlalchemy.orm import Session, defer
+from sqlalchemy.orm import Session
 
 from app.access import accessible_properties
 from app.ai.classifier import ComplaintClassifier
@@ -42,6 +42,7 @@ from app.schemas.tenants import RoomRef
 from app.services import notifications
 from app.services.rent_bills import MAX_RECEIPT_BYTES, RECEIPT_SIGNATURES
 from app.services.subscriptions import has_active_subscription
+from app.storage import FileStore, save_file
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +135,7 @@ def _view(
         room=RoomRef(id=room.id, number=room.number),
         tenant_name=tenant.name,
         created_at=complaint.created_at,
-        has_photo=db.get(PhotoRow, complaint.id, options=[defer(PhotoRow.content)])
-        is not None,
+        has_photo=db.get(PhotoRow, complaint.id) is not None,
         classification=classification,
         classification_state=state and ComplaintClassificationState(state),
         classification_withheld=withheld,
@@ -386,9 +386,15 @@ def _photo_type(content: bytes) -> str:
 
 
 def upload_complaint_photo(
-    db: Session, user: UserAccount, complaint_id: UUID, content: bytes
+    db: Session,
+    store: FileStore,
+    user: UserAccount,
+    complaint_id: UUID,
+    content: bytes,
 ) -> Complaint:
-    """Store the photo of a complaint, replacing any earlier one.
+    """Store the photo of a complaint under a new key, replacing any earlier one.
+
+    The replaced file is deleted after the commit.
 
     Only the tenant who submitted it gets this far. Flushes, never commits.
     Checks in order: complaint (404 COMPLAINT_NOT_FOUND), still new (409
@@ -402,27 +408,38 @@ def upload_complaint_photo(
         raise ApiError(409, "COMPLAINT_NOT_NEW")
     content_type = _photo_type(content)
     photo = db.get(PhotoRow, complaint_id)
+    key = f"complaint-photos/{complaint_id}/{uuid4()}"
+    save_file(
+        db, store, key, content, content_type, replaces=photo and photo.storage_key
+    )
     if photo is None:
         photo = PhotoRow(complaint_id=complaint_id)
         db.add(photo)
-    photo.content = content
+    photo.storage_key = key
     photo.content_type = content_type
     photo.uploaded_at = datetime.now(UTC)
     db.flush()
     return _detail(db, tuple(row), {})
 
 
-def get_complaint_photo(db: Session, user: UserAccount, complaint_id: UUID) -> PhotoRow:
-    """Return the photo of a complaint the user may read.
+def get_complaint_photo(
+    db: Session, store: FileStore, user: UserAccount, complaint_id: UUID
+) -> tuple[bytes, str]:
+    """Return the image bytes and type of the photo of a complaint the user may read.
 
-    Raises 404 COMPLAINT_NOT_FOUND for an unknown or unreadable complaint and
-    404 PHOTO_NOT_FOUND when it has no photo.
+    Raises 404 COMPLAINT_NOT_FOUND for an unknown or unreadable complaint, 404
+    PHOTO_NOT_FOUND when it has no photo, and 500 INTERNAL_ERROR when the stored
+    file is missing or the store fails.
     """
     get_complaint(db, user, complaint_id)
     photo = db.get(PhotoRow, complaint_id)
     if photo is None:
         raise ApiError(404, "PHOTO_NOT_FOUND")
-    return photo
+    try:
+        return store.get(photo.storage_key), photo.content_type
+    except Exception:
+        logger.exception("Reading the photo of %s failed", complaint_id)
+        raise ApiError(500, "INTERNAL_ERROR") from None
 
 
 def _classify_within_timeout(

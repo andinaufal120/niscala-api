@@ -1,7 +1,7 @@
 """Uploading a transfer receipt for a rent bill."""
 
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from conftest import BANK_ACCOUNT
@@ -24,6 +24,7 @@ from rent_bill_support import (
     snapshot,
     stored_bill,
     stored_changes,
+    stored_content,
     stored_receipts,
 )
 
@@ -94,7 +95,7 @@ def test_a_forbidden_upload_saves_nothing(client, database, scene, bill):
 
 
 def test_a_tenant_cannot_upload_for_the_bill_of_another_tenant(
-    client, database, scene, make_room, make_verified_tenant, make_rent_bill
+    client, database, scene, make_room, make_verified_tenant, make_rent_bill, file_store
 ):
     neighbour = make_verified_tenant(make_room(scene.prop, number="A2"))
     other = make_rent_bill(neighbour.lease)
@@ -102,6 +103,7 @@ def test_a_tenant_cannot_upload_for_the_bill_of_another_tenant(
     response = upload(client, scene.tenant_in.headers, other)
     assert_not_found(response)
     assert snapshot(database, other) == before
+    assert file_store.objects == {}
 
 
 def test_a_tenant_uploads_for_a_bill_of_each_of_their_records(
@@ -173,26 +175,123 @@ def test_the_bill_is_stored_as_awaiting_verification(client, database, scene, bi
     assert row.paid_on is None
 
 
-def test_the_receipt_is_stored_with_its_bytes_and_type(client, database, scene, bill):
+def test_the_receipt_is_stored_with_its_bytes_and_type(
+    client, database, scene, bill, file_store
+):
     content = png(4096)
     upload(client, scene.tenant_in.headers, bill, content)
     (receipt,) = stored_receipts(database)
     assert receipt.rent_bill_id == bill.id
-    assert bytes(receipt.content) == content
+    assert stored_content(file_store, receipt) == content
+    assert file_store.objects[receipt.storage_key][1] == "image/png"
     assert receipt.content_type == "image/png"
     before = datetime.now(UTC)
     assert abs((before - receipt.uploaded_at).total_seconds()) < 60
 
 
-def test_a_jpeg_receipt_is_accepted_and_keeps_its_type(client, database, scene, bill):
+def test_a_jpeg_receipt_is_accepted_and_keeps_its_type(
+    client, database, scene, bill, file_store
+):
     content = jpeg(4096)
     response = upload(
         client, scene.tenant_in.headers, bill, content, "image/jpeg", "receipt.jpg"
     )
     assert response.status_code == 200, response.text
     (receipt,) = stored_receipts(database)
-    assert bytes(receipt.content) == content
+    assert stored_content(file_store, receipt) == content
+    assert file_store.objects[receipt.storage_key][1] == "image/jpeg"
     assert receipt.content_type == "image/jpeg"
+
+
+# Object storage
+
+
+def test_an_upload_puts_exactly_one_object_in_the_store(
+    client, database, scene, bill, file_store
+):
+    upload(client, scene.tenant_in.headers, bill)
+    assert len(file_store.objects) == 1
+
+
+def test_the_storage_key_names_the_bill_and_a_fresh_uuid(
+    client, database, scene, bill, file_store
+):
+    upload(client, scene.tenant_in.headers, bill)
+    (receipt,) = stored_receipts(database)
+    prefix, _, tail = receipt.storage_key.rpartition("/")
+    assert prefix == f"receipts/{bill.id}"
+    assert UUID(tail).version == 4
+    assert file_store.keys == {receipt.storage_key}
+
+
+def test_the_stored_row_has_no_content_attribute(client, database, scene, bill):
+    upload(client, scene.tenant_in.headers, bill)
+    (receipt,) = stored_receipts(database)
+    assert not hasattr(receipt, "content")
+
+
+def test_the_keys_of_different_bills_differ(
+    client, database, scene, make_rent_bill, lease, file_store
+):
+    first = make_rent_bill(lease, period_start=days_ago(40))
+    second = make_rent_bill(lease)
+    upload(client, scene.tenant_in.headers, first)
+    upload(client, scene.tenant_in.headers, second)
+    keys = {r.storage_key for r in stored_receipts(database)}
+    assert len(keys) == 2
+    assert file_store.keys == keys
+    assert {k.split("/")[1] for k in keys} == {str(first.id), str(second.id)}
+
+
+def test_the_download_reads_the_bytes_and_type_from_the_store(
+    client, database, scene, bill, file_store
+):
+    upload(client, scene.tenant_in.headers, bill, png(300))
+    (receipt,) = stored_receipts(database)
+    file_store.objects[receipt.storage_key] = (jpeg(300), "image/jpeg")
+    response = client.get(bill_url(bill, "/receipt"), headers=scene.owner_in.headers)
+    assert response.status_code == 200
+    assert response.content == jpeg(300)
+
+
+def test_a_receipt_row_without_its_object_answers_an_internal_error(
+    app, database, scene, bill, file_store
+):
+    from fastapi.testclient import TestClient
+
+    tolerant = TestClient(app, raise_server_exceptions=False)
+    upload(tolerant, scene.tenant_in.headers, bill)
+    file_store.objects.clear()
+    response = tolerant.get(bill_url(bill, "/receipt"), headers=scene.owner_in.headers)
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_ERROR"
+
+
+def test_a_failing_store_saves_nothing_and_answers_an_internal_error(
+    app, database, scene, bill, file_store
+):
+    from fastapi.testclient import TestClient
+
+    tolerant = TestClient(app, raise_server_exceptions=False)
+    before = snapshot(database, bill)
+    file_store.fail_on_put = True
+    response = upload(tolerant, scene.tenant_in.headers, bill)
+    assert response.status_code == 500
+    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert snapshot(database, bill) == before
+    assert file_store.objects == {}
+    file_store.fail_on_put = False
+    assert upload(tolerant, scene.tenant_in.headers, bill).status_code == 200
+
+
+def test_a_forbidden_or_refused_upload_leaves_the_store_untouched(
+    client, database, scene, make_rent_bill, lease, file_store
+):
+    paid = make_rent_bill(lease, status="paid", method="cash", paid_on=days_ago(1))
+    upload(client, scene.owner_in.headers, paid)
+    upload(client, scene.tenant_in.headers, paid)
+    assert file_store.calls == []
+    assert file_store.objects == {}
 
 
 def test_the_uploaded_receipt_can_be_downloaded(client, database, scene, bill):
@@ -272,16 +371,46 @@ def test_a_rejected_bill_accepts_a_new_receipt(client, database, scene, bill):
     assert payment["hasReceipt"] is True
 
 
-def test_a_new_receipt_replaces_the_old_one(client, database, scene, bill):
+def test_a_new_receipt_replaces_the_old_one(client, database, scene, bill, file_store):
     upload(client, scene.tenant_in.headers, bill, png(1000))
     reject(client, scene, bill)
     new_content = jpeg(2000)
     upload(client, scene.tenant_in.headers, bill, new_content, "image/jpeg")
     (receipt,) = stored_receipts(database)
-    assert bytes(receipt.content) == new_content
+    assert stored_content(file_store, receipt) == new_content
     assert receipt.content_type == "image/jpeg"
     downloaded = client.get(bill_url(bill, "/receipt"), headers=scene.owner_in.headers)
     assert downloaded.content == new_content
+
+
+def test_a_re_upload_gets_a_new_key_and_removes_the_old_object(
+    client, database, scene, bill, file_store
+):
+    upload(client, scene.tenant_in.headers, bill, png(1000))
+    (first,) = stored_receipts(database)
+    old_key = first.storage_key
+    reject(client, scene, bill)
+    upload(client, scene.tenant_in.headers, bill, jpeg(2000), "image/jpeg")
+    (second,) = stored_receipts(database)
+    assert second.storage_key != old_key
+    assert second.storage_key.startswith(f"receipts/{bill.id}/")
+    assert old_key not in file_store.objects
+    assert file_store.keys == {second.storage_key}
+
+
+def test_a_failing_delete_of_the_old_object_does_not_fail_the_re_upload(
+    client, database, scene, bill, file_store
+):
+    upload(client, scene.tenant_in.headers, bill, png(1000))
+    reject(client, scene, bill)
+    file_store.fail_on_delete = True
+    new_content = jpeg(2000)
+    response = upload(client, scene.tenant_in.headers, bill, new_content, "image/jpeg")
+    assert response.status_code == 200, response.text
+    (receipt,) = stored_receipts(database)
+    assert stored_content(file_store, receipt) == new_content
+    download = client.get(bill_url(bill, "/receipt"), headers=scene.owner_in.headers)
+    assert download.content == new_content
 
 
 def test_the_history_keeps_every_step_across_a_re_upload(client, database, scene, bill):
@@ -369,7 +498,7 @@ def test_a_rejected_bill_of_a_past_period_accepts_a_receipt(
 
 
 def test_an_overdue_bill_of_a_past_period_stores_the_receipt_and_history(
-    client, database, scene, make_rent_bill, lease
+    client, database, scene, make_rent_bill, lease, file_store
 ):
     bill = make_rent_bill(
         lease, period_start=days_ago(60), period_end=days_ago(31), due_date=days_ago(55)
@@ -378,7 +507,7 @@ def test_an_overdue_bill_of_a_past_period_stores_the_receipt_and_history(
     upload(client, scene.tenant_in.headers, bill, content)
     (receipt,) = stored_receipts(database)
     assert receipt.rent_bill_id == bill.id
-    assert bytes(receipt.content) == content
+    assert stored_content(file_store, receipt) == content
     created, change = stored_changes(database, bill)
     assert created.status == "unpaid"
     assert change.status == "awaitingVerification"
@@ -477,13 +606,14 @@ def assert_rejected_file(response, database, bill, before, code) -> None:
     ],
 )
 def test_a_file_that_is_not_a_jpg_or_png_is_rejected_on_the_file_field(
-    client, database, scene, bill, content, content_type, filename
+    client, database, scene, bill, file_store, content, content_type, filename
 ):
     before = snapshot(database, bill)
     response = upload(
         client, scene.tenant_in.headers, bill, content, content_type, filename
     )
     assert_rejected_file(response, database, bill, before, "RECEIPT_TYPE_INVALID")
+    assert file_store.objects == {}
 
 
 @pytest.mark.parametrize(
@@ -545,7 +675,7 @@ def test_a_file_within_five_megabytes_is_accepted(
 
 @pytest.mark.parametrize("make", [png, jpeg], ids=["png", "jpeg"])
 def test_a_file_over_five_megabytes_is_rejected_on_the_file_field(
-    client, database, scene, bill, make
+    client, database, scene, bill, file_store, make
 ):
     before = snapshot(database, bill)
     content_type = "image/png" if make is png else "image/jpeg"
@@ -557,16 +687,49 @@ def test_a_file_over_five_megabytes_is_rejected_on_the_file_field(
         content_type,
     )
     assert_rejected_file(response, database, bill, before, "RECEIPT_TOO_LARGE")
+    assert file_store.objects == {}
 
 
 def test_a_rejected_file_leaves_an_existing_receipt_untouched(
-    client, database, scene, bill
+    client, database, scene, bill, file_store
 ):
     original = png(1000)
     upload(client, scene.tenant_in.headers, bill, original)
     reject(client, scene, bill)
     before = snapshot(database, bill)
+    stored_before = dict(file_store.objects)
     response = upload(client, scene.tenant_in.headers, bill, GIF_BYTES, "image/gif")
     assert_rejected_file(response, database, bill, before, "RECEIPT_TYPE_INVALID")
     (receipt,) = stored_receipts(database)
-    assert bytes(receipt.content) == original
+    assert stored_content(file_store, receipt) == original
+    assert file_store.objects == stored_before
+
+
+def test_an_oversized_file_leaves_an_existing_receipt_untouched(
+    client, database, scene, bill, file_store
+):
+    original = png(1000)
+    upload(client, scene.tenant_in.headers, bill, original)
+    reject(client, scene, bill)
+    before = snapshot(database, bill)
+    stored_before = dict(file_store.objects)
+    response = upload(client, scene.tenant_in.headers, bill, png(5 * MEGABYTE + 1))
+    assert_rejected_file(response, database, bill, before, "RECEIPT_TOO_LARGE")
+    assert file_store.objects == stored_before
+
+
+def test_a_refused_re_upload_leaves_the_existing_object_in_place(
+    client, database, scene, make_rent_bill, lease, file_store
+):
+    bill = make_rent_bill(
+        lease,
+        status="awaitingVerification",
+        receipt=(png(500), "image/png", datetime.now(UTC)),
+    )
+    stored_before = dict(file_store.objects)
+    before = snapshot(database, bill)
+    response = upload(client, scene.tenant_in.headers, bill)
+    assert_refused(response, "RENT_BILL_NOT_UPLOADABLE")
+    assert snapshot(database, bill) == before
+    assert file_store.objects == stored_before
+    assert file_store.deleted() == []

@@ -7,8 +7,8 @@ from alembic import command
 from conftest import alembic_config
 from sqlalchemy import inspect, text
 
-BEFORE = "0020"
-AFTER = "0021"
+BEFORE = "0021"
+AFTER = "0022"
 
 USER_INSERT = text(
     "INSERT INTO user_accounts (id, name, email, role, email_verified, created_at) "

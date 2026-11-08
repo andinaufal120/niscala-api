@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, LargeBinary
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -85,6 +85,6 @@ class ComplaintPhoto(Base):
     complaint_id: Mapped[UUID] = mapped_column(
         ForeignKey("complaints.id"), primary_key=True
     )
-    content: Mapped[bytes] = mapped_column(LargeBinary)
+    storage_key: Mapped[str] = mapped_column(unique=True)
     content_type: Mapped[str]
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

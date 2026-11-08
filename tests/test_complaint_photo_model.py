@@ -4,8 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from rent_bill_support import jpeg, png
-from sqlalchemy import LargeBinary, inspect, select
+from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 
 
@@ -22,7 +21,7 @@ def new_photo(complaint_id, **overrides):
 
     fields = {
         "complaint_id": complaint_id,
-        "content": png(2048),
+        "storage_key": f"complaint-photos/{complaint_id}/{uuid4()}",
         "content_type": "image/png",
         "uploaded_at": datetime.now(UTC),
     }
@@ -55,14 +54,38 @@ def test_the_table_is_created_by_the_migrations(database):
 
 def test_the_table_has_its_columns(database):
     columns = {c["name"]: c for c in inspect(database).get_columns("complaint_photos")}
-    assert set(columns) == {"complaint_id", "content", "content_type", "uploaded_at"}
+    assert set(columns) == {
+        "complaint_id",
+        "storage_key",
+        "content_type",
+        "uploaded_at",
+    }
     assert all(not c["nullable"] for c in columns.values())
 
 
-def test_the_content_column_holds_binary_data(database):
+def test_the_model_has_no_content_attribute():
     from app.models.complaints import ComplaintPhoto
 
-    assert isinstance(ComplaintPhoto.__table__.c.content.type, LargeBinary)
+    assert not hasattr(ComplaintPhoto, "content")
+    assert "content" not in ComplaintPhoto.__table__.c
+
+
+def test_the_storage_key_is_unique(
+    db_session,
+    complaint,
+    make_complaint,
+    make_verified_tenant,
+    make_room,
+    make_property,
+    make_user,
+):
+    room = make_room(make_property(make_user(name="Other Owner")), number="Z1")
+    other = make_complaint(make_verified_tenant(room), room)
+    db_session.add(new_photo(complaint.id, storage_key="complaint-photos/shared"))
+    db_session.commit()
+    db_session.add(new_photo(other.id, storage_key="complaint-photos/shared"))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
 
 
 def test_the_complaint_id_is_the_primary_key(database):
@@ -77,15 +100,15 @@ def test_the_complaint_id_references_complaints(database):
     assert key["referred_columns"] == ["id"]
 
 
-def test_a_photo_keeps_its_bytes_and_type(db_session, complaint):
+def test_a_photo_keeps_its_storage_key_and_type(db_session, complaint):
     from app.models.complaints import ComplaintPhoto
 
-    content = jpeg(4096)
-    db_session.add(new_photo(complaint.id, content=content, content_type="image/jpeg"))
+    key = f"complaint-photos/{complaint.id}/{uuid4()}"
+    db_session.add(new_photo(complaint.id, storage_key=key, content_type="image/jpeg"))
     db_session.commit()
     db_session.expire_all()
     stored = db_session.get(ComplaintPhoto, complaint.id)
-    assert bytes(stored.content) == content
+    assert stored.storage_key == key
     assert stored.content_type == "image/jpeg"
 
 
@@ -106,7 +129,7 @@ def test_a_complaint_has_at_most_one_photo(db_session, complaint):
 
     db_session.add(new_photo(complaint.id))
     db_session.commit()
-    db_session.add(new_photo(complaint.id, content=jpeg(), content_type="image/jpeg"))
+    db_session.add(new_photo(complaint.id, content_type="image/jpeg"))
     with pytest.raises(IntegrityError):
         db_session.commit()
     db_session.rollback()
@@ -119,7 +142,7 @@ def test_a_photo_needs_an_existing_complaint(db_session):
         db_session.commit()
 
 
-@pytest.mark.parametrize("column", ["content", "content_type", "uploaded_at"])
+@pytest.mark.parametrize("column", ["storage_key", "content_type", "uploaded_at"])
 def test_required_photo_columns_reject_null(db_session, complaint, column):
     db_session.add(new_photo(complaint.id, **{column: None}))
     with pytest.raises(IntegrityError):

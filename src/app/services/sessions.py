@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import jwt
-from sqlalchemy import Select, delete, select
+from sqlalchemy import Select, delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -82,6 +82,26 @@ def end_session(db: Session, session: UserSession) -> None:
         delete(UsedRefreshToken).where(UsedRefreshToken.session_id == session.id)
     )
     db.flush()
+
+
+def end_expired_sessions(db: Session) -> int:
+    """Revoke every open session that is idle too long or too old; return how many.
+
+    Flushes, never commits.
+    """
+    now = datetime.now(UTC)
+    expired = db.scalars(
+        select(UserSession).where(
+            UserSession.revoked_at.is_(None),
+            or_(
+                UserSession.last_active_at < now - SESSION_IDLE_LIMIT,
+                UserSession.created_at < now - SESSION_MAX_AGE,
+            ),
+        )
+    ).all()
+    for session in expired:
+        end_session(db, session)
+    return len(expired)
 
 
 def end_all_sessions(db: Session, user_id: UUID) -> None:
