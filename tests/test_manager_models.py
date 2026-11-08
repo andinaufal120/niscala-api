@@ -228,12 +228,12 @@ def test_an_invitation_may_belong_to_a_manager_alone(db_session):
 
 def test_an_invitation_may_belong_to_a_tenant_alone(db_session):
     tenant = saved_tenant(db_session)
-    row = new_invitation(tenant_id=tenant.user_id)
+    row = new_invitation(tenant_id=tenant.id)
     db_session.add(row)
     db_session.commit()
     db_session.expire_all()
     stored = db_session.get(type(row), row.id)
-    assert stored.tenant_id == tenant.user_id
+    assert stored.tenant_id == tenant.id
     assert stored.manager_id is None
 
 
@@ -246,7 +246,7 @@ def test_an_invitation_without_a_tenant_or_a_manager_is_refused(db_session):
 def test_an_invitation_for_a_tenant_and_a_manager_is_refused(db_session):
     manager = saved_manager(db_session)
     tenant = saved_tenant(db_session)
-    db_session.add(new_invitation(tenant_id=tenant.user_id, manager_id=manager.id))
+    db_session.add(new_invitation(tenant_id=tenant.id, manager_id=manager.id))
     with pytest.raises(IntegrityError):
         db_session.flush()
 
@@ -283,7 +283,7 @@ def test_token_hashes_stay_unique_across_managers_and_tenants(db_session):
     tenant = saved_tenant(db_session)
     db_session.add(new_invitation(manager_id=manager.id, token_hash="same"))
     db_session.flush()
-    db_session.add(new_invitation(tenant_id=tenant.user_id, token_hash="same"))
+    db_session.add(new_invitation(tenant_id=tenant.id, token_hash="same"))
     with pytest.raises(IntegrityError):
         db_session.flush()
 

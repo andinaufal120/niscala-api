@@ -50,7 +50,7 @@ def test_the_list_holds_the_accounts_of_every_role(
     assert {
         str(admin.id),
         str(owner.id),
-        str(tenant.id),
+        str(tenant.user.id),
         str(manager.user_id),
     } <= set(found)
     assert found[str(owner.id)] == {
@@ -60,8 +60,8 @@ def test_the_list_holds_the_accounts_of_every_role(
         "role": "owner",
         "status": "active",
     }
-    assert found[str(tenant.id)]["role"] == "tenant"
-    assert found[str(tenant.id)]["name"] == "Budi Tenant"
+    assert found[str(tenant.user.id)]["role"] == "tenant"
+    assert found[str(tenant.user.id)]["name"] == "Budi Tenant"
     assert found[str(manager.user_id)]["role"] == "manager"
     assert found[str(manager.user_id)]["email"] == "mira@example.com"
     assert found[str(admin.id)]["role"] == "admin"
@@ -103,7 +103,29 @@ def test_a_tenant_that_has_not_activated_is_not_listed(
     client, database, admin_in, make_tenant, room
 ):
     pending = make_tenant(room, name="Belum Aktif")
-    assert str(pending.id) not in listed_ids(client, admin_in.headers)
+    assert str(pending.user.id) not in listed_ids(client, admin_in.headers)
+
+
+def test_a_tenant_renting_in_two_places_is_listed_once_by_the_account_id(
+    client, database, admin_in, make_user, make_property, make_room, make_tenant, room
+):
+    other_room = make_room(make_property(make_user(name="Landlord Dua")))
+    first = make_tenant(room, name="Budi Tenant", activated=True, distinct_id=True)
+    second = make_tenant(other_room, user=first.user, activated=True)
+    found = listed_ids(client, admin_in.headers)
+    assert found.count(str(first.user.id)) == 1
+    assert str(first.id) not in found
+    assert str(second.id) not in found
+
+
+def test_a_tenant_account_left_without_records_is_not_listed(
+    client, database, admin_in, make_user
+):
+    bare = make_user(role=role("tenant"), name="Placeholder")
+    assert str(bare.id) not in listed_ids(client, admin_in.headers)
+    assert str(bare.id) not in listed_ids(
+        client, admin_in.headers, includeDeleted="true"
+    )
 
 
 def test_a_manager_that_has_not_activated_is_not_listed(

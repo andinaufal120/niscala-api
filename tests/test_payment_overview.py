@@ -281,6 +281,33 @@ def test_an_item_has_tenant_room_and_bill(client, scene, bill_for_scene):
     assert item["bill"]["id"] == str(bill_for_scene.id)
 
 
+def test_an_item_names_the_tenant_record_and_not_the_account(
+    client, scene, make_room, make_verified_tenant
+):
+    other = make_verified_tenant(
+        make_room(scene.prop, number="A2"), name="Dewi Tenant", distinct_id=True
+    )
+    items = client.get(overview_url(scene.prop), headers=scene.owner_in.headers).json()[
+        "items"
+    ]
+    assert other.id != other.user.id
+    assert items[1]["tenant"] == {"id": str(other.id), "name": "Dewi Tenant"}
+
+
+def test_a_tenant_renting_in_two_properties_is_listed_once_in_each(
+    client, scene, make_property, make_room, make_verified_tenant
+):
+    elsewhere = make_property(scene.owner, name="Kos Kedua")
+    second = make_verified_tenant(
+        make_room(elsewhere, number="K1"), user=scene.tenant.user
+    )
+    here = client.get(overview_url(scene.prop), headers=scene.owner_in.headers)
+    there = client.get(overview_url(elsewhere), headers=scene.owner_in.headers)
+    assert [i["tenant"]["id"] for i in here.json()["items"]] == [str(scene.tenant.id)]
+    assert [i["tenant"]["id"] for i in there.json()["items"]] == [str(second.id)]
+    assert there.json()["items"][0]["tenant"]["name"] == "Budi Tenant"
+
+
 def test_an_item_bill_is_a_rent_bill_summary(client, scene, lease, make_rent_bill):
     bill = make_rent_bill(
         lease,

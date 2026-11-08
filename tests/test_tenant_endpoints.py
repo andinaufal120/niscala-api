@@ -264,18 +264,39 @@ def test_a_forbidden_tenant_account_sees_no_tenant_details(
 def test_adding_a_tenant_answers_with_the_stored_tenant(
     client, database, existing, signed_in, room
 ):
+    from app.models import Tenant
+
     response = create(client, signed_in.headers, existing.id, room)
     assert response.status_code == 201, response.text
     body = response.json()
     assert set(body) == TENANT_FIELDS
     (user,) = stored_tenant_users(database)
-    assert body["id"] == str(user.id)
+    (record,) = fetch_all(database, Tenant)
+    assert body["id"] == str(record.id)
+    assert record.user_id == user.id
     assert body["name"] == "Budi Santoso"
     assert body["phone"] == "081234567890"
     assert body["email"] is None
     assert body["occupation"] == "Mahasiswa"
     assert body["accountStatus"] == "notActivated"
     assert body["room"] == {"id": str(room.id), "number": "A1"}
+
+
+def test_a_new_tenant_record_has_an_id_of_its_own(
+    client, database, existing, signed_in, room
+):
+    from app.models import Tenant
+
+    body = create(client, signed_in.headers, existing.id, room).json()
+    (user,) = stored_tenant_users(database)
+    (record,) = fetch_all(database, Tenant)
+    assert record.id != user.id
+    assert body["id"] == str(record.id)
+    assert (
+        client.get(tenant_url(body["id"]), headers=signed_in.headers).status_code == 200
+    )
+    unknown = client.get(tenant_url(user.id), headers=signed_in.headers)
+    assert_error(unknown, 404, "TENANT_NOT_FOUND")
 
 
 def test_the_response_lease_carries_the_submitted_terms_and_next_bill_date(
@@ -335,12 +356,12 @@ def test_the_tenant_row_is_stored_not_activated(
 def test_the_emergency_contacts_are_stored_in_order_with_normalized_phones(
     client, database, existing, signed_in, room
 ):
-    from app.models import EmergencyContact
+    from app.models import EmergencyContact, Tenant
 
     create(client, signed_in.headers, existing.id, room)
-    (user,) = stored_tenant_users(database)
+    (record,) = fetch_all(database, Tenant)
     rows = sorted(fetch_all(database, EmergencyContact), key=lambda r: r.position)
-    assert [r.tenant_id for r in rows] == [user.id, user.id]
+    assert [r.tenant_id for r in rows] == [record.id, record.id]
     assert [r.position for r in rows] == [0, 1]
     assert [(r.name, r.relationship, r.phone) for r in rows] == [
         ("Siti", "Ibu", "081234567890"),
@@ -351,12 +372,12 @@ def test_the_emergency_contacts_are_stored_in_order_with_normalized_phones(
 def test_an_active_lease_is_stored_for_the_room(
     client, database, existing, signed_in, room
 ):
-    from app.models import Lease
+    from app.models import Lease, Tenant
 
     create(client, signed_in.headers, existing.id, room)
-    (user,) = stored_tenant_users(database)
+    (record,) = fetch_all(database, Tenant)
     (lease,) = fetch_all(database, Lease)
-    assert lease.tenant_id == user.id
+    assert lease.tenant_id == record.id
     assert lease.room_id == room.id
     assert lease.start_date == date(2099, 1, 10)
     assert lease.end_date == date(2099, 12, 31)
@@ -369,12 +390,12 @@ def test_an_active_lease_is_stored_for_the_room(
 def test_an_invitation_valid_for_seven_days_is_stored(
     client, database, existing, signed_in, room
 ):
-    from app.models import Invitation
+    from app.models import Invitation, Tenant
 
     create(client, signed_in.headers, existing.id, room)
-    (user,) = stored_tenant_users(database)
+    (record,) = fetch_all(database, Tenant)
     (invitation,) = fetch_all(database, Invitation)
-    assert invitation.tenant_id == user.id
+    assert invitation.tenant_id == record.id
     assert invitation.expires_at - invitation.created_at == timedelta(days=7)
     assert invitation.used_at is None
     assert invitation.invalidated_at is None
@@ -1731,12 +1752,56 @@ def test_a_malformed_tenant_id_is_a_validation_failure(client, database, signed_
     assert_error(response, 422, "VALIDATION_FAILED", "tenantId")
 
 
-def test_the_tenant_id_is_the_user_account_id(
+def test_the_tenant_id_is_the_tenant_record_id(
     client, database, signed_in, room, make_tenant
 ):
-    stored = make_tenant(room)
+    stored = make_tenant(room, distinct_id=True)
     body = get_tenant(client, signed_in.headers, stored.id).json()
-    assert UUID(body["id"]) == stored.user.id == stored.tenant.user_id
+    assert UUID(body["id"]) == stored.tenant.id
+    assert UUID(body["id"]) != stored.user.id
+    assert stored.tenant.user_id == stored.user.id
+
+
+def test_the_account_id_of_a_tenant_is_not_a_tenant_id(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(room, distinct_id=True)
+    response = get_tenant(client, signed_in.headers, stored.user.id)
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_a_tenant_renting_in_two_places_is_read_as_two_tenants(
+    client, database, signed_in, room, existing, make_room, make_verified_tenant
+):
+    first = make_verified_tenant(room, name="Budi Tenant")
+    second = make_verified_tenant(
+        make_room(existing, number="B2"),
+        user=first.user,
+        phone="085555555555",
+        occupation="Guru",
+    )
+    one = get_tenant(client, signed_in.headers, first.id).json()
+    two = get_tenant(client, signed_in.headers, second.id).json()
+    assert (one["id"], two["id"]) == (str(first.id), str(second.id))
+    assert one["id"] != two["id"]
+    assert one["name"] == two["name"] == "Budi Tenant"
+    assert one["email"] == two["email"] == first.user.email
+    assert one["room"]["number"] == "A1"
+    assert two["room"]["number"] == "B2"
+    assert (one["phone"], two["phone"]) == ("081234567890", "085555555555")
+    assert (one["occupation"], two["occupation"]) == (None, "Guru")
+
+
+def test_the_tenant_list_holds_one_entry_per_record_of_a_multi_record_account(
+    client, database, signed_in, room, existing, make_room, make_verified_tenant
+):
+    first = make_verified_tenant(room, name="Budi Tenant")
+    second = make_verified_tenant(make_room(existing, number="B2"), user=first.user)
+    items = client.get(tenants_url(existing.id), headers=signed_in.headers).json()
+    assert [(i["id"], i["room"]["number"]) for i in items["items"]] == [
+        (str(first.id), "A1"),
+        (str(second.id), "B2"),
+    ]
 
 
 # PUT /tenants/{tenantId}
@@ -1764,8 +1829,8 @@ def tenant_state(database, tenant_id) -> dict:
     from app.models import EmergencyContact, Lease, Tenant, UserAccount
 
     with Session(database, expire_on_commit=False) as db:
-        user = db.get(UserAccount, tenant_id)
         tenant = db.get(Tenant, tenant_id)
+        user = db.get(UserAccount, tenant.user_id)
         contacts = db.scalars(
             select(EmergencyContact)
             .where(EmergencyContact.tenant_id == tenant_id)
@@ -2016,7 +2081,7 @@ def test_editing_an_active_tenant_keeps_the_account_active_and_the_email(
     client, database, signed_in, active
 ):
     before = tenant_state(database, active.id)
-    response = edit(client, signed_in.headers, active.id)
+    response = edit(client, signed_in.headers, active.id, name="Old Name")
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["accountStatus"] == "active"
@@ -2025,7 +2090,7 @@ def test_editing_an_active_tenant_keeps_the_account_active_and_the_email(
     after = tenant_state(database, active.id)
     assert after["activated_at"] == before["activated_at"]
     assert after["email"] == "budi@example.com"
-    assert after["name"] == "Budi Santoso"
+    assert after["name"] == "Old Name"
 
 
 def test_editing_with_the_same_values_succeeds(client, database, signed_in, room):
@@ -2493,7 +2558,13 @@ def test_an_active_tenant_cannot_have_fewer_than_two_emergency_contacts(
     client, database, signed_in, active, contacts
 ):
     before = tenant_state(database, active.id)
-    response = edit(client, signed_in.headers, active.id, emergencyContacts=contacts)
+    response = edit(
+        client,
+        signed_in.headers,
+        active.id,
+        name="Old Name",
+        emergencyContacts=contacts,
+    )
     assert_error(response, 422, "VALIDATION_FAILED", "emergencyContacts")
     assert tenant_state(database, active.id) == before
 
@@ -2501,12 +2572,152 @@ def test_an_active_tenant_cannot_have_fewer_than_two_emergency_contacts(
 def test_an_active_tenant_may_replace_the_emergency_contacts(
     client, database, signed_in, active
 ):
-    response = edit(client, signed_in.headers, active.id)
+    response = edit(client, signed_in.headers, active.id, name="Old Name")
     assert response.status_code == 200, response.text
     assert [c["name"] for c in response.json()["emergencyContacts"]] == [
         "Siti",
         "Agus",
     ]
+
+
+# PUT: the name belongs to the account
+
+
+def test_a_different_name_for_an_active_tenant_is_refused(
+    client, database, signed_in, active
+):
+    before = tenant_state(database, active.id)
+    response = edit(client, signed_in.headers, active.id, name="Budi Santoso")
+    assert_error(response, 422, "TENANT_NAME_NOT_EDITABLE", "name")
+    assert tenant_state(database, active.id) == before
+
+
+def test_a_refused_name_change_saves_no_other_field(
+    client, database, signed_in, active
+):
+    before = tenant_state(database, active.id)
+    edit(
+        client,
+        signed_in.headers,
+        active.id,
+        name="Budi Santoso",
+        phone="089999999999",
+        occupation="Dosen",
+        lease=lease_body(rent=7777777),
+    )
+    assert tenant_state(database, active.id) == before
+
+
+def test_the_same_name_for_an_active_tenant_is_accepted(
+    client, database, signed_in, active
+):
+    response = edit(
+        client, signed_in.headers, active.id, name="Old Name", phone="089999999999"
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Old Name"
+    state = tenant_state(database, active.id)
+    assert state["name"] == "Old Name"
+    assert state["phone"] == "089999999999"
+
+
+def test_the_same_name_with_padding_counts_as_the_same_name(
+    client, database, signed_in, active
+):
+    response = edit(client, signed_in.headers, active.id, name="  Old Name \n")
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Old Name"
+
+
+def test_the_name_of_a_tenant_who_is_not_activated_can_change(
+    client, database, signed_in, current
+):
+    response = edit(client, signed_in.headers, current.id, name="New Person")
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "New Person"
+    assert tenant_state(database, current.id)["name"] == "New Person"
+
+
+def test_the_account_name_is_untouched_by_a_refused_change(
+    client, database, signed_in, active
+):
+    from app.models import UserAccount
+
+    edit(client, signed_in.headers, active.id, name="Budi Santoso")
+    with Session(database) as db:
+        assert db.get(UserAccount, active.user.id).name == "Old Name"
+
+
+def test_a_manager_is_refused_the_same_way(
+    client, database, manager, manager_in, existing, active, assign_manager
+):
+    assign_manager(manager, existing)
+    response = edit(client, manager_in.headers, active.id, name="Budi Santoso")
+    assert_error(response, 422, "TENANT_NAME_NOT_EDITABLE", "name")
+
+
+def test_the_name_lock_is_checked_after_the_view_only_property(
+    client, database, owner, signed_in, make_property, make_room, make_tenant
+):
+    frozen = make_property(owner, view_only=True)
+    stored = make_tenant(make_room(frozen), name="Old Name", activated=True)
+    response = edit(client, signed_in.headers, stored.id, name="Budi Santoso")
+    assert_error(response, 403, "PROPERTY_READ_ONLY")
+
+
+def test_the_name_lock_is_checked_after_the_view_only_room(
+    client, database, existing, signed_in, make_room, make_tenant
+):
+    stored = make_tenant(
+        make_room(existing, number="F1", view_only=True),
+        name="Old Name",
+        activated=True,
+    )
+    response = edit(client, signed_in.headers, stored.id, name="Budi Santoso")
+    assert_error(response, 403, "ROOM_READ_ONLY")
+
+
+def test_the_name_lock_is_checked_after_tenant_access(
+    client, database, signed_in, make_user, make_property, make_room, make_tenant
+):
+    theirs = make_property(make_user(), name="Theirs")
+    stored = make_tenant(make_room(theirs), name="Old Name", activated=True)
+    response = edit(client, signed_in.headers, stored.id, name="Budi Santoso")
+    assert_error(response, 404, "TENANT_NOT_FOUND")
+
+
+def test_every_record_of_an_account_holds_the_same_locked_name(
+    client, database, signed_in, existing, room, make_room, make_verified_tenant
+):
+    first = make_verified_tenant(room, name="Budi Tenant")
+    second = make_verified_tenant(make_room(existing, number="B2"), user=first.user)
+    for record in (first, second):
+        refused = edit(client, signed_in.headers, record.id, name="Someone Else")
+        assert_error(refused, 422, "TENANT_NAME_NOT_EDITABLE", "name")
+        accepted = edit(client, signed_in.headers, record.id, name="Budi Tenant")
+        assert accepted.status_code == 200, accepted.text
+
+
+def test_editing_one_record_leaves_the_other_record_of_the_account_alone(
+    client, database, signed_in, existing, room, make_room, make_verified_tenant
+):
+    first = make_verified_tenant(room, name="Budi Tenant", phone="081111111111")
+    second = make_verified_tenant(
+        make_room(existing, number="B2"), user=first.user, phone="082222222222"
+    )
+    before = tenant_state(database, second.id)
+    response = edit(
+        client,
+        signed_in.headers,
+        first.id,
+        name="Budi Tenant",
+        phone="083333333333",
+        occupation="Dosen",
+        lease=lease_body(rent=4000000),
+    )
+    assert response.status_code == 200, response.text
+    assert tenant_state(database, second.id) == before
+    assert tenant_state(database, first.id)["phone"] == "083333333333"
 
 
 def test_an_end_date_before_the_start_date_is_a_validation_failure_on_edit(
@@ -3070,7 +3281,10 @@ def removal_state(database, tenant_id) -> dict:
     return {
         **tenant_state(database, tenant_id),
         "deleted_at": tenant_row(database, tenant_id).deleted_at,
-        "sessions": [(s.id, s.revoked_at) for s in session_rows(database, tenant_id)],
+        "sessions": [
+            (s.id, s.revoked_at)
+            for s in session_rows(database, tenant_row(database, tenant_id).user_id)
+        ],
         "invitations": invitation_state(database, tenant_id),
     }
 
@@ -3139,7 +3353,7 @@ def test_the_tenant_row_is_soft_deleted_and_kept(
     assert_just_now(row.deleted_at)
     assert row.phone == "08123456789"
     assert row.occupation == "Mahasiswa"
-    assert row.user_id == stored.id
+    assert row.user_id == stored.user.id
 
 
 def test_the_user_account_row_is_kept(client, database, signed_in, current):
@@ -3147,7 +3361,7 @@ def test_the_user_account_row_is_kept(client, database, signed_in, current):
 
     remove_ok(client, signed_in.headers, current.id)
     with Session(database) as db:
-        assert db.get(UserAccount, current.id).name == "Old Name"
+        assert db.get(UserAccount, current.user.id).name == "Old Name"
 
 
 def test_the_emergency_contacts_are_kept(client, database, signed_in, current):
@@ -3665,7 +3879,7 @@ def test_every_unrevoked_session_of_the_tenant_is_ended(
     for session in sessions:
         assert client.get(ME_URL, headers=session.headers).status_code == 200
     assert remove(client, signed_in.headers, member.id).status_code == 204
-    rows = session_rows(database, member.id)
+    rows = session_rows(database, member.user.id)
     assert len(rows) == 3
     for row in rows:
         assert_just_now(row.revoked_at)
@@ -3733,15 +3947,15 @@ def test_the_sessions_of_other_users_are_untouched(
 def test_a_tenant_that_never_activated_is_removed_without_sessions(
     client, database, signed_in, current
 ):
-    assert session_rows(database, current.id) == []
+    assert session_rows(database, current.user.id) == []
     assert remove(client, signed_in.headers, current.id).status_code == 204
-    assert session_rows(database, current.id) == []
+    assert session_rows(database, current.user.id) == []
 
 
 def test_an_activated_tenant_without_a_session_is_removed(
     client, database, signed_in, member
 ):
-    assert session_rows(database, member.id) == []
+    assert session_rows(database, member.user.id) == []
     assert remove(client, signed_in.headers, member.id).status_code == 204
 
 
@@ -3848,3 +4062,260 @@ def test_a_tenant_can_be_removed_after_a_failed_attempt(
         assert remove(client, headers, member.id).status_code == 500
     assert remove(client, headers, member.id).status_code == 204
     assert_just_now(tenant_row(database, member.id).deleted_at)
+
+
+# DELETE: an account with several records
+
+
+@pytest.fixture
+def two_records(existing, room, make_room, make_verified_tenant, database):
+    """One verified account with a password and a record in each of two rooms."""
+    first = make_verified_tenant(
+        room, name="Budi Tenant", email="budi@example.com", contacts=CONTACT_ROWS
+    )
+    set_password(database, first.user, PASSWORD)
+    second = make_verified_tenant(
+        make_room(existing, number="B2"), user=first.user, contacts=CONTACT_ROWS
+    )
+    return first, second
+
+
+CONTACT_ROWS = [("Siti", "Ibu", "081234567890"), ("Agus", "Kakak", "08571234567")]
+
+
+def login_body() -> dict:
+    return {"email": "budi@example.com", "password": PASSWORD, "device": DEVICE}
+
+
+def test_removing_one_of_two_records_soft_deletes_only_that_record(
+    client, database, signed_in, two_records
+):
+    first, second = two_records
+    remove_ok(client, signed_in.headers, first.id)
+    assert_just_now(tenant_row(database, first.id).deleted_at)
+    assert tenant_row(database, second.id).deleted_at is None
+
+
+def test_removing_one_of_two_records_ends_only_its_lease(
+    client, database, signed_in, room, two_records
+):
+    from app.models import Lease
+
+    first, second = two_records
+    remove_ok(client, signed_in.headers, first.id)
+    with Session(database) as db:
+        assert_just_now(db.get(Lease, first.lease.id).ended_at)
+        assert db.get(Lease, second.lease.id).ended_at is None
+    detail = client.get(f"/rooms/{room.id}", headers=signed_in.headers).json()
+    assert detail["occupancy"] == "vacant"
+    other = client.get(f"/rooms/{second.lease.room_id}", headers=signed_in.headers)
+    assert other.json()["occupancy"] == "occupied"
+
+
+def test_removing_one_of_two_records_keeps_the_sessions_of_the_account(
+    client, database, signed_in, two_records, sign_in, read_session
+):
+    first, _ = two_records
+    phone = sign_in(first.user, "Phone")
+    tablet = sign_in(first.user, "Tablet")
+    remove_ok(client, signed_in.headers, first.id)
+    for session in (phone, tablet):
+        assert read_session(session.session_id).revoked_at is None
+        assert client.get(ME_URL, headers=session.headers).status_code == 200
+        assert refresh_with(client, session.tokens.refresh_token).status_code == 200
+
+
+def test_the_account_of_one_of_two_removed_records_can_still_log_in(
+    client, database, signed_in, two_records
+):
+    first, _ = two_records
+    assert client.post(LOGIN_URL, json=login_body()).status_code == 200
+    remove_ok(client, signed_in.headers, first.id)
+    response = client.post(LOGIN_URL, json=login_body())
+    assert response.status_code == 200, response.text
+    assert response.json()["account"]["id"] == str(first.user.id)
+
+
+def test_the_remaining_record_and_lease_stay_intact(
+    client, database, signed_in, two_records
+):
+    first, second = two_records
+    before = tenant_state(database, second.id)
+    remove_ok(client, signed_in.headers, first.id)
+    assert tenant_state(database, second.id) == before
+    assert len(before["contacts"]) == 2
+    body = get_tenant(client, signed_in.headers, second.id)
+    assert body.status_code == 200, body.text
+    assert_error(
+        get_tenant(client, signed_in.headers, first.id), 404, "TENANT_NOT_FOUND"
+    )
+
+
+def test_the_remaining_lease_is_still_listed_for_the_tenant(
+    client, database, signed_in, two_records, sign_in
+):
+    first, second = two_records
+    own = sign_in(first.user)
+    assert len(client.get("/me/leases", headers=own.headers).json()["items"]) == 2
+    remove_ok(client, signed_in.headers, first.id)
+    items = client.get("/me/leases", headers=own.headers).json()["items"]
+    assert [i["tenantId"] for i in items] == [str(second.id)]
+
+
+def test_removing_a_record_leaves_the_invitations_of_the_other_record(
+    client, database, signed_in, existing, room, make_room, make_tenant
+):
+    first = make_tenant(room, name="Budi Tenant")
+    second = make_tenant(make_room(existing, number="B2"), user=first.user)
+    remove_ok(client, signed_in.headers, first.id)
+    assert_link_unknown(client, first.token)
+    assert preview_status(client, second.token) == "valid"
+
+
+def test_removing_the_last_live_record_ends_the_sessions_and_the_login(
+    client, database, signed_in, two_records, sign_in
+):
+    first, second = two_records
+    session = sign_in(first.user)
+    remove_ok(client, signed_in.headers, first.id)
+    assert client.get(ME_URL, headers=session.headers).status_code == 200
+    remove_ok(client, signed_in.headers, second.id)
+    assert_access_rejected(client.get(ME_URL, headers=session.headers))
+    assert_error(
+        refresh_with(client, session.tokens.refresh_token), 401, "REFRESH_TOKEN_INVALID"
+    )
+    assert_error(client.post(LOGIN_URL, json=login_body()), 401, "INVALID_CREDENTIALS")
+    for row in session_rows(database, first.user.id):
+        assert_just_now(row.revoked_at)
+
+
+def test_the_order_of_removal_does_not_matter(
+    client, database, signed_in, two_records, sign_in
+):
+    first, second = two_records
+    session = sign_in(first.user)
+    remove_ok(client, signed_in.headers, second.id)
+    assert client.get(ME_URL, headers=session.headers).status_code == 200
+    assert client.post(LOGIN_URL, json=login_body()).status_code == 200
+    remove_ok(client, signed_in.headers, first.id)
+    assert_access_rejected(client.get(ME_URL, headers=session.headers))
+    assert_error(client.post(LOGIN_URL, json=login_body()), 401, "INVALID_CREDENTIALS")
+
+
+def test_a_record_deleted_earlier_does_not_count_as_live(
+    client,
+    database,
+    signed_in,
+    room,
+    existing,
+    make_room,
+    make_verified_tenant,
+    sign_in,
+):
+    first = make_verified_tenant(room, name="Budi Tenant", email="budi@example.com")
+    make_verified_tenant(
+        make_room(existing, number="B2"), user=first.user, deleted=True
+    )
+    session = sign_in(first.user)
+    remove_ok(client, signed_in.headers, first.id)
+    assert_access_rejected(client.get(ME_URL, headers=session.headers))
+
+
+def test_a_record_whose_lease_ended_still_counts_as_live(
+    client,
+    database,
+    signed_in,
+    room,
+    existing,
+    make_room,
+    make_verified_tenant,
+    sign_in,
+):
+    first = make_verified_tenant(room, name="Budi Tenant", email="budi@example.com")
+    make_verified_tenant(
+        make_room(existing, number="B2"), user=first.user, lease_ended=True
+    )
+    session = sign_in(first.user)
+    remove_ok(client, signed_in.headers, first.id)
+    assert client.get(ME_URL, headers=session.headers).status_code == 200
+
+
+def test_a_record_removed_at_one_owner_leaves_the_account_working_at_another(
+    client,
+    database,
+    signed_in,
+    room,
+    make_user,
+    make_property,
+    make_room,
+    make_verified_tenant,
+    sign_in,
+):
+    elsewhere = make_property(make_user(name="Dewi Owner"), name="Kos Dewi")
+    first = make_verified_tenant(room, name="Budi Tenant")
+    second = make_verified_tenant(make_room(elsewhere, number="D1"), user=first.user)
+    session = sign_in(first.user)
+    remove_ok(client, signed_in.headers, first.id)
+    assert client.get(ME_URL, headers=session.headers).status_code == 200
+    assert tenant_row(database, second.id).deleted_at is None
+
+
+def test_the_history_of_a_removed_record_is_kept_beside_the_other_record(
+    client,
+    database,
+    scene,
+    make_complaint,
+    make_rent_bill,
+    make_room,
+    make_verified_tenant,
+):
+    other_room = make_room(scene.prop, number="B2")
+    second = make_verified_tenant(other_room, user=scene.tenant.user)
+    kept = make_complaint(scene.tenant, scene.room)
+    other = make_complaint(second, other_room)
+    bill = make_rent_bill(scene.tenant.lease)
+    remove_ok(client, scene.owner_in.headers, scene.tenant.id)
+    listed = client.get("/complaints", headers=scene.owner_in.headers).json()["items"]
+    assert {i["id"] for i in listed} == {str(kept.id), str(other.id)}
+    detail = client.get(f"/rent-bills/{bill.id}", headers=scene.owner_in.headers)
+    assert detail.status_code == 200
+
+
+def test_a_person_removed_at_one_property_can_be_invited_to_another(
+    client, database, owner, signed_in, room, make_property, make_room, make_tenant
+):
+    stored = make_tenant(
+        room, name="Budi Tenant", activated=True, email="budi@example.com"
+    )
+    remove_ok(client, signed_in.headers, stored.id)
+    elsewhere = make_property(owner, name="Kos Kedua")
+    created = create(
+        client,
+        signed_in.headers,
+        elsewhere.id,
+        make_room(elsewhere, number="K1"),
+        name="Budi Tenant",
+    )
+    assert created.status_code == 201, created.text
+    token = token_of(created.json()["invitation"]["url"])
+    body = {
+        "token": token,
+        "name": "Budi Tenant",
+        "email": "budi.new@example.com",
+        "password": PASSWORD,
+        "device": DEVICE,
+    }
+    assert client.post(ACTIVATION_URL, json=body).status_code == 201
+    assert tenant_row(database, stored.id).deleted_at is not None
+
+
+def test_regenerating_for_one_record_leaves_the_other_record_of_the_account_alone(
+    client, database, signed_in, existing, room, make_room, make_tenant
+):
+    first = make_tenant(room, name="Budi Tenant")
+    second = make_tenant(make_room(existing, number="B2"), user=first.user)
+    before = invitation_state(database, second.id)
+    regenerate(client, signed_in.headers, first.id)
+    assert invitation_state(database, second.id) == before
+    assert preview_status(client, second.token) == "valid"
+    assert preview_status(client, first.token) == "used"

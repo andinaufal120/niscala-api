@@ -34,7 +34,7 @@ def complaint(make_complaint, scene):
 def submitted_facts(scene, complaint_id, description=DESCRIPTION) -> dict:
     return {
         "complaint": complaint_facts(complaint_id, "new", description=description),
-        "tenant": tenant_ref(scene.tenant.user),
+        "tenant": tenant_ref(scene.tenant),
         "room": room_ref(scene.room),
         "property": property_ref(scene.prop),
     }
@@ -51,6 +51,40 @@ def progress_facts(scene, complaint, status, **options) -> dict:
 
 
 # A tenant submits a complaint
+
+
+@pytest.fixture
+def second_place(scene, make_room, make_verified_tenant):
+    """A second room of the signed-in tenant's account, in the same property."""
+    room = make_room(scene.prop, number="B2")
+    return room, make_verified_tenant(room, user=scene.tenant.user)
+
+
+def test_a_complaint_about_the_second_lease_names_that_record_and_room(
+    client, database, scene, second_place
+):
+    room, record = second_place
+    assert record.id != scene.tenant.id
+    submit_complaint(client, scene.tenant_in.headers, room_id=str(room.id))
+    item = only(client, scene.owner_in, "complaintSubmitted")
+    assert item["tenant"] == tenant_ref(record)
+    assert item["room"] == room_ref(room)
+    assert item["property"] == property_ref(scene.prop)
+
+
+def test_a_status_change_on_the_second_record_notifies_the_account(
+    client, database, scene, second_place, make_complaint
+):
+    room, record = second_place
+    complaint = make_complaint(record, room, description="The tap leaks badly.")
+    assert (
+        change_complaint(client, scene.owner_in.headers, complaint.id).status_code
+        == 201
+    )
+    item = only(client, scene.tenant_in, "complaintStatusChanged")
+    assert item["complaint"]["complaintId"] == str(complaint.id)
+    assert item["room"] == room_ref(room)
+    assert len(stored_for(database, scene.tenant.user)) == 1
 
 
 @pytest.mark.parametrize("who", ["owner_in", "manager_in"])

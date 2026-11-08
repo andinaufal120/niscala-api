@@ -278,6 +278,32 @@ def test_an_item_names_its_tenant_and_room(client, scene):
     assert item["room"] == {"id": str(scene.room.id), "number": "A1"}
 
 
+def test_an_item_names_the_tenant_record_and_not_the_account(
+    client, scene, make_room, make_verified_tenant
+):
+    other = make_verified_tenant(
+        make_room(scene.prop, number="A2"), name="Dewi Tenant", distinct_id=True
+    )
+    items = client.get(patterns_url(scene.prop), headers=scene.owner_in.headers).json()[
+        "items"
+    ]
+    assert other.id != other.user.id
+    assert items[1]["tenant"] == {"id": str(other.id), "name": "Dewi Tenant"}
+
+
+def test_a_tenant_renting_in_two_properties_is_listed_once_in_each(
+    client, scene, make_property, make_room, make_verified_tenant
+):
+    elsewhere = make_property(scene.owner, name="Kos Kedua")
+    second = make_verified_tenant(
+        make_room(elsewhere, number="K1"), user=scene.tenant.user
+    )
+    here = client.get(patterns_url(scene.prop), headers=scene.owner_in.headers)
+    there = client.get(patterns_url(elsewhere), headers=scene.owner_in.headers)
+    assert [i["tenant"]["id"] for i in here.json()["items"]] == [str(scene.tenant.id)]
+    assert [i["tenant"]["id"] for i in there.json()["items"]] == [str(second.id)]
+
+
 def test_the_summary_is_none_and_not_withheld(client, scene, lease, add_bill):
     add_bill(lease, 0, 3)
     item = only_item(client, scene)

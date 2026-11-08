@@ -3,7 +3,7 @@
 from typing import Any
 
 import pytest
-from conftest import COMPLAINT_ID, NOT_A_UUID, OpenApiDoc, nullable_inner
+from conftest import COMPLAINT_ID, NOT_A_UUID, ROOM_ID, OpenApiDoc, nullable_inner
 
 COMPLAINT_PATHS = {
     "/complaints": {"post", "get"},
@@ -75,7 +75,10 @@ NO_PARAMETER_OPERATIONS = [
 COMPLAINT_STATUSES = ["new", "inProgress", "done"]
 COMPLAINT_URGENCIES = ["low", "medium", "high"]
 
-VALID_COMPLAINT_INPUT = {"description": "The air conditioner does not cool."}
+VALID_COMPLAINT_INPUT = {
+    "description": "The air conditioner does not cool.",
+    "roomId": ROOM_ID,
+}
 VALID_CLASSIFICATION_INPUT = {"category": "Electrical", "urgency": "high"}
 VALID_STATUS_CHANGE_INPUT = {"status": "inProgress"}
 
@@ -356,10 +359,17 @@ def test_complaint_classification_state_is_string_enum_of_its_states(
 # ComplaintInput
 
 
-def test_complaint_input_has_only_required_description(openapi: OpenApiDoc) -> None:
+def test_complaint_input_has_exactly_description_and_room_id(
+    openapi: OpenApiDoc,
+) -> None:
     schema = openapi.component("ComplaintInput")
-    assert _property_names(schema) == {"description"}
-    assert set(schema["required"]) == {"description"}
+    assert _property_names(schema) == {"description", "roomId"}
+    assert set(schema["required"]) == {"description", "roomId"}
+
+
+def test_complaint_input_room_id_is_uuid_string(openapi: OpenApiDoc) -> None:
+    schema = openapi.component("ComplaintInput")["properties"]["roomId"]
+    _assert_uuid_string(schema)
 
 
 def test_complaint_input_description_is_string_of_at_least_ten_characters(
@@ -378,12 +388,15 @@ def test_complaint_input_description_is_at_most_two_thousand_characters(
 
 
 def test_too_long_complaint_description_is_rejected_with_validation_error(
-    client, tenant_headers: dict[str, str]
+    client, tenant_headers: dict[str, str], valid_input: dict[str, Any]
 ) -> None:
     response = client.post(
-        COMPLAINTS_URL, json={"description": "a" * 2001}, headers=tenant_headers
+        COMPLAINTS_URL,
+        json={**valid_input, "description": "a" * 2001},
+        headers=tenant_headers,
     )
     assert response.status_code == 422
+    assert response.json()["field"] == "description"
 
 
 # ComplaintClassificationInput
@@ -780,10 +793,19 @@ def test_complaint_category_list_items_is_required_array_of_strings(
 
 
 @pytest.fixture
-def tenant_headers(make_user, sign_in) -> dict[str, str]:
-    from app.schemas.auth import UserRole
+def tenant_room(make_user, make_property, make_room):
+    """The room the signed-in tenant of `tenant_headers` rents."""
+    return make_room(make_property(make_user(name="Rina Owner")), number="A1")
 
-    return sign_in(make_user(role=UserRole.TENANT)).headers
+
+@pytest.fixture
+def tenant_headers(tenant_room, make_verified_tenant, sign_in) -> dict[str, str]:
+    return sign_in(make_verified_tenant(tenant_room).user).headers
+
+
+@pytest.fixture
+def valid_input(tenant_room) -> dict[str, Any]:
+    return {**VALID_COMPLAINT_INPUT, "roomId": str(tenant_room.id)}
 
 
 @pytest.fixture
@@ -802,28 +824,59 @@ def owner_headers(make_user, sign_in) -> dict[str, str]:
     ],
 )
 def test_too_short_complaint_description_is_rejected_with_validation_error(
-    client, tenant_headers: dict[str, str], description: str
+    client,
+    tenant_headers: dict[str, str],
+    valid_input: dict[str, Any],
+    description: str,
 ) -> None:
     response = client.post(
-        COMPLAINTS_URL, json={"description": description}, headers=tenant_headers
+        COMPLAINTS_URL,
+        json={**valid_input, "description": description},
+        headers=tenant_headers,
     )
     assert response.status_code == 422
+    assert response.json()["field"] == "description"
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("changes", "dropped", "field"),
     [
-        pytest.param({}, id="empty_object"),
-        pytest.param({"description": None}, id="null_description"),
-        pytest.param({"description": 1234567890}, id="numeric_description"),
-        pytest.param({"description": ["a" * 10]}, id="array_description"),
+        pytest.param({}, ("description",), "description", id="no_description"),
+        pytest.param({"description": None}, (), "description", id="null_description"),
+        pytest.param(
+            {"description": 1234567890}, (), "description", id="numeric_description"
+        ),
+        pytest.param(
+            {"description": ["a" * 10]}, (), "description", id="array_description"
+        ),
+        pytest.param({}, ("roomId",), "roomId", id="no_room_id"),
+        pytest.param({"roomId": None}, (), "roomId", id="null_room_id"),
+        pytest.param({"roomId": NOT_A_UUID}, (), "roomId", id="malformed_room_id"),
+        pytest.param({"roomId": ""}, (), "roomId", id="empty_room_id"),
+        pytest.param({"roomId": 12345}, (), "roomId", id="numeric_room_id"),
     ],
 )
-def test_invalid_complaint_input_is_rejected_with_validation_error(
-    client, tenant_headers: dict[str, str], body: dict[str, Any]
+def test_invalid_complaint_input_is_rejected_on_its_field(
+    client,
+    tenant_headers: dict[str, str],
+    valid_input: dict[str, Any],
+    changes: dict[str, Any],
+    dropped: tuple[str, ...],
+    field: str,
 ) -> None:
+    body = _without({**valid_input, **changes}, *dropped)
     response = client.post(COMPLAINTS_URL, json=body, headers=tenant_headers)
     assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_FAILED"
+    assert response.json()["field"] == field
+
+
+def test_an_empty_complaint_object_is_rejected_with_validation_error(
+    client, tenant_headers: dict[str, str]
+) -> None:
+    response = client.post(COMPLAINTS_URL, json={}, headers=tenant_headers)
+    assert response.status_code == 422
+    assert response.json()["field"] in {"description", "roomId"}
 
 
 @pytest.mark.parametrize(

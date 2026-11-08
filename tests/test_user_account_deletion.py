@@ -182,7 +182,7 @@ def test_a_tenant_that_has_not_activated_is_not_found(
     from app.models import Tenant
 
     pending = make_tenant(make_room(make_property(owner)), name="Belum Aktif")
-    response = delete_account(client, admin_in.headers, pending.id)
+    response = delete_account(client, admin_in.headers, pending.user.id)
     assert_error(response, 404, "USER_ACCOUNT_NOT_FOUND")
     assert deleted_at_of(database, Tenant, pending.id) is None
 
@@ -226,9 +226,34 @@ def test_a_tenant_deleted_through_the_tenant_endpoints_counts_as_deleted(
     tenant = make_verified_tenant(make_room(prop))
     removed = client.delete(f"/tenants/{tenant.id}", headers=sign_in(owner).headers)
     assert removed.status_code == 204, removed.text
-    assert status_of(client, admin_in, tenant.id) == "deleted"
-    response = delete_account(client, admin_in.headers, tenant.id)
+    assert status_of(client, admin_in, tenant.user.id) == "deleted"
+    response = delete_account(client, admin_in.headers, tenant.user.id)
     assert_error(response, 409, "USER_ACCOUNT_DELETED")
+
+
+def test_a_tenant_with_one_record_left_does_not_count_as_deleted(
+    client,
+    database,
+    admin_in,
+    owner,
+    sign_in,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    prop = make_property(owner)
+    first = make_verified_tenant(make_room(prop, number="1"))
+    second = make_verified_tenant(make_room(prop, number="2"), user=first.user)
+    removed = client.delete(f"/tenants/{first.id}", headers=sign_in(owner).headers)
+    assert removed.status_code == 204, removed.text
+    assert status_of(client, admin_in, first.user.id) == "active"
+    removed = client.delete(f"/tenants/{second.id}", headers=sign_in(owner).headers)
+    assert removed.status_code == 204, removed.text
+    assert status_of(client, admin_in, first.user.id) == "deleted"
+    assert str(first.user.id) not in listed_ids(client, admin_in.headers)
+    assert str(first.user.id) in listed_ids(
+        client, admin_in.headers, includeDeleted="true"
+    )
 
 
 def test_a_manager_deleted_through_the_manager_endpoints_counts_as_deleted(
@@ -247,7 +272,7 @@ def test_a_deleted_tenant_with_an_active_lease_is_reported_deleted_first(
     client, database, admin_in, owner, make_property, make_room, make_verified_tenant
 ):
     tenant = make_verified_tenant(make_room(make_property(owner)), deleted=True)
-    response = delete_account(client, admin_in.headers, tenant.id)
+    response = delete_account(client, admin_in.headers, tenant.user.id)
     assert_error(response, 409, "USER_ACCOUNT_DELETED")
 
 
@@ -542,11 +567,68 @@ def test_a_tenant_with_an_active_lease_cannot_be_deleted(
 
     tenant = make_verified_tenant(make_room(make_property(owner)))
     session = sign_in(tenant.user)
-    response = delete_account(client, admin_in.headers, tenant.id)
+    response = delete_account(client, admin_in.headers, tenant.user.id)
     assert_error(response, 409, "TENANT_HAS_ACTIVE_LEASE")
     assert deleted_at_of(database, Tenant, tenant.id) is None
     assert client.get("/me", headers=session.headers).status_code == 200
-    assert status_of(client, admin_in, tenant.id) == "active"
+    assert status_of(client, admin_in, tenant.user.id) == "active"
+
+
+def test_a_tenant_with_an_active_lease_through_one_of_two_records_cannot_be_deleted(
+    client,
+    database,
+    admin_in,
+    owner,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    from app.models import Tenant
+
+    prop = make_property(owner)
+    ended = make_verified_tenant(make_room(prop, number="1"), lease_ended=True)
+    active = make_verified_tenant(make_room(prop, number="2"), user=ended.user)
+    response = delete_account(client, admin_in.headers, ended.user.id)
+    assert_error(response, 409, "TENANT_HAS_ACTIVE_LEASE")
+    assert deleted_at_of(database, Tenant, ended.id) is None
+    assert deleted_at_of(database, Tenant, active.id) is None
+    assert status_of(client, admin_in, ended.user.id) == "active"
+
+
+def test_a_tenant_with_active_leases_through_both_records_cannot_be_deleted(
+    client,
+    database,
+    admin_in,
+    owner,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    from app.models import Tenant
+
+    prop = make_property(owner)
+    first = make_verified_tenant(make_room(prop, number="1"))
+    second = make_verified_tenant(make_room(prop, number="2"), user=first.user)
+    response = delete_account(client, admin_in.headers, first.user.id)
+    assert_error(response, 409, "TENANT_HAS_ACTIVE_LEASE")
+    assert deleted_at_of(database, Tenant, first.id) is None
+    assert deleted_at_of(database, Tenant, second.id) is None
+
+
+def test_a_tenant_whose_other_record_is_already_deleted_is_blocked_by_the_live_lease(
+    client,
+    database,
+    admin_in,
+    owner,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    prop = make_property(owner)
+    first = make_verified_tenant(make_room(prop, number="1"))
+    make_verified_tenant(make_room(prop, number="2"), user=first.user, deleted=True)
+    response = delete_account(client, admin_in.headers, first.user.id)
+    assert_error(response, 409, "TENANT_HAS_ACTIVE_LEASE")
 
 
 def test_a_tenant_without_an_active_lease_is_deleted(
@@ -555,10 +637,59 @@ def test_a_tenant_without_an_active_lease_is_deleted(
     from app.models import Tenant
 
     tenant = make_verified_tenant(make_room(make_property(owner)), lease_ended=True)
-    assert delete_account(client, admin_in.headers, tenant.id).status_code == 204
+    assert delete_account(client, admin_in.headers, tenant.user.id).status_code == 204
     assert_close(deleted_at_of(database, Tenant, tenant.id), datetime.now(UTC), 60)
-    assert status_of(client, admin_in, tenant.id) == "deleted"
-    assert str(tenant.id) not in listed_ids(client, admin_in.headers)
+    assert status_of(client, admin_in, tenant.user.id) == "deleted"
+    assert str(tenant.user.id) not in listed_ids(client, admin_in.headers)
+
+
+def test_deleting_a_tenant_account_deletes_every_record_of_it(
+    client,
+    database,
+    admin_in,
+    owner,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    from app.models import Lease, Tenant
+
+    prop = make_property(owner)
+    first = make_verified_tenant(make_room(prop, number="1"), lease_ended=True)
+    second = make_verified_tenant(
+        make_room(prop, number="2"), user=first.user, lease_ended=True
+    )
+    other = make_verified_tenant(make_room(prop, number="3"))
+    assert delete_account(client, admin_in.headers, first.user.id).status_code == 204
+    for record in (first, second):
+        assert_close(deleted_at_of(database, Tenant, record.id), datetime.now(UTC), 60)
+    assert deleted_at_of(database, Tenant, other.id) is None
+    assert get_row(database, Lease, other.lease.id).ended_at is None
+    assert status_of(client, admin_in, other.user.id) == "active"
+
+
+def test_deleting_a_tenant_account_ends_the_sessions_of_the_account_only(
+    client,
+    database,
+    admin_in,
+    owner,
+    make_property,
+    make_room,
+    make_verified_tenant,
+    sign_in,
+):
+    prop = make_property(owner)
+    first = make_verified_tenant(make_room(prop, number="1"), lease_ended=True)
+    make_verified_tenant(make_room(prop, number="2"), user=first.user, lease_ended=True)
+    bystander = make_verified_tenant(make_room(prop, number="3"))
+    mine = [sign_in(first.user), sign_in(first.user)]
+    other = sign_in(bystander.user)
+    assert delete_account(client, admin_in.headers, first.user.id).status_code == 204
+    for session in mine:
+        assert_error(
+            client.get("/me", headers=session.headers), 401, "ACCESS_TOKEN_INVALID"
+        )
+    assert client.get("/me", headers=other.headers).status_code == 200
 
 
 def test_deleting_a_tenant_ends_sessions_and_login(
@@ -577,7 +708,7 @@ def test_deleting_a_tenant_ends_sessions_and_login(
     set_password(database, tenant.user)
     session = sign_in(tenant.user)
     assert login(client, "budi@example.com").status_code == 200
-    delete_account(client, admin_in.headers, tenant.id)
+    delete_account(client, admin_in.headers, tenant.user.id)
     assert_error(
         client.get("/me", headers=session.headers), 401, "ACCESS_TOKEN_INVALID"
     )
@@ -602,7 +733,7 @@ def test_deleting_a_tenant_keeps_their_history_and_the_property(
     tenant = make_verified_tenant(room, lease_ended=True)
     bill = make_rent_bill(tenant.lease)
     complaint = make_complaint(tenant, room)
-    delete_account(client, admin_in.headers, tenant.id)
+    delete_account(client, admin_in.headers, tenant.user.id)
     assert get_row(database, RentBill, bill.id) is not None
     assert get_row(database, Complaint, complaint.id) is not None
     assert get_row(database, Lease, tenant.lease.id) is not None
@@ -623,6 +754,6 @@ def test_the_email_of_a_deleted_tenant_stays_reserved(
     tenant = make_verified_tenant(
         make_room(make_property(owner)), lease_ended=True, email="budi@example.com"
     )
-    assert delete_account(client, admin_in.headers, tenant.id).status_code == 204
+    assert delete_account(client, admin_in.headers, tenant.user.id).status_code == 204
     response = register_owner(email="Budi@Example.com")
     assert_error(response, 409, "EMAIL_ALREADY_REGISTERED", "email")

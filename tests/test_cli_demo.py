@@ -183,14 +183,14 @@ def test_it_creates_one_activated_tenant_with_a_verified_email_and_password(
 
 
 def test_the_tenant_has_exactly_two_emergency_contacts_in_order(database, demo):
-    from app.models import EmergencyContact
+    from app.models import EmergencyContact, Tenant
 
     contacts = sorted(fetch_all(database, EmergencyContact), key=lambda c: c.position)
-    user = user_by_email(database, TENANT_EMAIL)
+    (record,) = fetch_all(database, Tenant)
     assert len(contacts) == 2
     assert len({c.position for c in contacts}) == 2
     for contact in contacts:
-        assert contact.tenant_id == user.id
+        assert contact.tenant_id == record.id
         assert contact.name
         assert contact.relationship
         assert contact.phone
@@ -200,13 +200,13 @@ def test_the_tenant_has_exactly_two_emergency_contacts_in_order(database, demo):
 
 
 def test_the_tenant_has_one_active_monthly_lease_started_two_months_ago(database, demo):
-    from app.models import Lease, Room
+    from app.models import Lease, Room, Tenant
 
     start, end = expected_lease_dates()
-    user = user_by_email(database, TENANT_EMAIL)
+    (record,) = fetch_all(database, Tenant)
     (room,) = fetch_all(database, Room)
     (lease,) = fetch_all(database, Lease)
-    assert lease.tenant_id == user.id
+    assert lease.tenant_id == record.id
     assert lease.room_id == room.id
     assert lease.billing_cycle == "monthly"
     assert lease.rent == 1500000

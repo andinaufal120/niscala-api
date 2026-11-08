@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from complaint_support import submit_complaint as submit_complaint_for
 from rent_bill_support import png
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -306,15 +307,23 @@ def property_ref(prop) -> dict:
     return {"id": str(prop.id), "name": prop.name}
 
 
-def tenant_ref(user, name: str | None = None) -> dict:
-    return {"id": str(user.id), "name": name or user.name}
+def tenant_ref(who, name: str | None = None) -> dict:
+    """A `TenantRef`: the Tenant record id and the name of its account.
+
+    Takes a `StoredTenant` (its record id and its account's name) or a user
+    account whose id is used as the record id.
+    """
+    if hasattr(who, "tenant"):
+        return {"id": str(who.id), "name": name or who.user.name}
+    return {"id": str(who.id), "name": name or who.name}
 
 
 # Complaint events
 
 
-def submit_complaint(client, headers, description: str = DESCRIPTION):
-    return client.post(COMPLAINTS, json={"description": description}, headers=headers)
+def submit_complaint(client, headers, description: str = DESCRIPTION, room_id=None):
+    """Submit a complaint for `room_id`, or for the caller's own room by default."""
+    return submit_complaint_for(client, headers, description, room_id)
 
 
 def change_complaint(client, headers, complaint_id, status="inProgress", **extra):

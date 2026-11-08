@@ -36,13 +36,21 @@ def saved_room(db_session, **overrides):
     return row
 
 
-def saved_tenant(db_session, **overrides):
-    from app.models import Tenant
+def saved_account(db_session):
     from app.schemas.auth import UserRole
 
     user = new_user(name="Budi Tenant", email=None, role=UserRole.TENANT)
     db_session.add(user)
     db_session.flush()
+    return user
+
+
+def saved_tenant(db_session, user=None, **overrides):
+    """A Tenant record of a new account, or of `user` when given."""
+    from app.models import Tenant
+
+    if user is None:
+        user = saved_account(db_session)
     fields = {"user_id": user.id, "phone": "081234567890"}
     row = Tenant(**{**fields, **overrides})
     db_session.add(row)
@@ -78,7 +86,7 @@ def new_lease(tenant_id, room_id, **overrides):
 
 def saved_lease(db_session, tenant_id=None, room_id=None, **overrides):
     if tenant_id is None:
-        tenant_id = saved_tenant(db_session).user_id
+        tenant_id = saved_tenant(db_session).id
     if room_id is None:
         room_id = saved_room(db_session).id
     row = new_lease(tenant_id, room_id, **overrides)
@@ -128,12 +136,34 @@ def test_tenant_gets_defaults_on_insert(db_session):
     before = datetime.now(UTC)
     row = saved_tenant(db_session)
     db_session.refresh(row)
+    assert isinstance(row.id, UUID)
     assert isinstance(row.user_id, UUID)
     assert row.occupation is None
     assert row.activated_at is None
     assert row.deleted_at is None
     assert row.created_at.utcoffset() == timedelta(0)
     assert before - timedelta(minutes=1) <= row.created_at <= datetime.now(UTC)
+
+
+def test_a_tenant_record_has_an_id_of_its_own(db_session):
+    row = saved_tenant(db_session)
+    assert row.id != row.user_id
+
+
+def test_the_tenant_record_id_is_the_primary_key(db_session):
+    from app.models import Tenant
+
+    key = [column.name for column in Tenant.__table__.primary_key.columns]
+    assert key == ["id"]
+
+
+def test_the_account_of_a_tenant_record_is_not_unique(db_session):
+    from app.models import Tenant
+
+    column = Tenant.__table__.c.user_id
+    assert not column.primary_key
+    assert not column.unique
+    assert column.nullable is False
 
 
 def test_tenant_round_trips_its_fields(db_session):
@@ -147,11 +177,21 @@ def test_tenant_round_trips_its_fields(db_session):
     )
     db_session.commit()
     db_session.expire_all()
-    stored = db_session.get(type(row), row.user_id)
+    stored = db_session.get(type(row), row.id)
+    assert stored.user_id is not None
     assert stored.phone == "08111222333"
     assert stored.occupation == "Mahasiswa"
     assert stored.activated_at == when
     assert stored.deleted_at == when
+
+
+def test_a_tenant_record_can_be_given_an_id(db_session):
+    user = saved_account(db_session)
+    row = saved_tenant(db_session, user, id=user.id)
+    db_session.commit()
+    db_session.expire_all()
+    stored = db_session.get(type(row), user.id)
+    assert stored.id == stored.user_id == user.id
 
 
 def test_tenant_requires_an_existing_user_account(db_session):
@@ -162,14 +202,22 @@ def test_tenant_requires_an_existing_user_account(db_session):
         db_session.flush()
 
 
-def test_a_user_account_has_at_most_one_tenant_row(db_session):
+def test_tenant_requires_a_user_account(db_session):
     from app.models import Tenant
 
-    row = saved_tenant(db_session)
-    db_session.expunge(row)
-    db_session.add(Tenant(user_id=row.user_id, phone="081234567890"))
+    db_session.add(Tenant(user_id=None, phone="081234567890"))
     with pytest.raises(IntegrityError):
         db_session.flush()
+
+
+def test_a_user_account_may_have_several_tenant_rows(db_session):
+    user = saved_account(db_session)
+    first = saved_tenant(db_session, user)
+    second = saved_tenant(db_session, user, phone="08111222333")
+    db_session.commit()
+    db_session.expire_all()
+    assert first.id != second.id
+    assert first.user_id == second.user_id == user.id
 
 
 def test_tenant_requires_a_phone(db_session):
@@ -182,13 +230,13 @@ def test_tenant_requires_a_phone(db_session):
 
 def test_emergency_contact_gets_an_id_and_round_trips(db_session):
     tenant = saved_tenant(db_session)
-    row = new_contact(tenant.user_id, name="Agus", relationship="Kakak", position=2)
+    row = new_contact(tenant.id, name="Agus", relationship="Kakak", position=2)
     db_session.add(row)
     db_session.commit()
     db_session.expire_all()
     stored = db_session.get(type(row), row.id)
     assert isinstance(stored.id, UUID)
-    assert stored.tenant_id == tenant.user_id
+    assert stored.tenant_id == tenant.id
     assert (stored.name, stored.relationship) == ("Agus", "Kakak")
     assert stored.phone == "081234567890"
     assert stored.position == 2
@@ -200,19 +248,26 @@ def test_emergency_contact_requires_an_existing_tenant(db_session):
         db_session.flush()
 
 
+def test_emergency_contact_refers_to_the_tenant_record_not_the_account(db_session):
+    tenant = saved_tenant(db_session)
+    db_session.add(new_contact(tenant.user_id))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
 @pytest.mark.parametrize("field", ["name", "relationship", "phone", "position"])
 def test_emergency_contact_requires_its_mandatory_columns(db_session, field):
     tenant = saved_tenant(db_session)
-    db_session.add(new_contact(**{"tenant_id": tenant.user_id, field: None}))
+    db_session.add(new_contact(**{"tenant_id": tenant.id, field: None}))
     with pytest.raises(IntegrityError):
         db_session.flush()
 
 
 def test_a_tenant_cannot_have_two_contacts_at_one_position(db_session):
     tenant = saved_tenant(db_session)
-    db_session.add(new_contact(tenant.user_id, position=0))
+    db_session.add(new_contact(tenant.id, position=0))
     db_session.flush()
-    db_session.add(new_contact(tenant.user_id, position=0))
+    db_session.add(new_contact(tenant.id, position=0))
     with pytest.raises(IntegrityError):
         db_session.flush()
 
@@ -221,11 +276,18 @@ def test_different_positions_and_different_tenants_may_share_a_position(db_sessi
     first, second = saved_tenant(db_session), saved_tenant(db_session)
     db_session.add_all(
         [
-            new_contact(first.user_id, position=0),
-            new_contact(first.user_id, position=1),
-            new_contact(second.user_id, position=0),
+            new_contact(first.id, position=0),
+            new_contact(first.id, position=1),
+            new_contact(second.id, position=0),
         ]
     )
+    db_session.flush()
+
+
+def test_two_records_of_one_account_keep_their_own_contacts(db_session):
+    user = saved_account(db_session)
+    first, second = saved_tenant(db_session, user), saved_tenant(db_session, user)
+    db_session.add_all([new_contact(first.id), new_contact(second.id)])
     db_session.flush()
 
 
@@ -249,7 +311,7 @@ def test_lease_round_trips_its_fields(db_session):
     ended = datetime(2026, 5, 6, 7, 8, 9, tzinfo=UTC)
     row = saved_lease(
         db_session,
-        tenant.user_id,
+        tenant.id,
         room.id,
         start_date=date(2026, 1, 31),
         end_date=date(2027, 1, 30),
@@ -261,7 +323,7 @@ def test_lease_round_trips_its_fields(db_session):
     db_session.commit()
     db_session.expire_all()
     stored = db_session.get(type(row), row.id)
-    assert stored.tenant_id == tenant.user_id
+    assert stored.tenant_id == tenant.id
     assert stored.room_id == room.id
     assert stored.start_date == date(2026, 1, 31)
     assert stored.end_date == date(2027, 1, 30)
@@ -278,9 +340,16 @@ def test_lease_requires_an_existing_tenant(db_session):
         db_session.flush()
 
 
+def test_lease_refers_to_the_tenant_record_not_the_account(db_session):
+    tenant, room = saved_tenant(db_session), saved_room(db_session)
+    db_session.add(new_lease(tenant.user_id, room.id))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
 def test_lease_requires_an_existing_room(db_session):
     tenant = saved_tenant(db_session)
-    db_session.add(new_lease(tenant.user_id, uuid4()))
+    db_session.add(new_lease(tenant.id, uuid4()))
     with pytest.raises(IntegrityError):
         db_session.flush()
 
@@ -290,7 +359,7 @@ def test_lease_requires_an_existing_room(db_session):
 )
 def test_lease_requires_its_mandatory_columns(db_session, field):
     tenant, room = saved_tenant(db_session), saved_room(db_session)
-    fields = {"tenant_id": tenant.user_id, "room_id": room.id}
+    fields = {"tenant_id": tenant.id, "room_id": room.id}
     db_session.add(new_lease(**{**fields, field: None}))
     with pytest.raises(IntegrityError):
         db_session.flush()
@@ -345,11 +414,37 @@ def test_a_room_has_at_most_one_active_lease(db_session):
         saved_lease(db_session, room_id=room.id)
 
 
-def test_a_tenant_has_at_most_one_active_lease(db_session):
+def test_a_tenant_record_has_at_most_one_active_lease(db_session):
     tenant = saved_tenant(db_session)
-    saved_lease(db_session, tenant_id=tenant.user_id)
+    saved_lease(db_session, tenant_id=tenant.id)
     with pytest.raises(IntegrityError):
-        saved_lease(db_session, tenant_id=tenant.user_id)
+        saved_lease(db_session, tenant_id=tenant.id)
+
+
+def test_an_account_may_have_an_active_lease_through_each_of_its_records(db_session):
+    user = saved_account(db_session)
+    first, second = saved_tenant(db_session, user), saved_tenant(db_session, user)
+    saved_lease(db_session, tenant_id=first.id)
+    saved_lease(db_session, tenant_id=second.id)
+
+
+def test_a_room_stays_exclusive_between_records_of_one_account(db_session):
+    user = saved_account(db_session)
+    first, second = saved_tenant(db_session, user), saved_tenant(db_session, user)
+    room = saved_room(db_session)
+    saved_lease(db_session, tenant_id=first.id, room_id=room.id)
+    with pytest.raises(IntegrityError):
+        saved_lease(db_session, tenant_id=second.id, room_id=room.id)
+
+
+def test_a_second_active_lease_on_a_record_of_a_multi_record_account_is_refused(
+    db_session,
+):
+    user = saved_account(db_session)
+    first, _ = saved_tenant(db_session, user), saved_tenant(db_session, user)
+    saved_lease(db_session, tenant_id=first.id)
+    with pytest.raises(IntegrityError):
+        saved_lease(db_session, tenant_id=first.id)
 
 
 def test_an_ended_lease_does_not_block_a_new_lease_of_the_room(db_session):
@@ -360,8 +455,8 @@ def test_an_ended_lease_does_not_block_a_new_lease_of_the_room(db_session):
 
 def test_an_ended_lease_does_not_block_a_new_lease_of_the_tenant(db_session):
     tenant = saved_tenant(db_session)
-    saved_lease(db_session, tenant_id=tenant.user_id, ended_at=datetime.now(UTC))
-    saved_lease(db_session, tenant_id=tenant.user_id)
+    saved_lease(db_session, tenant_id=tenant.id, ended_at=datetime.now(UTC))
+    saved_lease(db_session, tenant_id=tenant.id)
 
 
 def test_several_ended_leases_may_share_a_room_and_a_tenant(db_session):
@@ -369,7 +464,7 @@ def test_several_ended_leases_may_share_a_room_and_a_tenant(db_session):
     for _ in range(3):
         saved_lease(
             db_session,
-            tenant_id=tenant.user_id,
+            tenant_id=tenant.id,
             room_id=room.id,
             ended_at=datetime.now(UTC),
         )
@@ -403,7 +498,7 @@ def test_reactivating_an_ended_lease_onto_a_taken_room_is_refused(db_session):
 def test_invitation_gets_defaults_on_insert(db_session):
     tenant = saved_tenant(db_session)
     before = datetime.now(UTC)
-    row = new_invitation(tenant.user_id)
+    row = new_invitation(tenant.id)
     db_session.add(row)
     db_session.flush()
     db_session.refresh(row)
@@ -418,7 +513,7 @@ def test_invitation_round_trips_its_fields(db_session):
     tenant = saved_tenant(db_session)
     when = datetime(2026, 3, 4, 5, 6, 7, tzinfo=UTC)
     row = new_invitation(
-        tenant.user_id,
+        tenant.id,
         token_hash="a" * 64,
         token_encrypted="gAAAA-token",
         expires_at=when,
@@ -429,7 +524,7 @@ def test_invitation_round_trips_its_fields(db_session):
     db_session.commit()
     db_session.expire_all()
     stored = db_session.get(type(row), row.id)
-    assert stored.tenant_id == tenant.user_id
+    assert stored.tenant_id == tenant.id
     assert stored.token_hash == "a" * 64
     assert stored.token_encrypted == "gAAAA-token"
     assert stored.expires_at == when
@@ -443,27 +538,34 @@ def test_invitation_requires_an_existing_tenant(db_session):
         db_session.flush()
 
 
+def test_invitation_refers_to_the_tenant_record_not_the_account(db_session):
+    tenant = saved_tenant(db_session)
+    db_session.add(new_invitation(tenant.user_id))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
 @pytest.mark.parametrize(
     "field", ["tenant_id", "token_hash", "token_encrypted", "expires_at"]
 )
 def test_invitation_requires_its_mandatory_columns(db_session, field):
     tenant = saved_tenant(db_session)
-    db_session.add(new_invitation(**{"tenant_id": tenant.user_id, field: None}))
+    db_session.add(new_invitation(**{"tenant_id": tenant.id, field: None}))
     with pytest.raises(IntegrityError):
         db_session.flush()
 
 
 def test_token_hashes_are_unique(db_session):
     first, second = saved_tenant(db_session), saved_tenant(db_session)
-    db_session.add(new_invitation(first.user_id, token_hash="same"))
+    db_session.add(new_invitation(first.id, token_hash="same"))
     db_session.flush()
-    db_session.add(new_invitation(second.user_id, token_hash="same"))
+    db_session.add(new_invitation(second.id, token_hash="same"))
     with pytest.raises(IntegrityError):
         db_session.flush()
 
 
 def test_a_tenant_may_have_several_invitations(db_session):
     tenant = saved_tenant(db_session)
-    db_session.add(new_invitation(tenant.user_id))
-    db_session.add(new_invitation(tenant.user_id))
+    db_session.add(new_invitation(tenant.id))
+    db_session.add(new_invitation(tenant.id))
     db_session.flush()

@@ -154,6 +154,43 @@ def test_a_deleted_tenant_gets_invalid_credentials_with_the_right_password(
     assert_error(login(client, "budi@example.com"), 401, "INVALID_CREDENTIALS")
 
 
+def test_a_tenant_with_a_live_record_left_can_still_log_in(
+    client, database, tenant, make_room, make_property, make_user, make_verified_tenant
+):
+    from app.models import Tenant
+
+    elsewhere = make_room(make_property(make_user(name="Landlord Dua")))
+    make_verified_tenant(elsewhere, user=tenant.user)
+    set_columns(database, Tenant, tenant.id, deleted_at=datetime.now(UTC))
+    response = login(client, "budi@example.com")
+    assert response.status_code == 200, response.text
+    assert response.json()["account"]["id"] == str(tenant.user.id)
+
+
+def test_a_tenant_with_every_record_deleted_gets_invalid_credentials(
+    client, database, tenant, make_room, make_property, make_user, make_verified_tenant
+):
+    from app.models import Tenant
+
+    elsewhere = make_room(make_property(make_user(name="Landlord Dua")))
+    other = make_verified_tenant(elsewhere, user=tenant.user)
+    set_columns(database, Tenant, tenant.id, deleted_at=datetime.now(UTC))
+    set_columns(database, Tenant, other.id, deleted_at=datetime.now(UTC))
+    assert_error(login(client, "budi@example.com"), 401, "INVALID_CREDENTIALS")
+    assert sessions_of(database, tenant.user.id) == []
+
+
+def test_a_tenant_whose_only_live_record_has_an_ended_lease_can_still_log_in(
+    client, database, tenant, make_room, make_property, make_user, make_verified_tenant
+):
+    from app.models import Tenant
+
+    elsewhere = make_room(make_property(make_user(name="Landlord Dua")))
+    make_verified_tenant(elsewhere, user=tenant.user, lease_ended=True)
+    set_columns(database, Tenant, tenant.id, deleted_at=datetime.now(UTC))
+    assert login(client, "budi@example.com").status_code == 200
+
+
 def test_a_manager_with_every_record_deleted_gets_invalid_credentials(
     client, database, manager
 ):
