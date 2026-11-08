@@ -1,0 +1,57 @@
+name: CD
+
+# Deploys to Fly.io when CI has passed on main and the version in pyproject.toml
+# has no release tag yet. The tag is pushed only after a successful deploy, so a
+# failed deploy is tried again by the next CI run on main.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Fly.io
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Read the version and look for its tag
+        id: version
+        run: |
+          version="$(uv version --short)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "v$version is already released; nothing to deploy."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+        if: steps.version.outputs.release == 'true'
+
+      - name: Deploy
+        if: steps.version.outputs.release == 'true'
+        run: flyctl deploy --remote-only -a niscala-api-dev
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Tag the release
+        if: steps.version.outputs.release == 'true'
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "refs/tags/v${{ steps.version.outputs.version }}"
