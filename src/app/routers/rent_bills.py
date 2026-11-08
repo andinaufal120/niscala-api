@@ -30,6 +30,7 @@ from app.schemas.payments import (
 )
 from app.security import CurrentUser
 from app.services import payment_patterns, rent_bills
+from app.storage import FileStore, get_file_store
 
 router = APIRouter(prefix="/rent-bills", tags=["rent-bills"])
 
@@ -46,6 +47,7 @@ Reader = Annotated[
 Summarizer = Annotated[
     PaymentPatternSummarizer, Depends(get_payment_pattern_summarizer)
 ]
+Store = Annotated[FileStore, Depends(get_file_store)]
 
 
 def _errors(*statuses: int) -> dict[int | str, dict]:
@@ -97,10 +99,11 @@ def upload_receipt(
     db: Db,
     summarizer: Summarizer,
     background_tasks: BackgroundTasks,
+    store: Store,
 ) -> RentBill:
     """Attach a transfer receipt image and mark the bill as awaiting verification."""
     content = file.file.read(rent_bills.MAX_RECEIPT_BYTES + 1)
-    changed = rent_bills.upload_receipt(db, caller.user, rent_bill_id, content)
+    changed = rent_bills.upload_receipt(db, store, caller.user, rent_bill_id, content)
     return _commit_and_summarize(db, background_tasks, summarizer, changed)
 
 
@@ -112,10 +115,12 @@ def upload_receipt(
         **_errors(403, 404),
     },
 )
-def get_receipt(rent_bill_id: RentBillId, caller: Reader, db: Db) -> Response:
+def get_receipt(
+    rent_bill_id: RentBillId, caller: Reader, db: Db, store: Store
+) -> Response:
     """Return the receipt image of a rent bill."""
-    receipt = rent_bills.get_receipt(db, caller.user, rent_bill_id)
-    return Response(content=receipt.content, media_type=receipt.content_type)
+    content, content_type = rent_bills.get_receipt(db, store, caller.user, rent_bill_id)
+    return Response(content=content, media_type=content_type)
 
 
 @router.post("/{rentBillId}/verification", responses=_errors(403, 404, 409))
