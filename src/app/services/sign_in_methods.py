@@ -43,15 +43,18 @@ def link_google(
     """Link a Google identity to the caller's account; flushes, never commits.
 
     Raises 403 PASSWORD_LOGIN_REQUIRED unless the current session started with a
-    password login, 401 GOOGLE_TOKEN_INVALID (field `idToken`), 409
-    GOOGLE_ALREADY_LINKED, then 409 GOOGLE_ACCOUNT_ALREADY_REGISTERED when the
-    identity belongs to any account, deleted or not. Stores the token's email
-    as sent; the account's email, name, password and status do not change.
+    password login, 401 GOOGLE_TOKEN_INVALID (field `idToken`), 422
+    GOOGLE_EMAIL_UNVERIFIED (field `idToken`), 409 GOOGLE_ALREADY_LINKED, then
+    409 GOOGLE_ACCOUNT_ALREADY_REGISTERED when the identity belongs to any
+    account, deleted or not. Stores the token's email as sent; the account's
+    email, name, password and status do not change.
     """
     user = current.user
     if current.session.login_method != LoginMethod.PASSWORD:
         raise ApiError(403, "PASSWORD_LOGIN_REQUIRED")
     identity = verify_google_token(verifier, id_token)
+    if not identity.email_verified:
+        raise ApiError(422, "GOOGLE_EMAIL_UNVERIFIED", field="idToken")
     if user.google_subject is not None:
         raise ApiError(409, "GOOGLE_ALREADY_LINKED")
     if find_by_google_subject(db, identity.subject) is not None:
