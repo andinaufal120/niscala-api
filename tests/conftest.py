@@ -776,8 +776,9 @@ class PushOutbox:
 @pytest.fixture(autouse=True)
 def file_store(app):
     """Keep uploaded files in memory for one test, so none reach disk or network."""
-    from app.storage import get_file_store
     from file_store_support import MemoryFileStore
+
+    from app.storage import get_file_store
 
     store = MemoryFileStore()
     app.dependency_overrides[get_file_store] = lambda: store
