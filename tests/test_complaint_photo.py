@@ -3,6 +3,7 @@
 from uuid import uuid4
 
 import pytest
+from complaint_support import submit_complaint
 from rent_bill_support import GIF_BYTES, MEGABYTE, jpeg, png
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -430,10 +431,8 @@ def test_a_photo_belongs_only_to_its_own_complaint(
 def test_a_photo_can_be_attached_to_a_freshly_submitted_complaint(
     client, database, tenant_in
 ):
-    created = client.post(
-        COMPLAINTS,
-        json={"description": "The air conditioner does not cool."},
-        headers=tenant_in.headers,
+    created = submit_complaint(
+        client, tenant_in.headers, "The air conditioner does not cool."
     ).json()
     response = client.put(
         f"{COMPLAINTS}/{created['id']}/photo",
