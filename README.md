@@ -102,6 +102,7 @@ To roll back, find the previous release with `fly releases -a niscala-api-dev` a
 ```sh
 uv sync                    # install dependencies
 uv run pytest              # run tests
+uv run pytest -n0          # run tests serially (for debugging)
 uv run ruff check          # lint
 uv run ruff format         # format
 uv run alembic upgrade head   # apply database migrations to DATABASE_URL
