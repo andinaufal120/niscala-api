@@ -151,10 +151,8 @@ def database(postgres_url, db_engine, monkeypatch):
     yield engine
     engine.dispose()
     with db_engine.begin() as connection:
-        for table in reversed(Base.metadata.sorted_tables):
-            connection.execute(
-                text(f'TRUNCATE TABLE "{table.name}" RESTART IDENTITY CASCADE')
-            )
+        names = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+        connection.execute(text(f"TRUNCATE TABLE {names} RESTART IDENTITY CASCADE"))
         for name in inspect(connection).get_table_names():
             if name.startswith(SCRATCH_PREFIX):
                 connection.execute(text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
