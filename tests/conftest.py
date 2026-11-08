@@ -119,6 +119,22 @@ def alembic_config(url: str | None = None) -> Config:
     return config
 
 
+@pytest.fixture(scope="session", autouse=True)
+def cheap_password_hashing():
+    """Hash passwords with the cheapest argon2id parameters.
+
+    Hashes keep the `$argon2id$` format and verify as usual; only the cost drops.
+    """
+    from argon2 import PasswordHasher
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            "app.services.passwords._hasher",
+            PasswordHasher(time_cost=1, memory_cost=8, parallelism=1),
+        )
+        yield
+
+
 @pytest.fixture(scope="session")
 def postgres_url():
     from testcontainers.postgres import PostgresContainer
