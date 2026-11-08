@@ -13,6 +13,7 @@ from app.routers import (
     dashboard,
     health,
     invitations,
+    jobs,
     managers,
     me,
     notifications,
@@ -45,6 +46,7 @@ session = [Depends(bearer_scheme)]
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(invitations.router)
+app.include_router(jobs.router)
 app.include_router(account.router, dependencies=session)
 app.include_router(sessions.router, dependencies=session)
 app.include_router(reauthentication.router, dependencies=session)

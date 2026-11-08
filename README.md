@@ -156,6 +156,7 @@ Settings are read from environment variables, or from a `.env` file in the proje
 | `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |
 | `FIREBASE_CREDENTIALS` | none | Content of a Firebase service account JSON file, on one line; enables push through FCM |
 | `GOOGLE_CLIENT_IDS` | none | Comma-separated OAuth client IDs accepted as the audience of Google ID tokens; without it Google sign-in is refused |
+| `JOBS_SECRET` | none | Bearer secret for `POST /internal/jobs/daily`; without it (or blank) that endpoint answers 404 |
 | `R2_ACCOUNT_ID` | none | Cloudflare account ID of the R2 bucket that stores receipts and complaint photos |
 | `R2_ACCESS_KEY_ID` | none | Access key ID of an R2 API token with read and write access to the bucket |
 | `R2_SECRET_ACCESS_KEY` | none | Secret access key of that token |
