@@ -1054,28 +1054,17 @@ def test_active_lease_summary_end_date_is_nullable_date_string(
     assert inner["format"] == "date"
 
 
-# Runtime: valid requests reach the not-implemented stub
+# Runtime: request handling
 
-IMPLEMENTED_URLS = {
-    REGISTER_URL,
-    REGISTER_GOOGLE_URL,
-    LOGIN_URL,
-    LOGIN_GOOGLE_URL,
-    GOOGLE_ACTIVATION_URL,
-    REFRESH_URL,
-    EMAIL_CONFIRMATION_URL,
-    INVITATION_PREVIEWS_URL,
-    PASSWORD_ACTIVATION_URL,
+# Endpoints that need a signed-in caller before the body is read.
+SIGNED_IN_URLS = {EMAIL_CONFIRMATION_URL}
+# Endpoints that need a verified signed-in caller.
+VERIFIED_URLS = {
     ACCEPTANCE_PREVIEWS_URL,
     ACCEPTANCES_URL,
-    PASSWORD_RESET_REQUESTS_URL,
-    PASSWORD_RESET_PREVIEWS_URL,
-    PASSWORD_RESETS_URL,
+    LOCAL_PASSWORD_URL,
+    GOOGLE_LINK_URL,
 }
-# Implemented endpoints that need a signed-in caller before the body is read.
-SIGNED_IN_URLS = {EMAIL_CONFIRMATION_URL}
-# Implemented endpoints that need a verified signed-in caller.
-VERIFIED_URLS = {ACCEPTANCE_PREVIEWS_URL, ACCEPTANCES_URL}
 
 
 def _auth_headers(request, url: str) -> dict[str, str]:
@@ -1088,17 +1077,6 @@ def _auth_headers(request, url: str) -> dict[str, str]:
         return {}
     user = request.getfixturevalue("make_user")(email_verified=url in VERIFIED_URLS)
     return request.getfixturevalue("sign_in")(user).headers
-
-
-@pytest.mark.parametrize(
-    ("url", "body"),
-    [param for param in JSON_BODY_ENDPOINTS if param.values[0] not in IMPLEMENTED_URLS],
-)
-def test_valid_account_access_request_responds_not_implemented(
-    client, url: str, body: dict[str, Any]
-) -> None:
-    response = client.post(url, json=body)
-    assert response.status_code == 501
 
 
 @pytest.mark.parametrize("count", [2, 3, 4])
@@ -1515,14 +1493,18 @@ def test_invalid_google_activation_input_is_rejected_with_validation_error(
     ],
 )
 def test_invalid_add_local_password_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, request, body: dict[str, Any]
 ) -> None:
-    assert client.post(LOCAL_PASSWORD_URL, json=body).status_code == 422
+    headers = _auth_headers(request, LOCAL_PASSWORD_URL)
+    assert (
+        client.post(LOCAL_PASSWORD_URL, json=body, headers=headers).status_code == 422
+    )
 
 
 @pytest.mark.parametrize("id_token", ["", None, 5])
 def test_invalid_link_google_input_is_rejected_with_validation_error(
-    client, id_token: Any
+    client, request, id_token: Any
 ) -> None:
-    response = client.post(GOOGLE_LINK_URL, json={"idToken": id_token})
+    headers = _auth_headers(request, GOOGLE_LINK_URL)
+    response = client.post(GOOGLE_LINK_URL, json={"idToken": id_token}, headers=headers)
     assert response.status_code == 422
