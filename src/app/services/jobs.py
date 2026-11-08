@@ -6,13 +6,18 @@ from collections.abc import Callable
 from sqlalchemy.orm import Session
 
 from app.db import get_engine
+from app.services.notifications import send_due_date_reminders, send_overdue_notices
 from app.services.sessions import end_expired_sessions
 
 logger = logging.getLogger(__name__)
 
 type Job = Callable[[Session], object]
 
-DAILY_JOBS: list[Job] = [end_expired_sessions]
+DAILY_JOBS: list[Job] = [
+    end_expired_sessions,
+    send_due_date_reminders,
+    send_overdue_notices,
+]
 
 
 def run_daily_jobs(jobs: list[Job] | None = None) -> list[str]:
