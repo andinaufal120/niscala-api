@@ -1,7 +1,7 @@
 """Database models; importing this package registers every table."""
 
 from app.models.base import Base
-from app.models.complaints import Complaint, ComplaintStatusChange
+from app.models.complaints import Complaint, ComplaintPhoto, ComplaintStatusChange
 from app.models.email_change import EmailChangeRequest
 from app.models.email_verification import EmailVerificationCode
 from app.models.login_failure import LoginFailure
@@ -19,6 +19,7 @@ from app.models.users import UsedRefreshToken, UserAccount, UserSession
 __all__ = [
     "Base",
     "Complaint",
+    "ComplaintPhoto",
     "ComplaintStatusChange",
     "EmailChangeRequest",
     "EmailVerificationCode",

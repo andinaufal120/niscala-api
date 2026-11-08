@@ -2,9 +2,10 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from app.db import SessionDep
+from app.google import GoogleVerifier, get_google_verifier
 from app.schemas.reauthentication import (
     Reauthentication,
     ReauthenticationGoogleInput,
@@ -28,6 +29,14 @@ def reauthenticate_with_password(
 
 
 @router.post("/google")
-def reauthenticate_with_google(body: ReauthenticationGoogleInput) -> Reauthentication:
+def reauthenticate_with_google(
+    body: ReauthenticationGoogleInput,
+    current: Annotated[CurrentUser, Depends(get_verified_user)],
+    db: SessionDep,
+    verifier: Annotated[GoogleVerifier, Depends(get_google_verifier)],
+) -> Reauthentication:
     """Confirm the caller's identity with a Google ID token."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    until = reauthentication.reauthenticate_with_google(
+        db, current, verifier, body.id_token
+    )
+    return Reauthentication(reauthenticated_until=until)

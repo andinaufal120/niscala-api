@@ -1208,6 +1208,19 @@ def fake_summarizer(app) -> Any:
     app.dependency_overrides.pop(get_payment_pattern_summarizer, None)
 
 
+@pytest.fixture
+def google(app) -> Any:
+    """Install a `FakeGoogleVerifier` as the Google ID token verifier for one test."""
+    from google_support import FakeGoogleVerifier
+
+    from app.google import get_google_verifier
+
+    fake = FakeGoogleVerifier()
+    app.dependency_overrides[get_google_verifier] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(get_google_verifier, None)
+
+
 @pytest.fixture(scope="session")
 def app():
     from app.main import app as fastapi_app

@@ -6,7 +6,6 @@ import pytest
 from sqlalchemy.orm import Session
 
 URL = "/me/reauthentication/password"
-GOOGLE_URL = "/me/reauthentication/google"
 LOGIN_URL = "/auth/login"
 EMAIL = "rina@example.com"
 PASSWORD = "correct horse battery"
@@ -607,13 +606,3 @@ def test_an_unverified_account_with_a_wrong_password_counts_no_failure(
     response = reauthenticate(client, session.headers, WRONG)
     assert response.json()["code"] == "EMAIL_NOT_VERIFIED"
     assert read_failure(database, "new@example.com") is None
-
-
-# Google re-authentication is not part of this endpoint
-
-
-def test_google_re_authentication_is_still_not_implemented(client, database, signed_in):
-    response = client.post(
-        GOOGLE_URL, json={"idToken": "token"}, headers=signed_in.headers
-    )
-    assert response.status_code == 501

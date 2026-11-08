@@ -171,15 +171,22 @@ def test_malformed_json_body_returns_validation_failed_with_null_field(client):
     assert body["field"] is None
 
 
-def test_unimplemented_endpoint_returns_not_implemented(client, owner_headers):
+def test_domain_error_of_an_endpoint_carries_code_and_field(
+    client, database, google, make_user, sign_in
+):
+    from app.services.passwords import hash_password
+
+    user = make_user(password_hash=hash_password("correct horse battery"))
     response = client.post(
-        "/me/google-link", json={"idToken": "token"}, headers=owner_headers
+        "/me/google-link",
+        json={"idToken": "unknown-token"},
+        headers=sign_in(user).headers,
     )
-    assert response.status_code == 501
+    assert response.status_code == 401
     body = response.json()
     assert_shape(body)
-    assert body["code"] == "NOT_IMPLEMENTED"
-    assert body["field"] is None
+    assert body["code"] == "GOOGLE_TOKEN_INVALID"
+    assert body["field"] == "idToken"
 
 
 @pytest.mark.parametrize(
