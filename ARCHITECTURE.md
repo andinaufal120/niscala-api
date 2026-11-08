@@ -38,6 +38,7 @@ niscala-api/
 Flutter app --HTTPS/JSON--> FastAPI (routers -> schemas) --> PostgreSQL
                                   |
                                   +--> Gemini (classification)
+                                  +--> Google (sign-in token check)
                                   +--> email sender                          (not built yet)
 ```
 
@@ -65,6 +66,29 @@ The Flutter Android app lives in `andinaufal120/niscala-app`. It generates its D
 
 Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, Alembic, psycopg 3, managed with uv.
 
+### 3.3. Google sign-in flow
+
+Google replaces the password at login. The app still ends up with this API's own session tokens, and Google is not involved in any later request.
+
+```
+Flutter app (Android)               Google                        FastAPI
+  |-- Google Sign-In SDK ----------->|                              |
+  |   (serverClientId = Web client)  |  checks the Android client:  |
+  |<-- ID token (signed JWT) --------|  package name + SHA-1        |
+  |-- POST /auth/login/google {idToken, device} ------------------->|
+  |                                  |   verifies signature, issuer, expiry and
+  |                                  |   that aud is in GOOGLE_CLIENT_IDS;
+  |                                  |   finds the account by sub
+  |<-- this API's access token + refresh token ---------------------|
+  |-- later requests: Authorization: Bearer <access token> -------->|
+```
+
+- **App side:** the app asks the Google Sign-In SDK for an ID token and passes the Web client ID as `serverClientId`, so the token's audience (`aud`) is the Web client. The Android OAuth client (package name and signing certificate SHA-1) is only how Google recognises the app. Both clients live in the same Google Cloud project.
+- **Backend side:** `google.py` verifies the token against Google's public signing keys and accepts it only when `aud` is listed in `GOOGLE_CLIENT_IDS`. The identity is the token's `sub`; an account is never found by email. Only the ID token is used: no Google access token, no authorization code, and the Web client's secret is not used by this API.
+- **After verification:** the API issues its own access and refresh tokens (section 7). The Google token is not stored. The account keeps only `google_subject` and `google_email`, and the session records the login method `google`.
+- **Endpoints:** `POST /auth/register/google` (Owner, optional `name`), `POST /auth/login/google`, `POST /invitations/activations/google` (Tenant and Manager), `POST /me/google-link`, `POST /me/local-password` and `POST /me/reauthentication/google`. Rules and error codes are in `docs/SPEC.md` section 7.
+- **Not done:** there is no `nonce` check, so a stolen but still valid ID token (Google ID tokens last about an hour) could be replayed against these endpoints until it expires.
+
 ## 4. Data Stores
 
 PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints`, `complaint_status_changes`, `complaint_photos`, `email_change_requests`, `password_reset_tokens`, `notifications`, `notification_settings` and `payment_pattern_summaries`. Facility tags are a text-array column on the room.
@@ -73,19 +97,19 @@ PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Sc
 
 - **Gemini** (complaint classification, built; payment-pattern summaries, built): `ai/gemini.py` calls the `google-genai` SDK with the model in `GEMINI_MODEL`, sends the instructions as a system instruction and the complaint wrapped in a per-request random tag, asks for a JSON answer restricted to the complaint categories, and turns any SDK error, bad JSON, unknown category or suspicious suggested action (too long, a link, an HTML tag, 8 or more digits in a row ignoring spaces, dots and dashes) into `ClassificationUnavailable`. Without `GEMINI_API_KEY` the unavailable classifier is used. Complaint classification runs through the `ComplaintClassifier` protocol: the complaint is saved and committed first, then a background task of the same request calls the classifier once with a 10 second timeout, in its own database session. Any failure leaves the complaint saved in the state *awaitingClassification*. Payment-pattern summaries go through the `PaymentPatternSummarizer` protocol the same way: one request with a 10 second timeout, only the computed facts and counted bills sent, and any error, empty answer, answer over 500 characters, link or HTML tag treated as a failure (`SummaryUnavailable`); without a key the unavailable summarizer is used.
 - **Firebase Cloud Messaging** (push, built): `push.py` calls the `firebase-admin` SDK with the service account in `FIREBASE_CREDENTIALS`. Without it the console sender is used.
-- **Google Sign-In** (ID token verification, built): `google.py` verifies ID tokens with `google-auth` against the audiences in `GOOGLE_CLIENT_IDS`; without any, every token is rejected. Tests replace the verifier through `get_google_verifier`.
+- **Google Sign-In** (ID token verification, built): `google.py` verifies ID tokens with `google-auth` against the audiences in `GOOGLE_CLIENT_IDS`; without any, every token is rejected. Tests replace the verifier through `get_google_verifier`. The flow is described in section 3.3.
 - **Google Play Developer API** (subscription verification): *not built yet.*
 
 ## 6. Deployment & Infrastructure
 
-The shared development server is the Fly.io app `niscala-api-dev` at `https://dev-api-niscala.andinaufal.com` (also reachable at `niscala-api-dev.fly.dev`), in region `sin` (Singapore, next to the database). It is built from `Dockerfile` and configured in `fly.toml`. Its database is the Supabase project *niscala-api-dev* (ap-southeast-1), reached through the Supavisor session pooler, with Supabase's Data API turned off because only the backend uses the database. `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY`, `GEMINI_API_KEY` and `FIREBASE_CREDENTIALS` are Fly secrets. Deploys are manual (`fly deploy`), and each one runs `alembic upgrade head` as Fly's release command before the new version starts. The machine stops when idle and starts again on the next request. Production is *not set up yet.* GitHub Actions runs Claude Code review on pull requests (`.github/workflows/`).
+The shared development server is the Fly.io app `niscala-api-dev` at `https://dev-api-niscala.andinaufal.com` (also reachable at `niscala-api-dev.fly.dev`), in region `sin` (Singapore, next to the database). It is built from `Dockerfile` and configured in `fly.toml`. Its database is the Supabase project *niscala-api-dev* (ap-southeast-1), reached through the Supavisor session pooler, with Supabase's Data API turned off because only the backend uses the database. `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY`, `GEMINI_API_KEY`, `FIREBASE_CREDENTIALS` and `GOOGLE_CLIENT_IDS` are Fly secrets (`GOOGLE_CLIENT_IDS` holds public OAuth client IDs, not a secret value). Deploys are manual (`fly deploy`), and each one runs `alembic upgrade head` as Fly's release command before the new version starts. The machine stops when idle and starts again on the next request. Production is *not set up yet.* GitHub Actions runs Claude Code review on pull requests (`.github/workflows/`).
 
 ## 7. Security Considerations
 
 - Authentication: a bearer JWT access token (HS256, 15 minutes, signed with `JWT_SECRET`), declared as `bearerAuth` in the OpenAPI document. `get_current_user` validates it and also loads the session row, so an ended session stops working at once. The refresh token is opaque, stored only as a SHA-256 hash, and rotated on every use; presenting a rotated one ends the session. Each session is a token family: every hash it has rotated away from stays in `used_refresh_tokens` until the session ends, so reuse of any of them is detected, and a `SELECT ... FOR UPDATE` on the session row makes concurrent refreshes with the same token run one after the other. Sessions end after 90 days idle or 1 year after login.
 - Invitation links carry a random token: the database keeps its SHA-256 hash for lookup and a Fernet-encrypted copy (key `INVITATION_ENCRYPTION_KEY`) so the link can be shown again while it is valid.
 - Passwords are hashed with argon2id. New passwords are checked against the common-password list and a few pattern rules (`services/passwords.py`). Failed logins are counted per email and lock it for 15 minutes after 5 failures (`login_failures`). Email verification codes are stored as SHA-256 hashes, valid 10 minutes and voided after 5 wrong attempts. Until the email is verified, `get_verified_user` answers `EMAIL_NOT_VERIFIED`; `get_current_user` is for the few endpoints open to unverified accounts.
-- Authorization: role and property access are enforced by the backend (`docs/SPEC.md` §4). `require_roles` checks the role after the session and email checks, and `require_recent_reauthentication` requires the session to have confirmed the password within the last 5 minutes. `get_accessible_property` and `accessible_properties` (in `access.py`) are the only way to reach a property: an inaccessible one answers `PROPERTY_NOT_FOUND`, the same as a missing one.
+- Authorization: role and property access are enforced by the backend (`docs/SPEC.md` §4). `require_roles` checks the role after the session and email checks, and `require_recent_reauthentication` requires the session to have confirmed the password or a Google token within the last 5 minutes. `get_accessible_property` and `accessible_properties` (in `access.py`) are the only way to reach a property: an inaccessible one answers `PROPERTY_NOT_FOUND`, the same as a missing one.
 - Transport: HTTPS only.
 
 ## 8. Development & Testing Environment
