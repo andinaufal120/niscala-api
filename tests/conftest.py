@@ -20,6 +20,32 @@ from sqlalchemy import create_engine, inspect, text
 os.environ.setdefault("JWT_SECRET", "test-secret-0123456789abcdef0123456789abcdef")
 os.environ.setdefault("INVITATION_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
+_SETTINGS_FROM_ENVIRONMENT = (
+    "GEMINI_API_KEY",
+    "FIREBASE_CREDENTIALS",
+    "GOOGLE_CLIENT_IDS",
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_settings():
+    """Keep a developer's `.env` file and exported keys out of the tests.
+
+    The settings otherwise read `.env`, so a machine with real Gemini, Firebase
+    or Google keys would change what tests expecting them to be unset see. Tests
+    that need a value set it themselves.
+    """
+    from app.config import Settings, get_settings
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setitem(Settings.model_config, "env_file", None)
+        for name in _SETTINGS_FROM_ENVIRONMENT:
+            patch.delenv(name, raising=False)
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+
 REF_PREFIX = "#/components/schemas/"
 
 PROPERTY_ID = "3f1c2a4e-8b7d-4c6a-9e5f-1a2b3c4d5e6f"
