@@ -123,7 +123,11 @@ def alembic_config(url: str | None = None) -> Config:
 def postgres_url():
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:17", driver="psycopg") as container:
+    # The database is thrown away after the run, so durability buys nothing.
+    container = PostgresContainer("postgres:17", driver="psycopg").with_command(
+        "postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
+    )
+    with container:
         yield container.get_connection_url()
 
 
