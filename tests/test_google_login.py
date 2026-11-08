@@ -86,6 +86,29 @@ def test_the_account_of_a_user_with_a_password_and_google_reports_both(
     assert account["googleEmail"] == "rina.gmail@example.com"
 
 
+def test_a_name_in_the_login_body_never_renames_the_account(
+    client, database, google, rina
+):
+    response = login(client, TOKEN, name="Another Name")
+    assert response.status_code == 200, response.text
+    assert response.json()["account"]["name"] == "Rina Owner"
+    assert stored_user(database, rina.id).name == "Rina Owner"
+
+
+def test_a_null_name_in_the_login_body_is_ignored(client, database, google, rina):
+    response = login(client, TOKEN, name=None)
+    assert response.status_code == 200, response.text
+    assert response.json()["account"]["name"] == "Rina Owner"
+
+
+def test_a_name_in_the_login_body_does_not_change_the_account_endpoint(
+    client, database, google, rina
+):
+    body = login(client, TOKEN, name="Another Name").json()
+    response = client.get(ME_URL, headers=bearer(body))
+    assert response.json()["name"] == "Rina Owner"
+
+
 def test_login_hands_the_given_token_to_the_verifier(client, database, google, rina):
     login(client, TOKEN)
     assert google.verified == [TOKEN]

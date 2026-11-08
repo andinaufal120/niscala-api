@@ -127,6 +127,175 @@ def test_registration_accepts_a_unicode_name_claim(client, database, google, mai
     assert response.json()["account"]["name"] == "Dewi Šandra 山田"
 
 
+def test_registration_uses_the_requested_name(client, database, google, rina, mailbox):
+    response = register(client, TOKEN, name="Budi Pemilik")
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == "Budi Pemilik"
+    assert user_by_subject(database, SUBJECT).name == "Budi Pemilik"
+
+
+def test_the_requested_name_wins_over_the_name_claim(
+    client, database, google, rina, mailbox
+):
+    body = register(client, TOKEN, name="Chosen Name").json()
+    assert body["account"]["name"] != "Rina Owner"
+    assert user_by_subject(database, SUBJECT).name == "Chosen Name"
+
+
+def test_the_requested_name_is_returned_by_the_account_endpoint(
+    client, database, google, rina, mailbox
+):
+    body = register(client, TOKEN, name="Budi Pemilik").json()
+    response = client.get(ME_URL, headers=bearer(body))
+    assert response.json()["name"] == "Budi Pemilik"
+
+
+def test_the_requested_name_is_kept_when_logging_in_again(
+    client, database, google, rina, mailbox
+):
+    register(client, TOKEN, name="Budi Pemilik")
+    response = login(client, TOKEN)
+    assert response.json()["account"]["name"] == "Budi Pemilik"
+
+
+def test_the_requested_name_is_trimmed(client, database, google, rina, mailbox):
+    response = register(client, TOKEN, name="  Budi Pemilik \n")
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == "Budi Pemilik"
+    assert user_by_subject(database, SUBJECT).name == "Budi Pemilik"
+
+
+def test_the_requested_name_need_not_match_the_token(client, database, google, mailbox):
+    google.add("other", subject="sub-other", email="x@example.com", name="Totally Else")
+    response = register(client, "other", name="Someone Different")
+    assert response.json()["account"]["name"] == "Someone Different"
+
+
+def test_the_requested_name_accepts_unicode(client, database, google, rina, mailbox):
+    response = register(client, TOKEN, name="Dewi Šandra 山田")
+    assert response.json()["account"]["name"] == "Dewi Šandra 山田"
+
+
+@pytest.mark.parametrize("claim", [None, "", "   "])
+def test_the_requested_name_is_used_when_the_token_has_no_name(
+    client, database, google, mailbox, claim
+):
+    google.add("nameless", subject="sub-nameless", name=claim)
+    response = register(client, "nameless", name="Budi Pemilik")
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == "Budi Pemilik"
+    assert user_by_subject(database, "sub-nameless").name == "Budi Pemilik"
+
+
+def test_a_requested_name_of_100_characters_is_accepted(
+    client, database, google, rina, mailbox
+):
+    name = "n" * 100
+    response = register(client, TOKEN, name=name)
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == name
+    assert user_by_subject(database, SUBJECT).name == name
+
+
+def test_a_null_requested_name_falls_back_to_the_name_claim(
+    client, database, google, rina, mailbox
+):
+    response = register(client, TOKEN, name=None)
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == "Rina Owner"
+
+
+def test_a_null_requested_name_falls_back_to_the_email_local_part(
+    client, database, google, mailbox
+):
+    google.add(
+        "nameless", subject="sub-nameless", email="budi.s@example.com", name=None
+    )
+    response = register(client, "nameless", name=None)
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == "budi.s"
+
+
+def test_an_omitted_requested_name_falls_back_to_the_name_claim(
+    client, database, google, rina, mailbox
+):
+    response = client.post(REGISTER_URL, json={"idToken": TOKEN, "device": DEVICE})
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == "Rina Owner"
+
+
+def test_a_name_claim_over_100_characters_is_cut_to_100(
+    client, database, google, mailbox
+):
+    google.add("longname", subject="sub-long", name="c" * 150)
+    response = register(client, "longname")
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == "c" * 100
+    assert user_by_subject(database, "sub-long").name == "c" * 100
+
+
+def test_a_padded_name_claim_is_trimmed_before_it_is_cut(
+    client, database, google, mailbox
+):
+    google.add("padlong", subject="sub-padlong", name="  " + "c" * 150)
+    response = register(client, "padlong")
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == "c" * 100
+
+
+def test_an_email_local_part_over_100_characters_is_cut_to_100(
+    client, database, google, mailbox
+):
+    google.add(
+        "longmail", subject="sub-longmail", email="l" * 150 + "@example.com", name=None
+    )
+    response = register(client, "longmail")
+    assert response.status_code == 201, response.text
+    assert response.json()["account"]["name"] == "l" * 100
+    assert user_by_subject(database, "sub-longmail").name == "l" * 100
+
+
+@pytest.mark.parametrize("name", ["", "   ", "\n\t", "n" * 101, f"  {'n' * 101}  "])
+def test_an_unusable_requested_name_is_a_validation_failure_before_the_token_is_checked(
+    client, database, google, rina, mailbox, name
+):
+    before = snapshot(database)
+    response = register(client, TOKEN, name=name)
+    assert_error(response, 422, "VALIDATION_FAILED", "name")
+    assert google.verified == []
+    assert snapshot(database) == before
+    assert user_by_subject(database, SUBJECT) is None
+
+
+@pytest.mark.parametrize("name", [5, ["Budi"], {"first": "Budi"}, True])
+def test_a_non_string_requested_name_is_a_validation_failure(
+    client, database, google, rina, mailbox, name
+):
+    before = snapshot(database)
+    response = register(client, TOKEN, name=name)
+    assert_error(response, 422, "VALIDATION_FAILED", "name")
+    assert google.verified == []
+    assert snapshot(database) == before
+
+
+def test_a_requested_name_does_not_bypass_the_token_check(
+    client, database, google, mailbox
+):
+    before = snapshot(database)
+    response = register(client, "forged-token", name="Budi Pemilik")
+    assert_error(response, 401, "GOOGLE_TOKEN_INVALID", "idToken")
+    assert snapshot(database) == before
+
+
+def test_a_requested_name_does_not_bypass_the_taken_email_check(
+    client, database, google, rina, mailbox, make_user
+):
+    make_user(email=EMAIL, name="Existing Name")
+    response = register(client, TOKEN, name="Budi Pemilik")
+    assert_error(response, 409, "EMAIL_ALREADY_REGISTERED", "email")
+    assert user_by_subject(database, SUBJECT) is None
+
+
 def test_registration_starts_a_google_session_on_the_given_device(
     client, database, google, rina, mailbox
 ):
