@@ -42,9 +42,8 @@ def network(monkeypatch):
 
 
 def real_verifier(monkeypatch, client_ids: str | None):
-    from app.google import get_google_verifier
-
     from app.config import get_settings
+    from app.google import get_google_verifier
 
     if client_ids is None:
         monkeypatch.delenv("GOOGLE_CLIENT_IDS", raising=False)

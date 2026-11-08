@@ -1211,8 +1211,9 @@ def fake_summarizer(app) -> Any:
 @pytest.fixture
 def google(app) -> Any:
     """Install a `FakeGoogleVerifier` as the Google ID token verifier for one test."""
-    from app.google import get_google_verifier
     from google_support import FakeGoogleVerifier
+
+    from app.google import get_google_verifier
 
     fake = FakeGoogleVerifier()
     app.dependency_overrides[get_google_verifier] = lambda: fake
