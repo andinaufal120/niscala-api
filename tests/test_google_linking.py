@@ -364,6 +364,138 @@ def test_an_invalid_token_is_answered_before_a_taken_identity(
     assert_error(response, 401, "GOOGLE_TOKEN_INVALID", "idToken")
 
 
+# Google email not verified
+
+
+def test_a_token_with_an_unverified_google_email_gets_google_email_unverified(
+    client, database, google, rina, signed_in
+):
+    google.add("unverified", subject=SUBJECT, email=GOOGLE_EMAIL, email_verified=False)
+    before = snapshot(database)
+    response = link(client, signed_in.headers, token="unverified")
+    assert_error(response, 422, "GOOGLE_EMAIL_UNVERIFIED", "idToken")
+    assert snapshot(database) == before
+    user = stored_user(database, rina.id)
+    assert user.google_subject is None
+    assert user.google_email is None
+    assert_still_signed_in(client, signed_in)
+
+
+def test_an_unverified_google_email_leaves_google_login_unavailable(
+    client, database, google, rina, signed_in
+):
+    google.add("unverified", subject=SUBJECT, email=GOOGLE_EMAIL, email_verified=False)
+    assert_error(
+        link(client, signed_in.headers, token="unverified"),
+        422,
+        "GOOGLE_EMAIL_UNVERIFIED",
+        "idToken",
+    )
+    response = login(client, "unverified")
+    assert response.status_code == 401
+    assert response.json()["code"] == "INVALID_CREDENTIALS"
+
+
+def test_the_verifier_is_called_for_a_token_with_an_unverified_google_email(
+    client, database, google, rina, signed_in
+):
+    google.add("unverified", subject=SUBJECT, email=GOOGLE_EMAIL, email_verified=False)
+    link(client, signed_in.headers, token="unverified")
+    assert google.verified == ["unverified"]
+
+
+@pytest.mark.parametrize("role", ["owner", "manager", "tenant", "admin"])
+def test_every_role_gets_google_email_unverified(
+    client, database, google, make_user, sign_in, role
+):
+    from app.schemas.auth import UserRole
+
+    google.add("role-token", subject="sub-role", email_verified=False)
+    user = make_password_user(make_user, email="role@example.com", role=UserRole(role))
+    before = snapshot(database)
+    response = link(client, sign_in(user).headers, token="role-token")
+    assert_error(response, 422, "GOOGLE_EMAIL_UNVERIFIED", "idToken")
+    assert snapshot(database) == before
+
+
+def test_a_verified_token_still_links_after_an_unverified_one_was_refused(
+    client, database, google, rina, signed_in
+):
+    google.add("unverified", subject="sub-other", email_verified=False)
+    assert_error(
+        link(client, signed_in.headers, token="unverified"),
+        422,
+        "GOOGLE_EMAIL_UNVERIFIED",
+        "idToken",
+    )
+    response = link(client, signed_in.headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["googleEmail"] == GOOGLE_EMAIL
+    assert stored_user(database, rina.id).google_subject == SUBJECT
+
+
+def test_password_login_required_is_answered_before_an_unverified_google_email(
+    client, database, google, make_user, sign_in
+):
+    from app.schemas.sessions import LoginMethod
+
+    google.add("unverified", subject="sub-new", email_verified=False)
+    user = make_password_user(make_user)
+    session = sign_in(user, login_method=LoginMethod.GOOGLE)
+    before = snapshot(database)
+    response = link(client, session.headers, token="unverified")
+    assert_error(response, 403, "PASSWORD_LOGIN_REQUIRED")
+    assert snapshot(database) == before
+
+
+def test_email_not_verified_is_answered_before_an_unverified_google_email(
+    client, database, google, make_user, sign_in
+):
+    user = make_password_user(make_user, email_verified=False)
+    google.add("unverified", subject="sub-new", email_verified=False)
+    response = link(client, sign_in(user).headers, token="unverified")
+    assert_error(response, 403, "EMAIL_NOT_VERIFIED")
+
+
+def test_an_invalid_token_is_answered_before_an_unverified_google_email(
+    client, database, google, rina, signed_in
+):
+    google.add("unverified", subject=SUBJECT, email_verified=False)
+    response = link(client, signed_in.headers, token="unknown-token")
+    assert_error(response, 401, "GOOGLE_TOKEN_INVALID", "idToken")
+
+
+def test_an_unverified_google_email_is_answered_before_already_linked(
+    client, database, google, sign_in
+):
+    from app.services.passwords import hash_password
+
+    google.add("unverified", subject=SUBJECT, email=GOOGLE_EMAIL, email_verified=False)
+    user = make_google_user(
+        database,
+        subject=SUBJECT,
+        google_email=GOOGLE_EMAIL,
+        password_hash=hash_password(PASSWORD),
+    )
+    session = sign_in(user)
+    before = snapshot(database)
+    response = link(client, session.headers, token="unverified")
+    assert_error(response, 422, "GOOGLE_EMAIL_UNVERIFIED", "idToken")
+    assert snapshot(database) == before
+
+
+def test_an_unverified_google_email_is_answered_before_a_taken_identity(
+    client, database, google, rina, signed_in
+):
+    google.add("unverified", subject="sub-budi", email_verified=False)
+    other = make_google_user(database, subject="sub-budi", email="budi@example.com")
+    before = snapshot(database)
+    response = link(client, signed_in.headers, token="unverified")
+    assert_error(response, 422, "GOOGLE_EMAIL_UNVERIFIED", "idToken")
+    assert snapshot(database) == before
+    assert stored_user(database, other.id).google_subject == "sub-budi"
+
+
 # Account already linked
 
 
