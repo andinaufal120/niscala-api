@@ -1,16 +1,23 @@
 """Creating, pushing, listing and reading notifications, and the push settings."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import Select, event, or_, select, text
+from sqlalchemy import Select, String, cast, event, or_, select, text
 from sqlalchemy.orm import Session
 
 from app import push
 from app.db import get_engine
 from app.errors import ApiError
-from app.models import ManagerAssignment, Property, UserAccount, UserSession
+from app.models import (
+    Lease,
+    ManagerAssignment,
+    Property,
+    RentBill,
+    UserAccount,
+    UserSession,
+)
 from app.models import Notification as NotificationRow
 from app.models import NotificationSetting as SettingRow
 from app.schemas.auth import UserRole
@@ -19,6 +26,7 @@ from app.schemas.notifications import (
     Notification,
     NotificationCategory,
     NotificationList,
+    NotificationRentBill,
     NotificationSettingItem,
     NotificationSettings,
     NotificationSettingsInput,
@@ -60,6 +68,9 @@ CATEGORIES_OF_ROLE = {
     UserRole.OWNER: STAFF_CATEGORIES,
     UserRole.MANAGER: STAFF_CATEGORIES,
 }
+
+# A bill is reminded this many days before its due date.
+REMINDER_DAYS = 3
 
 # Fields of `Notification` that hold the facts of the event.
 FACT_FIELDS = ("rent_bill", "complaint", "tenant", "room", "property", "actor_name")
@@ -105,7 +116,13 @@ def _deliver(
     """
     try:
         type_ = NotificationType(row.type)
-        setting = db.get(SettingRow, (row.recipient_id, CATEGORY_OF_TYPE[type_].value))
+        category = CATEGORY_OF_TYPE[type_]
+        if (
+            type_ == NotificationType.BILL_OVERDUE
+            and db.get(UserAccount, row.recipient_id).role != UserRole.TENANT
+        ):
+            category = NotificationCategory.OVERDUE_BILL
+        setting = db.get(SettingRow, (row.recipient_id, category.value))
         if setting is not None and not setting.push_enabled:
             return
         if type_ == NotificationType.COMPLAINT_SUBMITTED:
@@ -238,6 +255,110 @@ def push_high_urgency_complaint(db: Session, complaint_id: UUID) -> None:
         return
     for row in rows:
         _deliver(db, row, NotificationUrgencyScope.HIGH_ONLY)
+
+
+def _unnotified_bills(db: Session, type_: NotificationType) -> list:
+    """Return the rows of unpaid or rejected bills of active leases never notified as `type_`."""
+    from app.services import rent_bills
+
+    already = (
+        select(NotificationRow.id)
+        .where(
+            NotificationRow.type == type_.value,
+            NotificationRow.payload["rent_bill"]["rentBillId"].as_string()
+            == cast(RentBill.id, String),
+        )
+        .exists()
+    )
+    query = rent_bills._rows().where(
+        RentBill.payment_status.in_([s.value for s in rent_bills.UPLOADABLE]),
+        Lease.ended_at.is_(None),
+        ~already,
+    )
+    return [tuple(row) for row in db.execute(query)]
+
+
+def _notify_bill(
+    db: Session, row: tuple, type_: NotificationType, recipients: list[UUID] | None
+) -> None:
+    """Notify the bill's tenant, and when `recipients` is given also those, of `type_`."""
+    from app.services import rent_bills
+
+    bill = row[0]
+    summary = rent_bills._summary(row, rent_bills.today_jakarta(), False)
+    facts = NotificationRentBill(
+        rent_bill_id=bill.id,
+        period_start=bill.period_start,
+        period_end=bill.period_end,
+        due_date=bill.due_date,
+        amount=bill.amount,
+        payment_status=summary.payment.status,
+        payment_method=None,
+        reason=None,
+        days_overdue=summary.days_overdue,
+    )
+    prop = summary.property
+    notify(
+        db,
+        [summary.tenant.id],
+        type_,
+        prop.id,
+        rent_bill=facts,
+        room=summary.room,
+        property_=prop,
+    )
+    if recipients:
+        notify(
+            db,
+            recipients,
+            type_,
+            prop.id,
+            rent_bill=facts,
+            tenant=summary.tenant,
+            room=summary.room,
+            property_=prop,
+        )
+
+
+def send_due_date_reminders(db: Session) -> int:
+    """Remind the tenant of each unpaid or rejected bill due within three days.
+
+    A bill is reminded once, and only when it was issued at least three days
+    before its due date (Asia/Jakarta calendar). Only bills of active leases
+    count. Flushes, never commits, and returns the number of bills reminded.
+    """
+    from app.services import rent_bills
+
+    today = rent_bills.today_jakarta()
+    count = 0
+    for row in _unnotified_bills(db, NotificationType.DUE_DATE_REMINDER):
+        bill = row[0]
+        lead = bill.due_date - timedelta(days=REMINDER_DAYS)
+        issued = bill.created_at.astimezone(rent_bills.TIMEZONE).date()
+        if lead <= today < bill.due_date and issued <= lead:
+            _notify_bill(db, row, NotificationType.DUE_DATE_REMINDER, None)
+            count += 1
+    db.flush()
+    return count
+
+
+def send_overdue_notices(db: Session) -> int:
+    """Tell the tenant, the Owner and the assigned Managers of each overdue bill.
+
+    Covers unpaid or rejected bills of active leases past their due date, once
+    per bill. Flushes, never commits, and returns the number of bills notified.
+    """
+    from app.services import rent_bills
+
+    today = rent_bills.today_jakarta()
+    count = 0
+    for row in _unnotified_bills(db, NotificationType.BILL_OVERDUE):
+        if today > row[0].due_date:
+            management = management_of(db, row[3].id)
+            _notify_bill(db, row, NotificationType.BILL_OVERDUE, management)
+            count += 1
+    db.flush()
+    return count
 
 
 def _visible_to(user: UserAccount) -> Select[tuple[NotificationRow]]:
