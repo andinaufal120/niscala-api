@@ -3,6 +3,7 @@
 from uuid import UUID, uuid4
 
 import pytest
+from complaint_support import submit_complaint
 from rent_bill_support import GIF_BYTES, MEGABYTE, jpeg, png, stored_content
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -514,10 +515,8 @@ def test_a_photo_belongs_only_to_its_own_complaint(
 def test_a_photo_can_be_attached_to_a_freshly_submitted_complaint(
     client, database, tenant_in
 ):
-    created = client.post(
-        COMPLAINTS,
-        json={"description": "The air conditioner does not cool."},
-        headers=tenant_in.headers,
+    created = submit_complaint(
+        client, tenant_in.headers, "The air conditioner does not cool."
     ).json()
     response = client.put(
         f"{COMPLAINTS}/{created['id']}/photo",
@@ -1179,6 +1178,70 @@ def test_the_photo_stays_after_the_subscription_ends(
     expire_subscription(owner)
     assert detail(client, owner_in.headers, complaint)["hasPhoto"] is True
     assert download(client, owner_in.headers, complaint).content == content
+
+
+# An account with several records
+
+
+@pytest.fixture
+def second_complaint(prop, tenant, make_room, make_verified_tenant, make_complaint):
+    """A complaint filed under a second record of the tenant's account."""
+    other_room = make_room(prop, number="B2")
+    record = make_verified_tenant(other_room, user=tenant.user)
+    return make_complaint(record, other_room)
+
+
+def test_a_tenant_attaches_a_photo_to_a_complaint_of_another_record(
+    client, database, second_complaint, tenant_in
+):
+    response = upload(client, tenant_in.headers, second_complaint)
+    assert response.status_code == 200, response.text
+    assert response.json()["hasPhoto"] is True
+    assert len(stored_photos(database)) == 1
+
+
+def test_a_tenant_replaces_a_photo_of_a_complaint_of_another_record(
+    client, database, second_complaint, tenant_in
+):
+    upload(client, tenant_in.headers, second_complaint, png(64))
+    response = upload(
+        client, tenant_in.headers, second_complaint, jpeg(), "image/jpeg", "photo.jpg"
+    )
+    assert response.status_code == 200, response.text
+    (photo,) = stored_photos(database)
+    assert photo.content_type == "image/jpeg"
+
+
+def test_a_tenant_reads_the_photo_of_a_complaint_of_another_record(
+    client, database, second_complaint, tenant_in
+):
+    content = png(128)
+    upload(client, tenant_in.headers, second_complaint, content)
+    response = download(client, tenant_in.headers, second_complaint)
+    assert response.status_code == 200, response.text
+    assert response.content == content
+    assert detail(client, tenant_in.headers, second_complaint)["hasPhoto"] is True
+
+
+def test_another_account_cannot_attach_a_photo_to_it(
+    client, database, second_complaint, neighbour_in
+):
+    response = upload(client, neighbour_in.headers, second_complaint)
+    assert_error(response, 404, "COMPLAINT_NOT_FOUND")
+    assert stored_photos(database) == []
+
+
+def test_the_photo_is_refused_once_the_complaint_of_another_record_moved_on(
+    client, database, second_complaint, tenant_in, owner_in
+):
+    moved = client.post(
+        f"{COMPLAINTS}/{second_complaint.id}/status-changes",
+        json={"status": "inProgress"},
+        headers=owner_in.headers,
+    )
+    assert moved.status_code == 201, moved.text
+    response = upload(client, tenant_in.headers, second_complaint)
+    assert_error(response, 409, "COMPLAINT_NOT_NEW")
 
 
 # Contract

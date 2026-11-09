@@ -17,6 +17,7 @@ from app.models import RentBill as RentBillRow
 from app.models import RentBillReceipt as ReceiptRow
 from app.models import RentBillStatusChange as StatusChangeRow
 from app.models import Room as RoomRow
+from app.models import Tenant as TenantRow
 from app.models import UserAccount
 from app.schemas.auth import UserRole
 from app.schemas.complaints import PropertyRef
@@ -100,7 +101,7 @@ def notify_status_change(
         return
     notifications.notify(
         db,
-        [summary.tenant.id],
+        [row[4].id],
         NotificationType.PAYMENT_STATUS_CHANGED,
         prop.id,
         rent_bill=facts,
@@ -140,14 +141,15 @@ def _rows() -> Select[Row]:
         .join(LeaseRow, LeaseRow.id == RentBillRow.lease_id)
         .join(RoomRow, RoomRow.id == LeaseRow.room_id)
         .join(PropertyRow, PropertyRow.id == RoomRow.property_id)
-        .join(UserAccount, UserAccount.id == LeaseRow.tenant_id)
+        .join(TenantRow, TenantRow.id == LeaseRow.tenant_id)
+        .join(UserAccount, UserAccount.id == TenantRow.user_id)
     )
 
 
 def _readable_by(user: UserAccount) -> Select[Row]:
-    """Select the bills the user may read: a tenant's own active lease, or accessible properties."""
+    """Select the bills the user may read: a tenant's own active leases, or accessible properties."""
     if user.role == UserRole.TENANT:
-        return _rows().where(LeaseRow.tenant_id == user.id, LeaseRow.ended_at.is_(None))
+        return _rows().where(TenantRow.user_id == user.id, LeaseRow.ended_at.is_(None))
     properties = accessible_properties(user).subquery()
     return _rows().where(PropertyRow.id.in_(select(properties.c.id)))
 
@@ -179,13 +181,13 @@ def _is_current(bill: RentBillRow, today: date) -> bool:
 
 
 def _summary(row: Row, today: date, has_receipt: bool) -> RentBillSummary:
-    bill, _, room, prop, tenant = row
+    bill, lease, room, prop, tenant = row
     status = PaymentStatus(bill.payment_status)
     unsettled = status in UPLOADABLE
     current = _is_current(bill, today)
     return RentBillSummary(
         id=bill.id,
-        tenant=TenantRef(id=tenant.id, name=tenant.name),
+        tenant=TenantRef(id=lease.tenant_id, name=tenant.name),
         room=RoomRef(id=room.id, number=room.number),
         property=PropertyRef(id=prop.id, name=prop.name),
         period_start=bill.period_start,
@@ -287,7 +289,7 @@ def payment_overview(
     parent = get_accessible_property(db, user, property_id)
     found = sorted(
         tenants._find(db, RoomRow.property_id == parent.id),
-        key=lambda f: (natural_number_key(f[3].number), f[1].name, f[1].id),
+        key=lambda f: (natural_number_key(f[3].number), f[1].name, f[0].id),
     )
     rows = {
         row[0].lease_id: tuple(row)
@@ -305,7 +307,7 @@ def payment_overview(
         date=on,
         items=[
             PaymentOverviewItem(
-                tenant=TenantRef(id=account.id, name=account.name),
+                tenant=TenantRef(id=tenant.id, name=account.name),
                 room=RoomRef(id=room.id, number=room.number),
                 bill=_summary(
                     rows[lease.id], today, rows[lease.id][0].id in with_receipt
@@ -313,7 +315,7 @@ def payment_overview(
                 if lease.id in rows
                 else None,
             )
-            for _, account, lease, room in found
+            for tenant, account, lease, room in found
         ],
     )
 

@@ -198,6 +198,75 @@ def test_the_status_history_is_oldest_first_with_notes(
     assert times == sorted(times)
 
 
+# Tenant with several records
+
+
+@pytest.fixture
+def second_record(prop, tenant, make_room, make_verified_tenant):
+    """A second record of the tenant's account in another room of the property."""
+    other_room = make_room(prop, number="B2")
+    return other_room, make_verified_tenant(other_room, user=tenant.user)
+
+
+def test_a_tenant_lists_the_complaints_of_all_their_records(
+    client, database, tenant, room, tenant_in, second_record, make_complaint
+):
+    other_room, record = second_record
+    first = make_complaint(tenant, room, created_at=ago(20))
+    second = make_complaint(record, other_room, created_at=ago(10))
+    items = listed(client, tenant_in.headers)
+    assert ids(items) == [str(second.id), str(first.id)]
+    assert [i["room"]["number"] for i in items] == ["B2", "A1"]
+    assert {i["tenantName"] for i in items} == {"Budi Tenant"}
+
+
+def test_a_tenant_reads_the_detail_of_a_complaint_of_any_record(
+    client, database, tenant, room, tenant_in, second_record, make_complaint
+):
+    other_room, record = second_record
+    for complaint, number in (
+        (make_complaint(tenant, room), "A1"),
+        (make_complaint(record, other_room), "B2"),
+    ):
+        response = detail(client, tenant_in.headers, complaint)
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == str(complaint.id)
+        assert response.json()["room"]["number"] == number
+        assert [c["status"] for c in response.json()["statusChanges"]] == ["new"]
+
+
+def test_a_tenant_does_not_see_the_complaints_of_another_account_in_the_same_property(
+    client,
+    database,
+    tenant,
+    room,
+    tenant_in,
+    second_record,
+    make_complaint,
+    prop,
+    make_room,
+    make_verified_tenant,
+):
+    other_room = make_room(prop, number="C3")
+    neighbour = make_verified_tenant(other_room, name="Siti Tenant")
+    theirs = make_complaint(neighbour, other_room)
+    mine = make_complaint(tenant, room)
+    assert ids(listed(client, tenant_in.headers)) == [str(mine.id)]
+    assert_error(detail(client, tenant_in.headers, theirs), 404, "COMPLAINT_NOT_FOUND")
+
+
+def test_the_complaints_of_both_records_show_to_management(
+    client, database, tenant, room, owner_in, second_record, make_complaint
+):
+    other_room, record = second_record
+    first = make_complaint(tenant, room)
+    second = make_complaint(record, other_room)
+    assert set(ids(listed(client, owner_in.headers))) == {
+        str(first.id),
+        str(second.id),
+    }
+
+
 # Tenant list
 
 

@@ -317,7 +317,7 @@ def test_the_activated_tenant_can_use_verified_only_endpoints_at_once(
     client, database, identity, tenant, mailbox
 ):
     body = activate(client, tenant.token).json()
-    assert client.get("/me/lease", headers=bearer(body)).status_code == 200
+    assert client.get("/me/leases", headers=bearer(body)).status_code == 200
 
 
 def test_tenant_activation_sends_and_stores_no_verification_code(

@@ -3,6 +3,7 @@
 import time
 
 import pytest
+from complaint_support import submit_complaint
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -72,7 +73,7 @@ def headers(tenant, sign_in):
 
 
 def submit(client, headers, description: str = DESCRIPTION):
-    return client.post(COMPLAINTS, json={"description": description}, headers=headers)
+    return submit_complaint(client, headers, description)
 
 
 def assert_awaiting(client, database, headers, response):

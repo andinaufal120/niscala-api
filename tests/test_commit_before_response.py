@@ -363,7 +363,10 @@ def test_complaint_is_committed_when_the_response_starts(
         "/complaints",
         lambda s: s.scalars(select(Complaint.classification_state)).all(),
         headers=sign_in(tenant.user).headers,
-        json={"description": "The tap in the bathroom leaks badly."},
+        json={
+            "description": "The tap in the bathroom leaks badly.",
+            "roomId": str(room.id),
+        },
     )
     assert response.status_code == 201
     assert len(states) == 1

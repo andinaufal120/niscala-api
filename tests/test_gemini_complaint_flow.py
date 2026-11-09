@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from complaint_support import submit_complaint
 from sqlalchemy.orm import Session
 
 COMPLAINTS = "/complaints"
@@ -69,7 +70,7 @@ def headers(owner, make_property, make_room, make_verified_tenant, sign_in):
 
 
 def submit(client, headers):
-    return client.post(COMPLAINTS, json={"description": DESCRIPTION}, headers=headers)
+    return submit_complaint(client, headers, DESCRIPTION)
 
 
 def stored(database, complaint_id):

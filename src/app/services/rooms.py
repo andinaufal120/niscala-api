@@ -91,7 +91,7 @@ def _active_leases(
     """Map each room id to its active lease, tenant name and tenant phone."""
     rows = db.execute(
         select(Lease, UserAccount.name, Tenant.phone)
-        .join(Tenant, Tenant.user_id == Lease.tenant_id)
+        .join(Tenant, Tenant.id == Lease.tenant_id)
         .join(UserAccount, UserAccount.id == Tenant.user_id)
         .where(Lease.room_id.in_(list(room_ids)), Lease.ended_at.is_(None))
     )

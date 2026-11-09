@@ -1,6 +1,6 @@
 """Previewing and accepting an invitation with an existing account."""
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -36,7 +36,6 @@ PREVIEW_FIELDS = {
     "accountRole",
     "canAccept",
     "blocker",
-    "activeLease",
 }
 ROLES_WITHOUT_MANAGER = ["owner", "admin", "tenant"]
 
@@ -45,8 +44,8 @@ def check(client, token: str, headers: dict | None = None):
     return client.post(ACCEPTANCE_PREVIEW_URL, json={"token": token}, headers=headers)
 
 
-def accept(client, token: str, headers: dict | None = None):
-    return client.post(ACCEPTANCE_URL, json={"token": token}, headers=headers)
+def accept(client, token: str, headers: dict | None = None, **extra):
+    return client.post(ACCEPTANCE_URL, json={"token": token, **extra}, headers=headers)
 
 
 def accept_ok(client, token: str, headers: dict) -> None:
@@ -203,7 +202,6 @@ def test_a_manager_with_a_valid_link_can_accept(client, database, manager, calle
     assert body["accountRole"] == "manager"
     assert body["canAccept"] is True
     assert body["blocker"] is None
-    assert body["activeLease"] is None
 
 
 def test_the_preview_carries_the_same_invitation_as_the_public_preview(
@@ -270,7 +268,6 @@ def test_an_expired_link_cannot_be_accepted_and_has_no_blocker(
     assert body["invitation"]["status"] == "expired"
     assert body["canAccept"] is False
     assert body["blocker"] is None
-    assert body["activeLease"] is None
 
 
 @pytest.mark.parametrize("how", ["used", "invalidated", "activated", "both"])
@@ -288,7 +285,6 @@ def test_a_used_link_cannot_be_accepted_and_has_no_blocker(
     assert body["invitation"]["status"] == "used"
     assert body["canAccept"] is False
     assert body["blocker"] is None
-    assert body["activeLease"] is None
 
 
 def test_a_replaced_link_cannot_be_accepted_but_the_new_one_can(
@@ -314,7 +310,6 @@ def test_a_manager_link_previewed_by_another_role_is_a_role_mismatch(
     assert body["accountEmail"] == who.user.email
     assert body["canAccept"] is False
     assert body["blocker"] == "roleMismatch"
-    assert body["activeLease"] is None
 
 
 def test_a_tenant_with_an_active_lease_gets_a_role_mismatch_for_a_manager_link(
@@ -323,7 +318,7 @@ def test_a_tenant_with_an_active_lease_gets_a_role_mismatch_for_a_manager_link(
     who = make_caller("tenant")
     body = check(client, manager.token, who.headers).json()
     assert body["blocker"] == "roleMismatch"
-    assert body["activeLease"] is None
+    assert body["canAccept"] is False
 
 
 @pytest.mark.parametrize("kind", ["owner", "admin"])
@@ -334,7 +329,6 @@ def test_a_tenant_link_previewed_by_owner_or_admin_is_a_role_mismatch(
     assert body["invitation"]["role"] == "tenant"
     assert body["canAccept"] is False
     assert body["blocker"] == "roleMismatch"
-    assert body["activeLease"] is None
 
 
 def test_a_tenant_link_previewed_by_a_manager_is_a_role_mismatch(
@@ -344,46 +338,6 @@ def test_a_tenant_link_previewed_by_a_manager_is_a_role_mismatch(
     assert body["accountRole"] == "manager"
     assert body["canAccept"] is False
     assert body["blocker"] == "roleMismatch"
-    assert body["activeLease"] is None
-
-
-def test_a_tenant_with_an_active_lease_is_blocked_and_the_lease_is_described(
-    client, database, tenant_target, make_caller
-):
-    end = date.today() + timedelta(days=200)
-    who = make_caller(
-        "tenant", start_date=date.today() - timedelta(days=30), end_date=end
-    )
-    body = check(client, tenant_target.token, who.headers).json()
-    assert body["accountRole"] == "tenant"
-    assert body["canAccept"] is False
-    assert body["blocker"] == "activeLease"
-    assert body["activeLease"] == {
-        "propertyName": "Kos Jauh",
-        "roomNumber": "Z9",
-        "endDate": end.isoformat(),
-    }
-
-
-def test_an_active_lease_without_an_end_date_has_a_null_end_date(
-    client, database, tenant_target, make_caller
-):
-    who = make_caller("tenant", start_date=date.today() - timedelta(days=30))
-    body = check(client, tenant_target.token, who.headers).json()
-    assert body["blocker"] == "activeLease"
-    assert body["activeLease"]["endDate"] is None
-    assert body["activeLease"]["propertyName"] == "Kos Jauh"
-    assert body["activeLease"]["roomNumber"] == "Z9"
-
-
-def test_a_tenant_whose_lease_ended_is_not_blocked(
-    client, database, tenant_target, make_caller
-):
-    who = make_caller("tenant", lease_ended=True)
-    body = check(client, tenant_target.token, who.headers).json()
-    assert body["blocker"] is None
-    assert body["activeLease"] is None
-    assert body["canAccept"] is True
 
 
 # Accept: success
@@ -692,17 +646,6 @@ def test_a_tenant_link_is_refused_for_a_manager(
     response = accept(client, tenant_target.token, caller.headers)
     assert_error(response, 409, "INVITATION_ROLE_MISMATCH")
     assert snapshot(database) == before
-
-
-def test_a_tenant_link_is_refused_for_a_tenant_with_an_active_lease(
-    client, database, tenant_target, make_caller
-):
-    who = make_caller("tenant", start_date=date.today() - timedelta(days=30))
-    before = snapshot(database)
-    response = accept(client, tenant_target.token, who.headers)
-    assert_error(response, 409, "TENANT_HAS_ACTIVE_LEASE")
-    assert snapshot(database) == before
-    assert preview_status(client, tenant_target.token) == "valid"
 
 
 def test_the_link_is_checked_before_the_role(client, database, manager, make_caller):

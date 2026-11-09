@@ -28,12 +28,13 @@ def seed_room(db_session):
     db_session.add_all([owner, user])
     db_session.flush()
     prop = Property(owner_id=owner.id, name="Kos Melati", address="Jl. Melati 5")
-    db_session.add_all([prop, Tenant(user_id=user.id, phone="081234567890")])
+    record = Tenant(user_id=user.id, phone="081234567890")
+    db_session.add_all([prop, record])
     db_session.flush()
     room = Room(property_id=prop.id, number="A1", base_rate=1000000)
     db_session.add(room)
     db_session.flush()
-    return user.id, room.id
+    return record.id, room.id
 
 
 def new_complaint(tenant_id, room_id, **overrides):
@@ -184,6 +185,19 @@ def test_tenant_may_have_several_complaints_in_one_room(db_session):
 def test_complaint_requires_an_existing_tenant(db_session):
     _, room_id = seed_room(db_session)
     db_session.add(new_complaint(uuid4(), room_id))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+
+
+def test_complaint_refers_to_the_tenant_record_not_the_account(db_session):
+    from sqlalchemy import select
+
+    from app.models import Tenant
+
+    tenant_id, room_id = seed_room(db_session)
+    record = db_session.scalars(select(Tenant).where(Tenant.id == tenant_id)).one()
+    assert record.user_id != tenant_id
+    db_session.add(new_complaint(record.user_id, room_id))
     with pytest.raises(IntegrityError):
         db_session.flush()
 

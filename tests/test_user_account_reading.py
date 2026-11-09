@@ -58,7 +58,7 @@ def test_the_detail_of_an_admin_has_nothing_linked(client, database, admin, admi
     assert body["role"] == "admin"
     assert body["properties"] == []
     assert body["activeLeaseCount"] == 0
-    assert body["tenancy"] is None
+    assert body["tenancies"] == []
 
 
 def test_the_registration_time_is_the_creation_time(
@@ -109,8 +109,29 @@ def test_a_tenant_that_has_not_activated_is_not_found(
 ):
     room = make_room(make_property(make_user()))
     pending = make_tenant(room)
-    response = get_account(client, admin_in.headers, pending.id)
+    response = get_account(client, admin_in.headers, pending.user.id)
     assert_error(response, 404, "USER_ACCOUNT_NOT_FOUND")
+
+
+def test_a_tenant_without_any_record_is_not_found(
+    client, database, admin_in, make_user
+):
+    bare = make_user(role=role("tenant"))
+    response = get_account(client, admin_in.headers, bare.id)
+    assert_error(response, 404, "USER_ACCOUNT_NOT_FOUND")
+
+
+def test_the_record_id_of_a_tenant_is_not_an_account_id(
+    client, database, admin_in, make_user, make_property, make_room, make_tenant
+):
+    room = make_room(make_property(make_user()))
+    stored = make_tenant(room, activated=True, distinct_id=True)
+    assert_error(
+        get_account(client, admin_in.headers, stored.id),
+        404,
+        "USER_ACCOUNT_NOT_FOUND",
+    )
+    assert get_account(client, admin_in.headers, stored.user.id).status_code == 200
 
 
 def test_a_manager_that_has_not_activated_is_not_found(
@@ -171,7 +192,41 @@ def test_a_deleted_tenant_is_reported_deleted(
 ):
     room = make_room(make_property(make_user()))
     gone = make_verified_tenant(room, deleted=True)
-    assert read(client, admin_in.headers, gone.id)["status"] == "deleted"
+    assert read(client, admin_in.headers, gone.user.id)["status"] == "deleted"
+
+
+def test_a_tenant_whose_records_are_all_deleted_is_reported_deleted(
+    client, database, admin_in, make_user, make_property, make_room, make_tenant
+):
+    prop = make_property(make_user())
+    first = make_tenant(make_room(prop, number="1"), activated=True, deleted=True)
+    make_tenant(
+        make_room(prop, number="2"), user=first.user, activated=True, deleted=True
+    )
+    assert read(client, admin_in.headers, first.user.id)["status"] == "deleted"
+
+
+def test_a_tenant_with_a_live_record_is_not_reported_deleted(
+    client, database, admin_in, make_user, make_property, make_room, make_tenant
+):
+    prop = make_property(make_user())
+    first = make_tenant(make_room(prop, number="1"), activated=True, deleted=True)
+    make_tenant(make_room(prop, number="2"), user=first.user, activated=True)
+    assert read(client, admin_in.headers, first.user.id)["status"] == "active"
+
+
+def test_a_tenant_with_a_live_record_whose_lease_ended_is_not_reported_deleted(
+    client, database, admin_in, make_user, make_property, make_room, make_tenant
+):
+    prop = make_property(make_user())
+    first = make_tenant(make_room(prop, number="1"), activated=True, deleted=True)
+    make_tenant(
+        make_room(prop, number="2"),
+        user=first.user,
+        activated=True,
+        lease_ended=True,
+    )
+    assert read(client, admin_in.headers, first.user.id)["status"] == "active"
 
 
 def test_a_manager_whose_records_are_all_deleted_is_reported_deleted(
@@ -285,7 +340,7 @@ def test_an_owner_without_properties_has_none_listed(
     body = read(client, admin_in.headers, make_user().id)
     assert body["properties"] == []
     assert body["activeLeaseCount"] == 0
-    assert body["tenancy"] is None
+    assert body["tenancies"] == []
 
 
 def test_an_owner_counts_active_leases_of_their_live_properties(
@@ -374,7 +429,7 @@ def test_a_manager_has_no_lease_count_and_no_tenancy(
     manager = make_manager(owner, [prop], activated=True)
     body = read(client, admin_in.headers, manager.user_id)
     assert body["activeLeaseCount"] == 0
-    assert body["tenancy"] is None
+    assert body["tenancies"] == []
 
 
 # Tenant links
@@ -393,16 +448,18 @@ def test_a_tenant_with_an_active_lease_reports_the_tenancy(
     tenant = make_verified_tenant(
         make_room(prop, number="A12"), end_date=date(2100, 12, 31)
     )
-    body = read(client, admin_in.headers, tenant.id)
+    body = read(client, admin_in.headers, tenant.user.id)
     assert body["role"] == "tenant"
     assert body["activeLeaseCount"] == 1
     assert body["properties"] == []
-    assert body["tenancy"] == {
-        "propertyName": "Kos Melati",
-        "roomNumber": "A12",
-        "leaseEndDate": "2100-12-31",
-    }
-    assert set(body["tenancy"]) == TENANCY_FIELDS
+    assert body["tenancies"] == [
+        {
+            "propertyName": "Kos Melati",
+            "roomNumber": "A12",
+            "leaseEndDate": "2100-12-31",
+        }
+    ]
+    assert set(body["tenancies"][0]) == TENANCY_FIELDS
 
 
 def test_a_tenant_without_a_lease_end_date_reports_it_empty(
@@ -416,12 +473,14 @@ def test_a_tenant_without_a_lease_end_date_reports_it_empty(
 ):
     prop = make_property(make_user(), name="Kos Melati")
     tenant = make_verified_tenant(make_room(prop, number="A1"), end_date=None)
-    body = read(client, admin_in.headers, tenant.id)
-    assert body["tenancy"] == {
-        "propertyName": "Kos Melati",
-        "roomNumber": "A1",
-        "leaseEndDate": None,
-    }
+    body = read(client, admin_in.headers, tenant.user.id)
+    assert body["tenancies"] == [
+        {
+            "propertyName": "Kos Melati",
+            "roomNumber": "A1",
+            "leaseEndDate": None,
+        }
+    ]
 
 
 def test_a_tenant_whose_lease_ended_has_no_tenancy(
@@ -435,9 +494,9 @@ def test_a_tenant_whose_lease_ended_has_no_tenancy(
 ):
     prop = make_property(make_user())
     tenant = make_verified_tenant(make_room(prop), lease_ended=True)
-    body = read(client, admin_in.headers, tenant.id)
+    body = read(client, admin_in.headers, tenant.user.id)
     assert body["activeLeaseCount"] == 0
-    assert body["tenancy"] is None
+    assert body["tenancies"] == []
 
 
 def test_an_owner_has_no_tenancy_even_with_tenants(
@@ -451,4 +510,108 @@ def test_an_owner_has_no_tenancy_even_with_tenants(
 ):
     owner = make_user()
     make_verified_tenant(make_room(make_property(owner)))
-    assert read(client, admin_in.headers, owner.id)["tenancy"] is None
+    assert read(client, admin_in.headers, owner.id)["tenancies"] == []
+
+
+def by_place(tenancies: list[dict]) -> list[tuple]:
+    """The entries of `tenancies` in a fixed order, as `(property, room, end)`."""
+    return sorted(
+        (t["propertyName"], t["roomNumber"], t["leaseEndDate"]) for t in tenancies
+    )
+
+
+def test_a_tenant_renting_in_two_places_lists_both_tenancies(
+    client,
+    database,
+    admin_in,
+    make_user,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    melati = make_property(make_user(name="Owner One"), name="Kos Melati")
+    anggrek = make_property(make_user(name="Owner Two"), name="Kos Anggrek")
+    first = make_verified_tenant(
+        make_room(melati, number="A12"), end_date=date(2100, 12, 31)
+    )
+    make_verified_tenant(
+        make_room(anggrek, number="B3"), user=first.user, end_date=None
+    )
+    body = read(client, admin_in.headers, first.user.id)
+    assert body["activeLeaseCount"] == 2
+    assert by_place(body["tenancies"]) == [
+        ("Kos Anggrek", "B3", None),
+        ("Kos Melati", "A12", "2100-12-31"),
+    ]
+    for entry in body["tenancies"]:
+        assert set(entry) == TENANCY_FIELDS
+
+
+def test_two_leases_in_one_property_are_two_tenancies(
+    client,
+    database,
+    admin_in,
+    make_user,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    prop = make_property(make_user(), name="Kos Melati")
+    first = make_verified_tenant(make_room(prop, number="A1"))
+    make_verified_tenant(make_room(prop, number="A2"), user=first.user)
+    body = read(client, admin_in.headers, first.user.id)
+    assert body["activeLeaseCount"] == 2
+    assert [t["roomNumber"] for t in body["tenancies"]] in (["A1", "A2"], ["A2", "A1"])
+
+
+def test_ended_leases_and_deleted_records_are_not_tenancies(
+    client,
+    database,
+    admin_in,
+    make_user,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    prop = make_property(make_user(), name="Kos Melati")
+    first = make_verified_tenant(make_room(prop, number="A1"))
+    make_verified_tenant(
+        make_room(prop, number="A2"), user=first.user, lease_ended=True
+    )
+    make_verified_tenant(make_room(prop, number="A3"), user=first.user, deleted=True)
+    body = read(client, admin_in.headers, first.user.id)
+    assert body["activeLeaseCount"] == 1
+    assert [t["roomNumber"] for t in body["tenancies"]] == ["A1"]
+
+
+def test_the_tenancies_of_other_accounts_are_not_listed(
+    client,
+    database,
+    admin_in,
+    make_user,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    prop = make_property(make_user(), name="Kos Melati")
+    mine = make_verified_tenant(make_room(prop, number="A1"))
+    make_verified_tenant(make_room(prop, number="A2"))
+    body = read(client, admin_in.headers, mine.user.id)
+    assert body["activeLeaseCount"] == 1
+    assert [t["roomNumber"] for t in body["tenancies"]] == ["A1"]
+
+
+def test_the_lease_count_of_an_owner_counts_every_record_of_a_multi_record_tenant(
+    client,
+    database,
+    admin_in,
+    make_user,
+    make_property,
+    make_room,
+    make_verified_tenant,
+):
+    owner = make_user()
+    prop = make_property(owner)
+    first = make_verified_tenant(make_room(prop, number="A1"))
+    make_verified_tenant(make_room(prop, number="A2"), user=first.user)
+    assert read(client, admin_in.headers, owner.id)["activeLeaseCount"] == 2

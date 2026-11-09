@@ -143,7 +143,7 @@ REQUEST_BODIES = [
         "InvitationGoogleActivationInput",
     ),
     ("post", "/invitations/acceptance-previews", "TokenInput"),
-    ("post", "/invitations/acceptances", "TokenInput"),
+    ("post", "/invitations/acceptances", "InvitationAcceptanceInput"),
     ("post", "/me/local-password", "AddLocalPasswordInput"),
     ("post", "/me/google-link", "LinkGoogleInput"),
 ]
@@ -235,9 +235,9 @@ COMPONENT_FIELDS: dict[str, tuple[set[str], set[str]]] = {
         {"token", "name", "idToken", "emergencyContacts", "device"},
         {"token", "name", "idToken", "device"},
     ),
-    "ActiveLeaseSummary": (
-        {"propertyName", "roomNumber", "endDate"},
-        {"propertyName", "roomNumber", "endDate"},
+    "InvitationAcceptanceInput": (
+        {"token", "emergencyContacts"},
+        {"token"},
     ),
     "InvitationAcceptancePreview": (
         {
@@ -247,7 +247,6 @@ COMPONENT_FIELDS: dict[str, tuple[set[str], set[str]]] = {
             "accountRole",
             "canAccept",
             "blocker",
-            "activeLease",
         },
         {
             "invitation",
@@ -256,7 +255,6 @@ COMPONENT_FIELDS: dict[str, tuple[set[str], set[str]]] = {
             "accountRole",
             "canAccept",
             "blocker",
-            "activeLease",
         },
     ),
     "AddLocalPasswordInput": (
@@ -278,7 +276,7 @@ ACCOUNT_ACCESS_COMPONENTS = [
 USER_ROLES = ["tenant", "owner", "manager", "admin"]
 INVITATION_ROLES = ["tenant", "manager"]
 INVITATION_LINK_STATUSES = ["valid", "expired", "used"]
-INVITATION_BLOCKERS = ["roleMismatch", "activeLease"]
+INVITATION_BLOCKERS = ["roleMismatch"]
 
 # (component, field): a new password, 8 to 128 characters.
 NEW_PASSWORD_FIELDS = [
@@ -331,6 +329,7 @@ REQUIRED_EMAIL_FIELDS = [
 EMERGENCY_CONTACT_COMPONENTS = [
     "InvitationPasswordActivationInput",
     "InvitationGoogleActivationInput",
+    "InvitationAcceptanceInput",
 ]
 
 VALID_DEVICE = {"name": "Pixel 8", "platform": "Android 14"}
@@ -588,7 +587,7 @@ def test_public_operations_are_exactly_the_account_access_entry_points_and_the_o
         pytest.param("get", "/properties", id="list_properties"),
         pytest.param("get", "/complaints", id="list_complaints"),
         pytest.param("get", "/complaint-categories", id="list_complaint_categories"),
-        pytest.param("get", "/me/lease", id="get_current_lease"),
+        pytest.param("get", "/me/leases", id="get_current_leases"),
         pytest.param("post", "/auth/logout", id="logout"),
         pytest.param("get", "/me", id="get_my_account"),
         pytest.param("post", "/invitations/acceptances", id="accept_invitation"),
@@ -1032,26 +1031,19 @@ def test_acceptance_preview_blocker_is_nullable_invitation_blocker(
     assert openapi.ref_name(nullable_inner(schema)) == "InvitationBlocker"
 
 
-def test_acceptance_preview_active_lease_is_nullable_active_lease_summary(
+def test_acceptance_preview_no_longer_reports_an_active_lease(
     openapi: OpenApiDoc,
 ) -> None:
-    schema = _field(openapi, "InvitationAcceptancePreview", "activeLease")
-    assert openapi.ref_name(nullable_inner(schema)) == "ActiveLeaseSummary"
+    assert "activeLease" not in _property_names(
+        openapi.component("InvitationAcceptancePreview")
+    )
+    assert "ActiveLeaseSummary" not in openapi.components
 
 
-@pytest.mark.parametrize("field", ["propertyName", "roomNumber"])
-def test_active_lease_summary_text_field_is_string(
-    openapi: OpenApiDoc, field: str
-) -> None:
-    assert _field(openapi, "ActiveLeaseSummary", field)["type"] == "string"
-
-
-def test_active_lease_summary_end_date_is_nullable_date_string(
-    openapi: OpenApiDoc,
-) -> None:
-    inner = nullable_inner(_field(openapi, "ActiveLeaseSummary", "endDate"))
-    assert inner["type"] == "string"
-    assert inner["format"] == "date"
+def test_acceptance_input_token_is_a_non_empty_string(openapi: OpenApiDoc) -> None:
+    schema = _field(openapi, "InvitationAcceptanceInput", "token")
+    assert schema["type"] == "string"
+    assert schema["minLength"] == 1
 
 
 # Runtime: request handling
@@ -1418,6 +1410,38 @@ def test_google_activation_with_invalid_emergency_contacts_is_rejected(
 ) -> None:
     body = {**VALID_GOOGLE_ACTIVATION_INPUT, "emergencyContacts": contacts}
     assert client.post(GOOGLE_ACTIVATION_URL, json=body).status_code == 422
+
+
+@pytest.mark.parametrize("contacts", _CONTACT_CASES)
+def test_acceptance_with_invalid_emergency_contacts_is_rejected(
+    client, request, contacts: Any
+) -> None:
+    headers = _auth_headers(request, ACCEPTANCES_URL)
+    body = {**VALID_TOKEN_INPUT, "emergencyContacts": contacts}
+    response = client.post(ACCEPTANCES_URL, json=body, headers=headers)
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("count", [2, 3, 4])
+def test_acceptance_with_2_to_4_emergency_contacts_passes_validation(
+    client, request, count: int
+) -> None:
+    headers = _auth_headers(request, ACCEPTANCES_URL)
+    contacts = [{**VALID_CONTACT, "name": f"Contact {i}"} for i in range(count)]
+    body = {**VALID_TOKEN_INPUT, "emergencyContacts": contacts}
+    response = client.post(ACCEPTANCES_URL, json=body, headers=headers)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
+
+
+def test_acceptance_with_null_emergency_contacts_passes_validation(
+    client, request
+) -> None:
+    headers = _auth_headers(request, ACCEPTANCES_URL)
+    body = {**VALID_TOKEN_INPUT, "emergencyContacts": None}
+    response = client.post(ACCEPTANCES_URL, json=body, headers=headers)
+    assert response.status_code == 404
+    assert response.json()["code"] == "INVITATION_NOT_FOUND"
 
 
 @pytest.mark.parametrize(

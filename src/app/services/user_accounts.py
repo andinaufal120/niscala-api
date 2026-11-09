@@ -49,15 +49,17 @@ def _has_record(model: type[Tenant | Manager], *conditions) -> ColumnElement[boo
 def deleted_condition() -> ColumnElement[bool]:
     """Select accounts that are deleted, however the deletion was recorded.
 
-    An account is deleted when it is marked so, when its Tenant record is
-    deleted, or when it has Manager records and all of them are deleted.
+    An account is deleted when it is marked so, or when it has Tenant or
+    Manager records and all of them are deleted.
     """
     return or_(
         UserAccount.deleted_at.is_not(None),
-        _has_record(Tenant, Tenant.deleted_at.is_not(None)),
-        and_(
-            _has_record(Manager),
-            ~_has_record(Manager, Manager.deleted_at.is_(None)),
+        *(
+            and_(
+                _has_record(model),
+                ~_has_record(model, model.deleted_at.is_(None)),
+            )
+            for model in (Tenant, Manager)
         ),
     )
 
@@ -159,20 +161,26 @@ def _properties(db: Session, user: UserAccount) -> list[AccountPropertyRef]:
     return [AccountPropertyRef(id=id_, name=name) for id_, name in rows]
 
 
-def _tenancy(db: Session, user: UserAccount) -> AccountTenancy | None:
+def _tenancies(db: Session, user: UserAccount) -> list[AccountTenancy]:
+    """List the active leases of a Tenant account's live records."""
     if user.role != UserRole.TENANT:
-        return None
-    row = db.execute(
+        return []
+    rows = db.execute(
         select(Property.name, Room.number, Lease.end_date)
         .join(Room, Room.property_id == Property.id)
         .join(Lease, Lease.room_id == Room.id)
-        .where(Lease.tenant_id == user.id, Lease.ended_at.is_(None))
-    ).first()
-    if row is None:
-        return None
-    return AccountTenancy(
-        property_name=row[0], room_number=row[1], lease_end_date=row[2]
+        .join(Tenant, Tenant.id == Lease.tenant_id)
+        .where(
+            Tenant.user_id == user.id,
+            Tenant.deleted_at.is_(None),
+            Lease.ended_at.is_(None),
+        )
+        .order_by(Property.name, Room.number, Lease.id)
     )
+    return [
+        AccountTenancy(property_name=name, room_number=number, lease_end_date=end)
+        for name, number, end in rows
+    ]
 
 
 def _open_change(db: Session, user_id: UUID) -> EmailChangeRequest | None:
@@ -196,11 +204,11 @@ def _detail(db: Session, found: Found) -> UserAccountDetail:
     last_login = db.scalar(
         select(func.max(UserSession.created_at)).where(UserSession.user_id == user.id)
     )
-    tenancy = _tenancy(db, user)
+    tenancies = _tenancies(db, user)
     if user.role == UserRole.OWNER:
         lease_count = count_active_leases(db, user.id)
     else:
-        lease_count = int(tenancy is not None)
+        lease_count = len(tenancies)
     return UserAccountDetail(
         id=user.id,
         name=user.name,
@@ -214,7 +222,7 @@ def _detail(db: Session, found: Found) -> UserAccountDetail:
         login_methods=[LoginMethod.PASSWORD] if user.password_hash else [],
         properties=_properties(db, user),
         active_lease_count=lease_count,
-        tenancy=tenancy,
+        tenancies=tenancies,
     )
 
 
@@ -339,8 +347,8 @@ def delete_user_account(db: Session, caller: UserAccount, user_id: UUID) -> None
     USER_ACCOUNT_DELETED), an Owner whose properties have an active lease (409
     OWNER_HAS_ACTIVE_LEASE), a Tenant with an active lease (409
     TENANT_HAS_ACTIVE_LEASE). An Owner's properties are deleted as in property
-    deletion, a Manager loses every assignment and record, a Tenant's record is
-    deleted. A refusal saves nothing.
+    deletion, a Manager loses every assignment and record, every record of a
+    Tenant is deleted. A refusal saves nothing.
     """
     user, deleted = find_user_account(db, user_id)
     if user.id == caller.id:
@@ -349,7 +357,7 @@ def delete_user_account(db: Session, caller: UserAccount, user_id: UUID) -> None
         raise ApiError(409, "USER_ACCOUNT_DELETED")
     if user.role == UserRole.OWNER and count_active_leases(db, user.id) > 0:
         raise ApiError(409, "OWNER_HAS_ACTIVE_LEASE")
-    if user.role == UserRole.TENANT and _tenancy(db, user) is not None:
+    if user.role == UserRole.TENANT and _tenancies(db, user):
         raise ApiError(409, "TENANT_HAS_ACTIVE_LEASE")
 
     now = datetime.now(UTC)

@@ -15,9 +15,10 @@ def tenant_id(db_session, make_user):
     from app.schemas.auth import UserRole
 
     user = make_user(name="Budi Tenant", role=UserRole.TENANT)
-    db_session.add(Tenant(user_id=user.id, phone="081234567890"))
+    record = Tenant(user_id=user.id, phone="081234567890")
+    db_session.add(record)
     db_session.commit()
-    return user.id
+    return record.id
 
 
 @pytest.fixture
@@ -26,9 +27,10 @@ def other_tenant_id(db_session, make_user):
     from app.schemas.auth import UserRole
 
     user = make_user(name="Dewi Tenant", role=UserRole.TENANT)
-    db_session.add(Tenant(user_id=user.id, phone="081298765432"))
+    record = Tenant(user_id=user.id, phone="081298765432")
+    db_session.add(record)
     db_session.commit()
-    return user.id
+    return record.id
 
 
 @pytest.fixture

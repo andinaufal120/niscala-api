@@ -71,7 +71,7 @@ def management_facts(scene, bill, status, **options) -> dict:
     """What a notification to management about the bill carries."""
     return {
         **tenant_facts(scene, bill, status, **options),
-        "tenant": tenant_ref(scene.tenant.user),
+        "tenant": tenant_ref(scene.tenant),
     }
 
 
@@ -127,6 +127,39 @@ def test_verifying_does_not_notify_management(client, database, scene, awaiting)
     verify(client, scene.owner_in.headers, awaiting)
     assert items(client, scene.owner_in) == []
     assert items(client, scene.manager_in) == []
+
+
+@pytest.fixture
+def second_place(scene, make_room, make_verified_tenant, make_rent_bill):
+    """A second record of the scene tenant's account with a bill awaiting review."""
+    room = make_room(scene.prop, number="A2")
+    record = make_verified_tenant(room, user=scene.tenant.user)
+    bill = awaiting_bill(make_rent_bill, record.lease, period_start=days_ago(60))
+    return room, record, bill
+
+
+def test_a_decision_on_a_bill_of_another_record_notifies_the_account(
+    client, database, scene, second_place
+):
+    room, _, bill = second_place
+    assert verify(client, scene.owner_in.headers, bill).status_code == 200
+    item = only(client, scene.tenant_in, "paymentStatusChanged")
+    assert item["rentBill"]["rentBillId"] == str(bill.id)
+    assert item["room"] == room_ref(room)
+    assert len(stored_for(database, scene.tenant.user)) == 1
+
+
+def test_a_receipt_upload_for_a_bill_of_another_record_notifies_management(
+    client, database, scene, second_place, make_rent_bill
+):
+    room, record, _ = second_place
+    fresh = make_rent_bill(record.lease, period_start=days_ago(10))
+    assert upload_receipt(client, scene.tenant_in.headers, fresh).status_code == 200
+    for recipient in (scene.owner_in, scene.manager_in):
+        item = only(client, recipient, "receiptUploaded")
+        assert item["tenant"] == tenant_ref(record, "Budi Tenant")
+        assert item["room"] == room_ref(room)
+        assert item["rentBill"]["rentBillId"] == str(fresh.id)
 
 
 def test_rejecting_does_not_notify_management(client, database, scene, awaiting):

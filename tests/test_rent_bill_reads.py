@@ -443,6 +443,119 @@ def test_a_tenant_without_an_active_lease_gets_an_empty_list(
     assert response.json() == {"items": []}
 
 
+# A tenant with several records
+
+
+@pytest.fixture
+def second(scene, make_room, make_verified_tenant):
+    """A second record of the scene tenant's account, in another room."""
+    return make_verified_tenant(
+        make_room(scene.prop, number="A2"), user=scene.tenant.user
+    )
+
+
+def test_a_tenant_lists_the_bills_of_all_their_active_leases(
+    client, scene, second, bill, make_rent_bill
+):
+    other = make_rent_bill(second.lease)
+    assert second.id != scene.tenant.id
+    result = ids(client.get(RENT_BILLS, headers=scene.tenant_in.headers))
+    assert result == {str(bill.id), str(other.id)}
+
+
+def test_the_listed_bills_name_the_record_they_belong_to(
+    client, scene, second, bill, make_rent_bill
+):
+    other = make_rent_bill(second.lease)
+    items = client.get(RENT_BILLS, headers=scene.tenant_in.headers).json()["items"]
+    tenants = {item["id"]: item["tenant"]["id"] for item in items}
+    assert tenants == {
+        str(bill.id): str(scene.tenant.id),
+        str(other.id): str(second.id),
+    }
+
+
+def test_the_bills_of_a_lease_that_ended_are_not_listed(
+    client, database, scene, second, bill, make_rent_bill
+):
+    from sqlalchemy.orm import Session
+
+    from app.models import Lease
+
+    make_rent_bill(second.lease)
+    with Session(database) as db:
+        db.get(Lease, second.lease.id).ended_at = datetime.now(UTC)
+        db.commit()
+    result = ids(client.get(RENT_BILLS, headers=scene.tenant_in.headers))
+    assert result == {str(bill.id)}
+
+
+def test_the_tenant_filter_takes_a_record_id_of_the_caller(
+    client, scene, second, bill, make_rent_bill
+):
+    other = make_rent_bill(second.lease)
+    first_only = client.get(
+        f"{RENT_BILLS}?tenantId={scene.tenant.id}", headers=scene.tenant_in.headers
+    )
+    second_only = client.get(
+        f"{RENT_BILLS}?tenantId={second.id}", headers=scene.tenant_in.headers
+    )
+    assert ids(first_only) == {str(bill.id)}
+    assert ids(second_only) == {str(other.id)}
+
+
+def test_the_tenant_filter_ignores_the_record_ids_of_other_accounts(
+    client, scene, second, bill, stranger, make_rent_bill
+):
+    make_rent_bill(second.lease)
+    url = f"{RENT_BILLS}?tenantId={stranger.tenant.id}"
+    assert client.get(url, headers=scene.tenant_in.headers).json() == {"items": []}
+
+
+def test_management_filters_by_one_record_of_a_tenant_with_two(
+    client, scene, second, bill, make_rent_bill
+):
+    other = make_rent_bill(second.lease)
+    for who in ("owner_in", "manager_in"):
+        headers = getattr(scene, who).headers
+        both = ids(client.get(RENT_BILLS, headers=headers))
+        assert both == {str(bill.id), str(other.id)}
+        only = client.get(f"{RENT_BILLS}?tenantId={second.id}", headers=headers)
+        assert ids(only) == {str(other.id)}
+
+
+def test_a_tenant_reads_a_bill_of_any_of_their_records(
+    client, scene, second, bill, make_rent_bill
+):
+    other = make_rent_bill(second.lease)
+    for expected, record in ((bill, scene.tenant), (other, second)):
+        response = client.get(bill_url(expected), headers=scene.tenant_in.headers)
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == str(expected.id)
+        assert response.json()["tenant"]["id"] == str(record.id)
+        assert response.json()["tenant"]["name"] == "Budi Tenant"
+
+
+def test_a_tenant_cannot_read_the_bill_of_another_account_in_the_same_property(
+    client, scene, second, make_room, make_verified_tenant, make_rent_bill
+):
+    neighbour = make_verified_tenant(make_room(scene.prop, number="A5"))
+    theirs = make_rent_bill(neighbour.lease)
+    response = client.get(bill_url(theirs), headers=scene.tenant_in.headers)
+    assert_not_found(response)
+
+
+def test_a_tenant_reads_the_receipt_of_a_bill_of_another_record(
+    client, scene, second, make_rent_bill
+):
+    other = make_rent_bill(
+        second.lease, receipt=(png(), "image/png", datetime.now(UTC))
+    )
+    response = client.get(bill_url(other, "/receipt"), headers=scene.tenant_in.headers)
+    assert response.status_code == 200, response.text
+    assert response.content == png()
+
+
 # Order
 
 

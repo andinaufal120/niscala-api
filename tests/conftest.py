@@ -358,13 +358,27 @@ class StoredTenant:
 
     @property
     def id(self) -> UUID:
+        """The id of the Tenant record, which is the `tenantId` of the API."""
+        return self.tenant.id
+
+    @property
+    def user_id(self) -> UUID:
         return self.user.id
 
 
 @pytest.fixture
 def make_tenant(database) -> Callable[..., StoredTenant]:
-    """Commit a tenant account with an active lease, contacts and an invitation."""
+    """Commit a Tenant record of an account with an active lease, contacts and an invitation.
+
+    Without `user` a new tenant account is created and its first record gets the
+    account's id as its own, as records that existed before accounts could hold
+    several. Pass `distinct_id=True` to give that record an id of its own. Pass an
+    existing account as `user` to give one person a further record (at another
+    room); the record then always has an id of its own and `name` and `email` are
+    ignored.
+    """
     from datetime import UTC, date, datetime, timedelta
+    from uuid import uuid4
 
     from sqlalchemy.orm import Session
 
@@ -375,6 +389,8 @@ def make_tenant(database) -> Callable[..., StoredTenant]:
     def factory(
         room,
         *,
+        user=None,
+        distinct_id: bool = False,
         name: str = "Budi Tenant",
         phone: str = "081234567890",
         occupation: str | None = None,
@@ -392,13 +408,17 @@ def make_tenant(database) -> Callable[..., StoredTenant]:
         expired: bool = False,
     ) -> StoredTenant:
         with Session(database, expire_on_commit=False) as db:
-            user = UserAccount(
-                name=name, email=email, password_hash=None, role=UserRole.TENANT
-            )
-            db.add(user)
-            db.flush()
+            record_id = uuid4() if distinct_id or user is not None else None
+            if user is None:
+                user = UserAccount(
+                    name=name, email=email, password_hash=None, role=UserRole.TENANT
+                )
+                db.add(user)
+                db.flush()
+                record_id = record_id or user.id
             now = datetime.now(UTC)
             tenant = Tenant(
+                id=record_id,
                 user_id=user.id,
                 phone=phone,
                 occupation=occupation,
@@ -410,7 +430,7 @@ def make_tenant(database) -> Callable[..., StoredTenant]:
             for position, (c_name, relationship, c_phone) in enumerate(contacts or []):
                 db.add(
                     EmergencyContact(
-                        tenant_id=user.id,
+                        tenant_id=tenant.id,
                         name=c_name,
                         relationship=relationship,
                         phone=c_phone,
@@ -418,7 +438,7 @@ def make_tenant(database) -> Callable[..., StoredTenant]:
                     )
                 )
             lease = Lease(
-                tenant_id=user.id,
+                tenant_id=tenant.id,
                 room_id=room.id,
                 start_date=start_date,
                 end_date=end_date,
@@ -431,7 +451,7 @@ def make_tenant(database) -> Callable[..., StoredTenant]:
             db.flush()
             row, token = None, None
             if invitation:
-                row, token = create_invitation(db, user.id)
+                row, token = create_invitation(db, tenant.id)
                 if expired:
                     row.expires_at = now - timedelta(days=1)
             db.commit()
@@ -968,11 +988,12 @@ def make_verified_tenant(database, make_tenant) -> Callable[..., StoredTenant]:
     from app.models import UserAccount
 
     def factory(room, **options: Any) -> StoredTenant:
-        options.setdefault("email", f"tenant{next(_tenant_numbers)}@example.com")
+        if options.get("user") is None:
+            options.setdefault("email", f"tenant{next(_tenant_numbers)}@example.com")
         options.setdefault("invitation", False)
         stored = make_tenant(room, activated=True, **options)
         with Session(database) as db:
-            db.get(UserAccount, stored.id).email_verified = True
+            db.get(UserAccount, stored.user.id).email_verified = True
             db.commit()
         return stored
 

@@ -136,7 +136,7 @@ def list_payment_patterns(
     parent = get_accessible_property(db, user, property_id)
     found = sorted(
         tenants._find(db, RoomRow.property_id == parent.id),
-        key=lambda f: (natural_number_key(f[3].number), f[1].name, f[1].id),
+        key=lambda f: (natural_number_key(f[3].number), f[1].name, f[0].id),
     )
     bills: dict[UUID, list[RentBillRow]] = {f[2].id: [] for f in found}
     for bill in db.scalars(
@@ -153,12 +153,12 @@ def list_payment_patterns(
     subscribed = has_active_subscription(db, parent.owner_id)
     today = rent_bills.today_jakarta()
     items = []
-    for _, account, lease, room in found:
+    for tenant, account, lease, room in found:
         facts = compute_payment_facts(bills[lease.id], today)
         stored = summaries.get(lease.id)
         items.append(
             PaymentPattern(
-                tenant=TenantRef(id=account.id, name=account.name),
+                tenant=TenantRef(id=tenant.id, name=account.name),
                 room=RoomRef(id=room.id, number=room.number),
                 on_time_count=facts.on_time_count,
                 counted_bill_count=facts.counted_bill_count,

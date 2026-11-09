@@ -432,7 +432,10 @@ TENANCY_FIELDS = {"propertyName", "roomNumber", "leaseEndDate"}
 
 @pytest.fixture
 def tenancy_schema(openapi: OpenApiDoc) -> dict[str, Any]:
-    return openapi.component("AccountTenancy")
+    account = openapi.component(
+        openapi.response_schema_ref("get", "/user-accounts/{userAccountId}", 200)
+    )
+    return openapi.resolve(account["properties"]["tenancies"]["items"])
 
 
 def test_account_tenancy_has_exactly_its_fields(
@@ -475,7 +478,7 @@ USER_ACCOUNT_FIELDS = {
     "loginMethods",
     "properties",
     "activeLeaseCount",
-    "tenancy",
+    "tenancies",
 }
 
 
@@ -575,11 +578,19 @@ def test_user_account_active_lease_count_is_non_negative_integer(
     assert schema["minimum"] == 0
 
 
-def test_user_account_tenancy_is_nullable_account_tenancy(
+def test_user_account_tenancies_is_a_required_array_of_tenancy_objects(
     openapi: OpenApiDoc, account_schema: dict[str, Any]
 ) -> None:
-    schema = account_schema["properties"]["tenancy"]
-    assert openapi.ref_name(nullable_inner(schema)) == "AccountTenancy"
+    schema = account_schema["properties"]["tenancies"]
+    assert schema["type"] == "array"
+    assert "$ref" in schema["items"]
+    assert "tenancies" in account_schema["required"]
+
+
+def test_user_account_no_longer_has_the_single_tenancy_field(
+    account_schema: dict[str, Any],
+) -> None:
+    assert "tenancy" not in account_schema["properties"]
 
 
 # Runtime: valid requests reach the implemented operations

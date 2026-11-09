@@ -289,6 +289,31 @@ def test_the_detail_lease_describes_the_active_lease(
     }
 
 
+def test_the_detail_lease_names_the_tenant_record_and_the_account_name(
+    client, database, signed_in, room, make_tenant
+):
+    stored = make_tenant(
+        room, name="Budi Tenant", phone="081234567890", distinct_id=True
+    )
+    lease = get_room(client, signed_in.headers, room.id)["lease"]
+    assert stored.id != stored.user.id
+    assert lease["tenantId"] == str(stored.id)
+    assert lease["tenantName"] == "Budi Tenant"
+
+
+def test_each_room_of_a_tenant_in_two_rooms_shows_its_own_record_and_phone(
+    client, database, existing, signed_in, room, make_room, make_tenant
+):
+    other = make_room(existing, number="A2")
+    first = make_tenant(room, name="Budi Tenant", phone="081111111111")
+    second = make_tenant(other, user=first.user, phone="082222222222")
+    one = get_room(client, signed_in.headers, room.id)["lease"]
+    two = get_room(client, signed_in.headers, other.id)["lease"]
+    assert (one["tenantId"], one["tenantPhone"]) == (str(first.id), "081111111111")
+    assert (two["tenantId"], two["tenantPhone"]) == (str(second.id), "082222222222")
+    assert one["tenantName"] == two["tenantName"] == "Budi Tenant"
+
+
 def test_the_detail_lease_end_date_may_be_null(
     client, database, signed_in, room, make_tenant
 ):

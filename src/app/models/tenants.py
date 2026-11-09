@@ -15,13 +15,12 @@ def _now() -> datetime:
 
 
 class Tenant(Base):
-    """The tenant profile of a user account; shares the account's id."""
+    """One tenancy of a user account; an account may hold several."""
 
     __tablename__ = "tenants"
 
-    user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("user_accounts.id"), primary_key=True
-    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("user_accounts.id"), index=True)
     phone: Mapped[str]
     occupation: Mapped[str | None]
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -36,7 +35,7 @@ class EmergencyContact(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "position"),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.user_id"))
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id"))
     name: Mapped[str]
     relationship: Mapped[str]
     phone: Mapped[str]
@@ -61,7 +60,7 @@ class Lease(Base):
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.user_id"))
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id"))
     room_id: Mapped[UUID] = mapped_column(ForeignKey("rooms.id"))
     start_date: Mapped[date | None]
     end_date: Mapped[date | None]
@@ -72,7 +71,7 @@ class Lease(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
-# A room and a tenant each have at most one active lease.
+# A room and a tenant record each have at most one active lease.
 Index(
     "uq_leases_active_room",
     Lease.room_id,
@@ -98,7 +97,7 @@ class Invitation(Base):
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    tenant_id: Mapped[UUID | None] = mapped_column(ForeignKey("tenants.user_id"))
+    tenant_id: Mapped[UUID | None] = mapped_column(ForeignKey("tenants.id"))
     manager_id: Mapped[UUID | None] = mapped_column(ForeignKey("managers.id"))
     token_hash: Mapped[str] = mapped_column(unique=True)
     token_encrypted: Mapped[str]

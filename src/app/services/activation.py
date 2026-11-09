@@ -25,7 +25,7 @@ from app.models import (
 from app.schemas.auth import Account, AuthSession, AuthTokens
 from app.schemas.complaints import PropertyRef
 from app.schemas.invitations import (
-    ActiveLeaseSummary,
+    InvitationAcceptanceInput,
     InvitationAcceptancePreview,
     InvitationBlocker,
     InvitationGoogleActivationInput,
@@ -67,25 +67,30 @@ def notify_manager_activated(db: Session, record: Manager) -> None:
     )
 
 
-def notify_tenant_activated(db: Session, tenant_user_id: UUID) -> None:
-    """Tell the Owner and Managers of the Tenant's property that they activated."""
+def notify_tenant_activated(db: Session, tenant_id: UUID) -> None:
+    """Tell the Owner and Managers of the property that a Tenant record activated.
+
+    The notification names the account now behind the record and the room of
+    the record's active lease.
+    """
     row = db.execute(
-        select(UserAccount, Room, Property)
+        select(Tenant, UserAccount, Room, Property)
         .select_from(Lease)
-        .join(UserAccount, UserAccount.id == Lease.tenant_id)
+        .join(Tenant, Tenant.id == Lease.tenant_id)
+        .join(UserAccount, UserAccount.id == Tenant.user_id)
         .join(Room, Room.id == Lease.room_id)
         .join(Property, Property.id == Room.property_id)
-        .where(Lease.tenant_id == tenant_user_id, Lease.ended_at.is_(None))
+        .where(Lease.tenant_id == tenant_id, Lease.ended_at.is_(None))
     ).first()
     if row is None:
         return
-    user, room, prop = row
+    record, user, room, prop = row
     notifications.notify(
         db,
         notifications.management_of(db, prop.id),
         NotificationType.TENANT_ACTIVATED,
         prop.id,
-        tenant=TenantRef(id=user.id, name=user.name),
+        tenant=TenantRef(id=record.id, name=user.name),
         room=RoomRef(id=room.id, number=room.number),
         property_=PropertyRef(id=prop.id, name=prop.name),
     )
@@ -100,9 +105,9 @@ def _notify_manager_activated(db: Session, record: Manager) -> None:
         logger.exception("Manager activation notification failed")
 
 
-def _notify_tenant_activated(db: Session, tenant_user_id: UUID) -> None:
+def _notify_tenant_activated(db: Session, tenant_id: UUID) -> None:
     try:
-        notify_tenant_activated(db, tenant_user_id)
+        notify_tenant_activated(db, tenant_id)
     except Exception:
         logger.exception("Tenant activation notification failed")
 
@@ -128,11 +133,11 @@ class _TenantLink:
         row = db.execute(
             select(Tenant, UserAccount, Room, Property)
             .join(UserAccount, UserAccount.id == Tenant.user_id)
-            .join(Lease, Lease.tenant_id == Tenant.user_id)
+            .join(Lease, Lease.tenant_id == Tenant.id)
             .join(Room, Room.id == Lease.room_id)
             .join(Property, Property.id == Room.property_id)
             .where(
-                Tenant.user_id == invitation.tenant_id,
+                Tenant.id == invitation.tenant_id,
                 Tenant.deleted_at.is_(None),
                 Lease.ended_at.is_(None),
             )
@@ -142,7 +147,7 @@ class _TenantLink:
         self.invitation = invitation
         self.tenant, self.user, self.room, self.property = row
         self.contacts = list(
-            db.scalars(select(ContactRow).where(ContactRow.tenant_id == self.user.id))
+            db.scalars(select(ContactRow).where(ContactRow.tenant_id == self.tenant.id))
         )
 
     @property
@@ -327,7 +332,7 @@ def _consume_link(
     found.invitation.used_at = now
     db.add_all(
         ContactRow(
-            tenant_id=found.user.id,
+            tenant_id=found.tenant.id,
             name=c.name,
             relationship=c.relationship,
             phone=c.phone,
@@ -345,25 +350,8 @@ def _finish_activation(
     if isinstance(found, _ManagerLink):
         _notify_manager_activated(db, found.record)
     else:
-        _notify_tenant_activated(db, found.user.id)
+        _notify_tenant_activated(db, found.tenant.id)
     return session
-
-
-def _active_lease(db: Session, user: UserAccount) -> ActiveLeaseSummary | None:
-    row = db.execute(
-        select(Lease, Room, Property)
-        .join(Room, Room.id == Lease.room_id)
-        .join(Property, Property.id == Room.property_id)
-        .where(Lease.tenant_id == user.id, Lease.ended_at.is_(None))
-    ).first()
-    if row is None:
-        return None
-    lease, room, property_ = row
-    return ActiveLeaseSummary(
-        property_name=property_.name,
-        room_number=room.number,
-        end_date=lease.end_date,
-    )
 
 
 def preview_acceptance(
@@ -373,18 +361,12 @@ def preview_acceptance(
 
     Raises 404 INVITATION_NOT_FOUND for an unknown token or a deleted invitee.
     The blocker is ROLE_MISMATCH when the caller's role differs from the
-    invitation's, or ACTIVE_LEASE when a Tenant invitation meets a Tenant who
-    already has an active lease.
+    invitation's.
     """
     found = _find(db, token)
     blocker = None
-    active_lease = None
     if found.role != caller.role:
         blocker = InvitationBlocker.ROLE_MISMATCH
-    elif isinstance(found, _TenantLink):
-        active_lease = _active_lease(db, caller)
-        if active_lease is not None:
-            blocker = InvitationBlocker.ACTIVE_LEASE
     return InvitationAcceptancePreview(
         invitation=found.preview(db),
         account_name=caller.name,
@@ -392,30 +374,33 @@ def preview_acceptance(
         account_role=caller.role,
         can_accept=found.status == InvitationLinkStatus.VALID and blocker is None,
         blocker=blocker,
-        active_lease=active_lease,
     )
 
 
-def accept_invitation(db: Session, token: str, caller: UserAccount) -> None:
+def accept_invitation(
+    db: Session, data: InvitationAcceptanceInput, caller: UserAccount
+) -> None:
     """Accept an invitation with the caller's existing account.
 
     Checks in order: link (404 INVITATION_NOT_FOUND, 409 INVITATION_USED, 409
-    INVITATION_EXPIRED), role (409 INVITATION_ROLE_MISMATCH), then for a Tenant
-    invitation an active lease (409 TENANT_HAS_ACTIVE_LEASE), for a Manager
-    invitation an existing live record under the same Owner (409
-    MANAGER_ALREADY_ADDED). Accepting a Tenant invitation is not available yet
-    (501 NOT_IMPLEMENTED). For a Manager invitation the record and the
+    INVITATION_EXPIRED), role (409 INVITATION_ROLE_MISMATCH), then for a
+    Tenant invitation emergency contacts when fewer than two are stored (422
+    VALIDATION_FAILED), for a Manager invitation an existing live record under
+    the same Owner (409 MANAGER_ALREADY_ADDED). A Tenant record moves to the
+    caller with its id, lease and contacts; a Manager record and the
     assignments of the Owner's properties move to the caller. Flushes, never
     commits.
     """
-    found = _find(db, token)
+    found = _find(db, data.token)
     _require_usable(found)
     if found.role != caller.role:
         raise ApiError(409, "INVITATION_ROLE_MISMATCH")
     if isinstance(found, _TenantLink):
-        if _active_lease(db, caller) is not None:
-            raise ApiError(409, "TENANT_HAS_ACTIVE_LEASE")
-        raise ApiError(501, "NOT_IMPLEMENTED")
+        contacts = _required_contacts(found, data.emergency_contacts)
+        found.tenant.user_id = caller.id
+        _consume_link(db, found, contacts)
+        _notify_tenant_activated(db, found.tenant.id)
+        return
 
     record = found.record
     already_added = db.scalars(

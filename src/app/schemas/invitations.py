@@ -1,6 +1,6 @@
 """Schemas for previewing, activating and accepting invitations."""
 
-from datetime import date, datetime
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import EmailStr, Field
@@ -29,7 +29,6 @@ class InvitationBlocker(StrEnum):
     """Why an existing account cannot accept an invitation."""
 
     ROLE_MISMATCH = "roleMismatch"
-    ACTIVE_LEASE = "activeLease"
 
 
 class InvitationProperty(ApiModel):
@@ -87,12 +86,19 @@ class InvitationGoogleActivationInput(ApiModel):
     device: DeviceInfo
 
 
-class ActiveLeaseSummary(ApiModel):
-    """The active lease that prevents a Tenant from accepting an invitation."""
+class InvitationAcceptanceInput(ApiModel):
+    """Fields set when accepting an invitation with an existing account."""
 
-    property_name: str
-    room_number: str
-    end_date: date | None
+    token: OpaqueToken
+    emergency_contacts: list[EmergencyContact] | None = Field(
+        default=None,
+        min_length=2,
+        max_length=4,
+        description=(
+            "Required for a Tenant invitation when the invitation preview says "
+            "they are missing; otherwise ignored."
+        ),
+    )
 
 
 class InvitationAcceptancePreview(ApiModel):
@@ -106,6 +112,3 @@ class InvitationAcceptancePreview(ApiModel):
         description="True only when the link is valid and there is no blocker."
     )
     blocker: InvitationBlocker | None
-    active_lease: ActiveLeaseSummary | None = Field(
-        description="Present when the blocker is activeLease."
-    )

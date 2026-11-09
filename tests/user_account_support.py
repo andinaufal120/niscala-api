@@ -37,7 +37,7 @@ ACCOUNT_FIELDS = {
     "loginMethods",
     "properties",
     "activeLeaseCount",
-    "tenancy",
+    "tenancies",
 }
 TENANCY_FIELDS = {"propertyName", "roomNumber", "leaseEndDate"}
 PROPERTY_REF_FIELDS = {"id", "name"}

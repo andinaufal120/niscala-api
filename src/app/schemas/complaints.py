@@ -41,6 +41,7 @@ class ComplaintInput(ApiModel):
     description: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=10, max_length=2000)
     ] = Field(description="10 to 2000 characters, counted after trimming.")
+    room_id: UUID = Field(description="The room of one of the Tenant's active leases.")
 
 
 class ComplaintClassificationInput(ApiModel):

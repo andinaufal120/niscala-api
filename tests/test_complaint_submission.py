@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
+from complaint_support import submit_complaint
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -70,8 +71,8 @@ def stored_changes(database) -> list:
         return list(db.scalars(select(ComplaintStatusChange)))
 
 
-def submit(client, headers, description: str = DESCRIPTION):
-    return client.post(COMPLAINTS, json={"description": description}, headers=headers)
+def submit(client, headers, description: str = DESCRIPTION, room_id=None):
+    return submit_complaint(client, headers, description, room_id)
 
 
 @pytest.fixture
@@ -102,7 +103,12 @@ def tenant_in(tenant, sign_in):
 # Authentication and roles
 
 REQUESTS = [
-    pytest.param("post", COMPLAINTS, {"description": DESCRIPTION}, id="create"),
+    pytest.param(
+        "post",
+        COMPLAINTS,
+        {"description": DESCRIPTION, "roomId": str(uuid4())},
+        id="create",
+    ),
     pytest.param("get", COMPLAINTS, None, id="list"),
     pytest.param("get", f"{COMPLAINTS}/{uuid4()}", None, id="get"),
     pytest.param("get", CATEGORIES_URL, None, id="categories"),
@@ -248,9 +254,172 @@ def test_the_description_is_stored_and_returned_trimmed(client, database, tenant
     assert row.description == "Lampu mati total."
 
 
-def test_a_missing_description_is_rejected_on_its_field(client, database, tenant_in):
-    response = client.post(COMPLAINTS, json={}, headers=tenant_in.headers)
+def test_a_missing_description_is_rejected_on_its_field(
+    client, database, tenant_in, room
+):
+    response = client.post(
+        COMPLAINTS, json={"roomId": str(room.id)}, headers=tenant_in.headers
+    )
     assert_error(response, 422, "VALIDATION_FAILED", "description")
+
+
+# Room validation
+
+
+def test_a_missing_room_is_rejected_on_its_field(client, database, tenant_in):
+    response = client.post(
+        COMPLAINTS, json={"description": DESCRIPTION}, headers=tenant_in.headers
+    )
+    assert_error(response, 422, "VALIDATION_FAILED", "roomId")
+    assert stored_complaints(database) == []
+
+
+@pytest.mark.parametrize("value", ["", "not-a-uuid", None, 5, "12345678"])
+def test_an_invalid_room_id_is_rejected_on_its_field(
+    client, database, tenant_in, value
+):
+    response = client.post(
+        COMPLAINTS,
+        json={"description": DESCRIPTION, "roomId": value},
+        headers=tenant_in.headers,
+    )
+    assert_error(response, 422, "VALIDATION_FAILED", "roomId")
+    assert stored_complaints(database) == []
+
+
+def test_an_unknown_room_is_not_found_on_its_field(client, database, tenant_in):
+    response = submit(client, tenant_in.headers, room_id=str(uuid4()))
+    assert_error(response, 404, "ROOM_NOT_FOUND", "roomId")
+    assert stored_complaints(database) == []
+    assert stored_changes(database) == []
+
+
+def test_the_room_of_another_tenant_is_not_found(
+    client, database, prop, make_room, make_verified_tenant, tenant_in
+):
+    other_room = make_room(prop, number="B1")
+    make_verified_tenant(other_room)
+    response = submit(client, tenant_in.headers, room_id=str(other_room.id))
+    assert_error(response, 404, "ROOM_NOT_FOUND", "roomId")
+    assert stored_complaints(database) == []
+
+
+def test_a_vacant_room_of_the_same_property_is_not_found(
+    client, database, prop, make_room, tenant_in
+):
+    vacant = make_room(prop, number="B1")
+    response = submit(client, tenant_in.headers, room_id=str(vacant.id))
+    assert_error(response, 404, "ROOM_NOT_FOUND", "roomId")
+
+
+def test_a_room_of_an_ended_lease_is_not_found(
+    client, database, prop, make_room, make_verified_tenant, tenant, tenant_in
+):
+    past_room = make_room(prop, number="B1")
+    make_verified_tenant(past_room, user=tenant.user, lease_ended=True)
+    response = submit(client, tenant_in.headers, room_id=str(past_room.id))
+    assert_error(response, 404, "ROOM_NOT_FOUND", "roomId")
+    assert stored_complaints(database) == []
+
+
+def test_a_room_of_a_deleted_record_is_not_found(
+    client, database, prop, make_room, make_verified_tenant, tenant, tenant_in
+):
+    gone_room = make_room(prop, number="B1")
+    make_verified_tenant(gone_room, user=tenant.user, deleted=True)
+    response = submit(client, tenant_in.headers, room_id=str(gone_room.id))
+    assert_error(response, 404, "ROOM_NOT_FOUND", "roomId")
+
+
+def test_no_active_lease_is_reported_before_the_room(
+    client, database, make_user, sign_in
+):
+    session = sign_in(make_user(role=role("tenant")))
+    response = submit(client, session.headers, room_id=str(uuid4()))
+    assert_error(response, 403, "NO_ACTIVE_LEASE")
+
+
+def test_the_role_is_checked_before_the_room(client, database, make_user, sign_in):
+    session = sign_in(make_user(role=role("owner")))
+    response = submit(client, session.headers, room_id=str(uuid4()))
+    assert_error(response, 403, "FORBIDDEN")
+
+
+def test_a_refused_room_does_not_call_the_classifier(
+    client, database, tenant_in, fake_classifier, owner, subscribe_owner
+):
+    subscribe_owner(owner)
+    submit(client, tenant_in.headers, room_id=str(uuid4()))
+    assert fake_classifier.calls == []
+
+
+def test_the_room_check_does_not_depend_on_the_description(
+    client, database, tenant_in, room
+):
+    refused = submit(client, tenant_in.headers, "x" * 20, room_id=str(uuid4()))
+    assert_error(refused, 404, "ROOM_NOT_FOUND", "roomId")
+    accepted = submit(client, tenant_in.headers, "x" * 20, room_id=str(room.id))
+    assert accepted.status_code == 201, accepted.text
+
+
+# Several leases
+
+
+@pytest.fixture
+def second_room(prop, make_room, make_verified_tenant, tenant):
+    """A second room of the same account, in another property of the same owner."""
+    elsewhere = make_room(prop, number="B2")
+    make_verified_tenant(elsewhere, user=tenant.user)
+    return elsewhere
+
+
+def test_a_tenant_may_submit_for_either_active_lease(
+    client, database, tenant_in, room, second_room
+):
+    first = submit(client, tenant_in.headers, room_id=str(room.id))
+    second = submit(client, tenant_in.headers, room_id=str(second_room.id))
+    assert first.status_code == second.status_code == 201
+    assert first.json()["room"]["id"] == str(room.id)
+    assert second.json()["room"]["id"] == str(second_room.id)
+    assert first.json()["room"]["number"] == "A1"
+    assert second.json()["room"]["number"] == "B2"
+
+
+def test_the_complaint_is_stored_against_the_record_of_the_room(
+    client, database, tenant, tenant_in, room, second_room, make_verified_tenant
+):
+    from app.models import Tenant
+
+    with Session(database) as db:
+        second_record = db.scalars(
+            select(Tenant).where(
+                Tenant.user_id == tenant.user.id, Tenant.id != tenant.id
+            )
+        ).one()
+    submit(client, tenant_in.headers, room_id=str(second_room.id))
+    submit(client, tenant_in.headers, room_id=str(room.id))
+    rows = {row.room_id: row for row in stored_complaints(database)}
+    assert rows[second_room.id].tenant_id == second_record.id
+    assert rows[room.id].tenant_id == tenant.id
+
+
+def test_a_complaint_about_one_room_names_that_property(
+    client, database, tenant_in, prop, room, second_room
+):
+    body = submit(client, tenant_in.headers, room_id=str(second_room.id)).json()
+    assert body["property"] == {"id": str(prop.id), "name": "Kos Melati"}
+    assert body["room"] == {"id": str(second_room.id), "number": "B2"}
+    assert body["tenantName"] == "Budi Tenant"
+
+
+def test_the_record_id_is_not_the_account_id_of_the_stored_complaint(
+    client, database, room, make_verified_tenant, sign_in
+):
+    stored = make_verified_tenant(room, distinct_id=True)
+    submit(client, sign_in(stored.user).headers, room_id=str(room.id))
+    (row,) = stored_complaints(database)
+    assert row.tenant_id == stored.tenant.id
+    assert row.tenant_id != stored.user.id
 
 
 # Lease requirement

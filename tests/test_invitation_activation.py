@@ -192,7 +192,7 @@ def test_activation_answers_with_a_session_for_the_tenant_account(
     assert body["accessToken"]
     assert body["refreshToken"]
     assert body["account"] == {
-        "id": str(tenant.id),
+        "id": str(tenant.user.id),
         "name": NAME,
         "email": EMAIL,
         "role": "tenant",
@@ -200,6 +200,24 @@ def test_activation_answers_with_a_session_for_the_tenant_account(
         "hasPassword": True,
         "googleEmail": None,
     }
+
+
+def test_the_activated_account_is_the_invited_account_and_not_the_record(
+    client, database, room, make_tenant, sent_emails
+):
+    from app.models import Tenant
+
+    stored = make_tenant(
+        room, name="Budi Tenant", contacts=STORED_CONTACTS, distinct_id=True
+    )
+    body = activate(client, stored.token).json()
+    assert body["account"]["id"] == str(stored.user.id)
+    assert body["account"]["id"] != str(stored.id)
+    assert stored_user(database, stored.user.id).email == EMAIL
+    with Session(database) as db:
+        record = db.get(Tenant, stored.id)
+        assert record.user_id == stored.user.id
+        assert record.activated_at is not None
 
 
 def test_activation_completes_the_existing_account_instead_of_creating_one(

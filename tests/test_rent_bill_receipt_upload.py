@@ -106,6 +106,22 @@ def test_a_tenant_cannot_upload_for_the_bill_of_another_tenant(
     assert file_store.objects == {}
 
 
+def test_a_tenant_uploads_for_a_bill_of_each_of_their_records(
+    client, database, scene, bill, make_room, make_verified_tenant, make_rent_bill
+):
+    second = make_verified_tenant(
+        make_room(scene.prop, number="A2"), user=scene.tenant.user
+    )
+    other = make_rent_bill(second.lease)
+    for target in (bill, other):
+        response = upload(client, scene.tenant_in.headers, target)
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == str(target.id)
+        assert response.json()["payment"]["status"] == "awaitingVerification"
+    assert response.json()["tenant"]["id"] == str(second.id)
+    assert len(stored_receipts(database)) == 2
+
+
 def test_an_upload_for_an_unknown_bill_is_not_found(client, database, scene):
     response = client.put(
         f"/rent-bills/{uuid4()}/receipt",
