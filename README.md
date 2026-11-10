@@ -119,7 +119,7 @@ uv run niscala-api grant-subscription owner@example.com basic          # 30 days
 uv run niscala-api grant-subscription owner@example.com pro --days 90
 ```
 
-Running it again replaces the Owner's current period. It is a development tool, not part of the API.
+Running it again replaces the Owner's current period. It also makes all of the Owner's properties and rooms editable again and removes a scheduled downgrade. It is a development tool, not part of the API.
 
 ### Seeding rent bills (development only)
 

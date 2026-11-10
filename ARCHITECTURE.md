@@ -17,7 +17,7 @@ niscala-api/
 │   ├── storage.py     # FileStore protocol; the R2 store, or a local directory when R2 is not configured
 │   ├── email.py       # EmailSender protocol; the console sender only logs codes and links
 │   ├── ai/            # ComplaintClassifier protocol, the Gemini classifier and the dependency that supplies it
-│   ├── plans.py       # Plan limits per subscription plan, as data
+│   ├── plans.py       # Limits, ranks, prices and Google Play ids per subscription plan, as data
 │   ├── cli.py         # `niscala-api` command: grant-subscription, seed-rent-bills, seed-demo and create-admin (development tools)
 │   ├── access.py      # require_roles and the property access queries (owner: own, manager: assigned)
 │   ├── services/      # Business rules per area; routers call them (sessions, accounts, passwords, email verification, subscriptions, properties, rooms, leases, invitations, activation, complaints, rent bills, dashboard, managers, user accounts, password reset, notifications, demo data)
@@ -65,7 +65,8 @@ The Flutter Android app lives in `andinaufal120/niscala-app`. It generates its D
 - **Managers** (`services/managers.py`): a Manager is a login account (role manager, shared by every Owner the person works for) plus one `managers` record per Owner, which holds that Owner's nickname and phone and when the Manager activated. Property access still comes from `manager_assignments`, keyed by the account. Invitations belong to either a tenant or a manager record (exactly one is set).
 - **Tenants** (`services/tenants.py`): a Tenant is a login account (role tenant) plus one `tenants` record per tenancy, holding phone, occupation, emergency contacts and the lease. The record's id is the tenant id of the API. Accepting an invitation moves the record to the accepting account.
 - **Notifications** (`services/notifications.py`): events call small hooks (`notify_status_change`, `notify_complaint_status_change`, `notify_complaint_submitted`, `notify_tenant_activated`, `notify_manager_activated`) that store one row per recipient with a snapshot of the facts as they were. Rows are created in a savepoint in the event's own transaction, so a failure is logged and never undoes the event. A push is queued for every live session of a recipient that has a token, when the category is switched on, and sent through `push.get_push_sender()` only after the outermost commit of the event's session (a rollback drops the queue). Each push is tried once; when FCM reports a token as unregistered or invalid, `push_token` is cleared on that session (only if it still holds that token). The late push of a high-urgency complaint to `highOnly` recipients is queued before the classification commit. Due-date reminders and overdue notices are daily jobs; bill-issued is not built.
-- **Daily jobs** (`routers/jobs.py`, `services/jobs.py`): `POST /internal/jobs/daily` is left out of the OpenAPI document and needs `Authorization: Bearer <JOBS_SECRET>` (404 when the secret is unset). It runs each job in its own transaction; a failure is logged, the rest still run, and the answer is 500. Jobs are idempotent, so a repeated run is harmless. Jobs: ending sessions past the idle or 1-year limit, sending due-date reminders and sending overdue notices.
+- **Daily jobs** (`routers/jobs.py`, `services/jobs.py`): `POST /internal/jobs/daily` is left out of the OpenAPI document and needs `Authorization: Bearer <JOBS_SECRET>` (404 when the secret is unset). It runs each job in its own transaction; a failure is logged, the rest still run, and the answer is 500. Jobs are idempotent, so a repeated run is harmless. Jobs: ending sessions past the idle or 1-year limit, sending due-date reminders, sending overdue notices and applying plan limits.
+- **Subscriptions** (`services/subscriptions.py`): the plan data (limits, rank, prices, Google Play product and base plan ids) is in `plans.py`; services only look values up. An order expires 3 days after it was created, and it is computed on read: any read of an Owner's orders first saves as `expired` the ones awaiting payment with no purchase token and a past `expires_at`. The current plan always comes from `current_plan` (the running paid period, otherwise free). A scheduled downgrade is only a stored confirmation; the daily job `apply_plan_limits` applies it after the paid period ends (see section 3.4), and `restore_editability` undoes view-only state when the plan goes up. Purchase verification is not built.
 
 Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, Alembic, psycopg 3, managed with uv.
 
@@ -92,9 +93,43 @@ Flutter app (Android)               Google                        FastAPI
 - **Endpoints:** `POST /auth/register/google` (Owner, optional `name`), `POST /auth/login/google`, `POST /invitations/activations/google` (Tenant and Manager), `POST /me/google-link`, `POST /me/local-password` and `POST /me/reauthentication/google`. Rules and error codes are in `docs/SPEC.md` section 7.
 - **Not done:** there is no `nonce` check, so a stolen but still valid ID token (Google ID tokens last about an hour) could be replayed against these endpoints until it expires.
 
+### 3.4. Subscription downgrade flow
+
+A downgrade is confirmed while the paid period runs and applied by the daily job once it has ended. The app only stores the Owner's choice of what stays editable; the plan itself changes when the period ends, through Google Play.
+
+```
+Owner app                                  FastAPI                                      Daily job
+|                                             |                                             |
+|-- PUT /subscription/scheduled-downgrade --->|                                             |
+|                                             |  lower plan while paid?                     |
+|                                             |  KEPT_PROPERTIES / KEPT_ROOMS valid?        |
+|                                             |  upsert scheduled_downgrades                |
+|<------ downgrade, effectiveDate = end + 1 --|                                             |
+|                                             |                                             |
+|  stop or change renewal                     |                                             |
+|  in Google Play                             |                                             |
+|                                             |                                             |
+|                                             |  paid period ends:                          |
+|                                             |  effective plan drops                       |
+|                                             |<----------------------- apply_plan_limits --|
+|                                             |  editable > new limit?                      |
+|                                             |  confirmation plan == effective plan?       |
+|                                             |    yes: keep the confirmed ids              |
+|                                             |    no: earliest properties; Gratis:         |
+|                                             |        occupied rooms, then lowest          |
+|                                             |  set view_only on the rest                  |
+|                                             |  delete the scheduled downgrade             |
+|                                             |                                             |
+|-- later upgrade (verify or grant) --------->|                                             |
+|                                             |  restore_editability:                       |
+|                                             |    every property and room editable         |
+|                                             |    scheduled downgrade removed              |
+|                                             |                                             |
+```
+
 ## 4. Data Stores
 
-PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints`, `complaint_status_changes`, `complaint_photos`, `email_change_requests`, `password_reset_tokens`, `notifications`, `notification_settings` and `payment_pattern_summaries`. Facility tags are a text-array column on the room. Uploaded files (receipts, complaint photos) are in the Cloudflare R2 bucket named by `R2_BUCKET`, private, read only by the API.
+PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints`, `complaint_status_changes`, `complaint_photos`, `email_change_requests`, `password_reset_tokens`, `notifications`, `notification_settings`, `payment_pattern_summaries`, `subscription_orders` (purchase attempts, with status, optional purchase token and expiry) and `scheduled_downgrades` (one row per Owner: the target plan and the kept property and room ids, as UUID arrays). Facility tags are a text-array column on the room. Uploaded files (receipts, complaint photos) are in the Cloudflare R2 bucket named by `R2_BUCKET`, private, read only by the API.
 
 ## 5. External Integrations / APIs
 
