@@ -62,15 +62,17 @@ class GooglePlay(Protocol):
 
 
 def _parse(body: dict[str, Any]) -> PlaySubscription:
-    line = body["lineItems"][0]
-    expiry = datetime.fromisoformat(line["expiryTime"])
+    line = (body.get("lineItems") or [{}])[0]
+    # A purchase that is still pending may not carry an expiry yet; the epoch
+    # means "no paid period".
+    expiry = datetime.fromisoformat(line.get("expiryTime") or "1970-01-01T00:00:00Z")
     if expiry.tzinfo is None:
         expiry = expiry.replace(tzinfo=UTC)
     accounts = body.get("externalAccountIdentifiers") or {}
     return PlaySubscription(
         state=body["subscriptionState"].removeprefix(STATE_PREFIX),
-        product_id=line["productId"],
-        base_plan_id=line["offerDetails"]["basePlanId"],
+        product_id=line.get("productId", ""),
+        base_plan_id=(line.get("offerDetails") or {}).get("basePlanId", ""),
         expiry_time=expiry,
         auto_renewing=(line.get("autoRenewingPlan") or {}).get("autoRenewEnabled")
         is True,

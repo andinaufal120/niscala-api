@@ -37,6 +37,7 @@ def _authenticate(authorization: str | None, verifier: PubSubTokenVerifier) -> N
     try:
         claims = verifier.verify(token.strip())
     except Exception as error:
+        logger.warning("Pub/Sub token rejected: %s", error)
         raise ApiError(401, "UNAUTHORIZED") from error
     account = get_settings().google_play_rtdn_service_account
     if (
