@@ -15,6 +15,7 @@ niscala-api/
 │   ├── security.py    # bearerAuth scheme and the get_current_user dependency
 │   ├── push.py        # PushSender protocol; the FCM sender, or the console sender (logs only) when no credentials are set
 │   ├── storage.py     # FileStore protocol; the R2 store, or a local directory when R2 is not configured
+│   ├── google_play.py # GooglePlay protocol; the Android Publisher client, or an unavailable client when not configured; the Pub/Sub token verifier
 │   ├── email.py       # EmailSender protocol; the console sender only logs codes and links
 │   ├── ai/            # ComplaintClassifier protocol, the Gemini classifier and the dependency that supplies it
 │   ├── plans.py       # Limits, ranks, prices and Google Play ids per subscription plan, as data
@@ -40,6 +41,7 @@ Flutter app --HTTPS/JSON--> FastAPI (routers -> schemas) --> PostgreSQL
                                   |
                                   +--> Gemini (classification)
                                   +--> Google (sign-in token check)
+                                  +--> Google Play (subscription purchases)
                                   +--> email sender                          (not built yet)
 ```
 
@@ -65,8 +67,9 @@ The Flutter Android app lives in `andinaufal120/niscala-app`. It generates its D
 - **Managers** (`services/managers.py`): a Manager is a login account (role manager, shared by every Owner the person works for) plus one `managers` record per Owner, which holds that Owner's nickname and phone and when the Manager activated. Property access still comes from `manager_assignments`, keyed by the account. Invitations belong to either a tenant or a manager record (exactly one is set).
 - **Tenants** (`services/tenants.py`): a Tenant is a login account (role tenant) plus one `tenants` record per tenancy, holding phone, occupation, emergency contacts and the lease. The record's id is the tenant id of the API. Accepting an invitation moves the record to the accepting account.
 - **Notifications** (`services/notifications.py`): events call small hooks (`notify_status_change`, `notify_complaint_status_change`, `notify_complaint_submitted`, `notify_tenant_activated`, `notify_manager_activated`) that store one row per recipient with a snapshot of the facts as they were. Rows are created in a savepoint in the event's own transaction, so a failure is logged and never undoes the event. A push is queued for every live session of a recipient that has a token, when the category is switched on, and sent through `push.get_push_sender()` only after the outermost commit of the event's session (a rollback drops the queue). Each push is tried once; when FCM reports a token as unregistered or invalid, `push_token` is cleared on that session (only if it still holds that token). The late push of a high-urgency complaint to `highOnly` recipients is queued before the classification commit. Due-date reminders and overdue notices are daily jobs; bill-issued is not built.
-- **Daily jobs** (`routers/jobs.py`, `services/jobs.py`): `POST /internal/jobs/daily` is left out of the OpenAPI document and needs `Authorization: Bearer <JOBS_SECRET>` (404 when the secret is unset). It runs each job in its own transaction; a failure is logged, the rest still run, and the answer is 500. Jobs are idempotent, so a repeated run is harmless. Jobs: ending sessions past the idle or 1-year limit, sending due-date reminders, sending overdue notices and applying plan limits.
-- **Subscriptions** (`services/subscriptions.py`): the plan data (limits, rank, prices, Google Play product and base plan ids) is in `plans.py`; services only look values up. An order expires 3 days after it was created, and it is computed on read: any read of an Owner's orders first saves as `expired` the ones awaiting payment with no purchase token and a past `expires_at`. The current plan always comes from `current_plan` (the running paid period, otherwise free). A scheduled downgrade is only a stored confirmation; the daily job `apply_plan_limits` applies it after the paid period ends (see section 3.4), and `restore_editability` undoes view-only state when the plan goes up. Purchase verification is not built.
+- **Daily jobs** (`routers/jobs.py`, `services/jobs.py`): `POST /internal/jobs/daily` is left out of the OpenAPI document and needs `Authorization: Bearer <JOBS_SECRET>` (404 when the secret is unset). It runs each job in its own transaction; a failure is logged, the rest still run, and the answer is 500. Jobs are idempotent, so a repeated run is harmless. Jobs: ending sessions past the idle or 1-year limit, sending due-date reminders, sending overdue notices, fetching again the subscriptions near their end from Google Play (`reconcile_google_play_subscriptions`) and applying plan limits. The reconcile job always runs before `apply_plan_limits`, and it logs and skips a purchase Google Play cannot return instead of failing.
+- **Subscriptions** (`services/subscriptions.py`): the plan data (limits, rank, prices, Google Play product and base plan ids) is in `plans.py`; services only look values up. An order expires 3 days after it was created, and it is computed on read: any read of an Owner's orders first saves as `expired` the ones awaiting payment with no purchase token and a past `expires_at`. The current plan always comes from `current_plan` (the running paid period, otherwise free). A scheduled downgrade is only a stored confirmation; the daily job `apply_plan_limits` applies it after the paid period ends (see section 3.4), and `restore_editability` undoes view-only state when the plan goes up. An order that holds a purchase token no longer expires by time.
+- **Google Play billing** (`google_play.py`, `services/subscriptions.py`, `routers/google_play.py`): purchase verification (`verify_purchase`) fetches the token from Google Play, checks the owner (obfuscated account id) and the product, and maps Google's state to the order and the subscription through one pure function shared with `sync_purchase`. `POST /internal/google-play/notifications` is left out of the OpenAPI document, answers 404 when `GOOGLE_PLAY_RTDN_AUDIENCE` is unset, checks the Pub/Sub OIDC bearer token (audience, and the verified email of `GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT`) and the package name, then calls `sync_purchase(db, play, token)`. That function finds the owner by the purchase's obfuscated account id and adopts the purchase when it is the current one, replaces it, belongs to an order awaiting payment, or the owner has no running subscription. Both paths lock the owner's account row so concurrent calls for one owner run one after the other. The endpoint answers 503 when Google Play is unreachable so Pub/Sub delivers again. The daily job `reconcile_google_play_subscriptions` calls `sync_purchase` for every subscription ending from 3 days ago to 1 day ahead. See section 3.5.
 
 Technologies: Python 3.14, FastAPI, Pydantic, pydantic-settings, SQLAlchemy 2, Alembic, psycopg 3, managed with uv.
 
@@ -128,6 +131,84 @@ Owner app                                  FastAPI                              
 |                                             |                                             |
 ```
 
+### 3.5. Google Play billing flow
+
+Paid plans are bought in Google Play. The backend learns the outcome in three ways: the app sends the purchase token for verification, Google Play sends real-time developer notifications through Cloud Pub/Sub, and a daily job fetches again the subscriptions near their end. Each way ends in the same state mapping.
+
+First purchase or upgrade. A pending payment (for example at a convenience store) is checked again when the app sends the same token. Verification is idempotent.
+
+```
+Owner app                                  FastAPI                                     Google Play
+|                                             |                                             |
+|-- GET /subscription-plans ----------------->|                                             |
+|<------------ plans, productId, basePlanId --|                                             |
+|                                             |                                             |
+|-- POST /subscription/orders --------------->|                                             |
+|                                             |  rank > effective plan?                     |
+|                                             |    no: 409 SUBSCRIPTION_NOT_AN_UPGRADE      |
+|                                             |  expire earlier open orders                 |
+|<------------- 201 order (awaitingPayment) --|                                             |
+|                                             |                                             |
+|-- launchBillingFlow(productId, basePlanId, obfuscatedAccountId) ------------------------->|
+|<------------------------------------------------------------------------- purchaseToken --|
+|                                             |                                             |
+|-- POST .../purchase-verification ---------->|                                             |
+|                                             |-- subscriptionsv2.get(token) -------------->|
+|                                             |<------------------ state, product, expiry --|
+|                                             |  check owner, product, token                |
+|                                             |  ACTIVE:                                    |
+|                                             |-- acknowledge ----------------------------->|
+|                                             |    order succeeded                          |
+|                                             |    subscription active                      |
+|                                             |    restore_editability                      |
+|                                             |  PENDING: keep token, order waits           |
+|                                             |  EXPIRED: order failed                      |
+|<------------------- order with its status --|                                             |
+|                                             |                                             |
+```
+
+Renewal, cancellation or refund through a real-time developer notification:
+
+```
+Pub/Sub                                    FastAPI                                     Google Play
+|                                             |                                             |
+|<----------------------------------------------------- publish subscription notification --|
+|-- push, Bearer OIDC JWT ------------------->|                                             |
+|                                             |  POST /internal/google-play/                |
+|                                             |       notifications                         |
+|                                             |  verify JWT audience and email              |
+|                                             |  decode message.data                        |
+|                                             |  check packageName                          |
+|                                             |  not a subscription notification: 204      |
+|                                             |  sync_purchase(token):                      |
+|                                             |-- subscriptionsv2.get(token) -------------->|
+|                                             |<------ state, product, expiry, account id --|
+|                                             |    owner = obfuscatedAccountId              |
+|                                             |    adopt if current, linked, or none        |
+|                                             |    update plan, ends_at, auto_renew         |
+|                                             |    update matching pending order            |
+|<---------- 204, or 503 so Pub/Sub retries --|                                             |
+|                                             |                                             |
+```
+
+Daily safety net:
+
+```
+pg_cron                                    FastAPI                                     Google Play
+|                                             |                                             |
+|-- 07:00 WIB POST /internal/jobs/daily ----->|                                             |
+|                                             |  existing jobs (sessions, reminders)        |
+|                                             |  reconcile_google_play_subscriptions:       |
+|                                             |    each subscription ending in              |
+|                                             |    [now - 3 days, now + 1 day]              |
+|                                             |-- subscriptionsv2.get(token) -------------->|
+|                                             |<--------------------------- current state --|
+|                                             |    sync_purchase as above                   |
+|                                             |  apply_plan_limits (flow C)                 |
+|<------------- 204, or 500 if a job failed --|                                             |
+|                                             |                                             |
+```
+
 ## 4. Data Stores
 
 PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `invitations`, `complaints`, `complaint_status_changes`, `complaint_photos`, `email_change_requests`, `password_reset_tokens`, `notifications`, `notification_settings`, `payment_pattern_summaries`, `subscription_orders` (purchase attempts, with status, optional purchase token and expiry) and `scheduled_downgrades` (one row per Owner: the target plan and the kept property and room ids, as UUID arrays). Facility tags are a text-array column on the room. Uploaded files (receipts, complaint photos) are in the Cloudflare R2 bucket named by `R2_BUCKET`, private, read only by the API.
@@ -138,11 +219,11 @@ PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Sc
 - **Firebase Cloud Messaging** (push, built): `push.py` calls the `firebase-admin` SDK with the service account in `FIREBASE_CREDENTIALS`. Without it the console sender is used.
 - **Cloudflare R2** (file storage, built): `storage.py` uses boto3 against R2's S3 API with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`. Without them, files go to the local directory in `FILE_STORAGE_DIR`.
 - **Google Sign-In** (ID token verification, built): `google.py` verifies ID tokens with `google-auth` against the audiences in `GOOGLE_CLIENT_IDS`; without any, every token is rejected. Tests replace the verifier through `get_google_verifier`. The flow is described in section 3.3.
-- **Google Play Developer API** (subscription verification): *not built yet.*
+- **Google Play Developer API** (subscription verification, built): `google_play.py` calls the Android Publisher v3 REST API (`purchases.subscriptionsv2.get` and `purchases.subscriptions.acknowledge`) for `GOOGLE_PLAY_PACKAGE_NAME` with an authorized session from the service account in `GOOGLE_PLAY_CREDENTIALS` and a 10 second timeout. Without both settings the unavailable client is used and every call fails as unreachable. Pub/Sub pushes are checked with `google-auth` against `GOOGLE_PLAY_RTDN_AUDIENCE` and `GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT`. Tests replace the client through `get_google_play` and the token verifier through `get_pubsub_token_verifier`. The flow is described in section 3.5.
 
 ## 6. Deployment & Infrastructure
 
-The shared development server is the Fly.io app `niscala-api-dev` at `https://dev-api-niscala.andinaufal.com` (also reachable at `niscala-api-dev.fly.dev`), in region `sin` (Singapore, next to the database). It is built from `Dockerfile` and configured in `fly.toml`. Its database is the Supabase project *niscala-api-dev* (ap-southeast-1), reached through the Supavisor session pooler, with Supabase's Data API turned off because only the backend uses the database. `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY`, `GEMINI_API_KEY`, `FIREBASE_CREDENTIALS`, `GOOGLE_CLIENT_IDS`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and `JOBS_SECRET` are Fly secrets (`GOOGLE_CLIENT_IDS` holds public OAuth client IDs, not a secret value). Deploys run from GitHub Actions (`cd.yml`) after CI passes on `main`, when the version in `pyproject.toml` has no `v<version>` tag yet; the workflow tags the commit once the deploy succeeded, using the `FLY_API_TOKEN` GitHub secret (a Fly deploy token for `niscala-api-dev`). `fly deploy` by hand still works. Each deploy runs `alembic upgrade head` as Fly's release command before the new version starts. The machine stops when idle and starts again on the next request. Production is *not set up yet.* GitHub Actions runs format, lint and test checks (`ci.yml`) and Claude Code review on pull requests (`.github/workflows/`).
+The shared development server is the Fly.io app `niscala-api-dev` at `https://dev-api-niscala.andinaufal.com` (also reachable at `niscala-api-dev.fly.dev`), in region `sin` (Singapore, next to the database). It is built from `Dockerfile` and configured in `fly.toml`. Its database is the Supabase project *niscala-api-dev* (ap-southeast-1), reached through the Supavisor session pooler, with Supabase's Data API turned off because only the backend uses the database. `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY`, `GEMINI_API_KEY`, `FIREBASE_CREDENTIALS`, `GOOGLE_CLIENT_IDS`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `JOBS_SECRET`, `GOOGLE_PLAY_CREDENTIALS`, `GOOGLE_PLAY_PACKAGE_NAME`, `GOOGLE_PLAY_RTDN_AUDIENCE` and `GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT` are Fly secrets (`GOOGLE_CLIENT_IDS` holds public OAuth client IDs, not a secret value). Deploys run from GitHub Actions (`cd.yml`) after CI passes on `main`, when the version in `pyproject.toml` has no `v<version>` tag yet; the workflow tags the commit once the deploy succeeded, using the `FLY_API_TOKEN` GitHub secret (a Fly deploy token for `niscala-api-dev`). `fly deploy` by hand still works. Each deploy runs `alembic upgrade head` as Fly's release command before the new version starts. The machine stops when idle and starts again on the next request. Production is *not set up yet.* GitHub Actions runs format, lint and test checks (`ci.yml`) and Claude Code review on pull requests (`.github/workflows/`).
 
 Supabase `pg_cron` calls the daily jobs endpoint at 00:00 UTC (07:00 WIB) through `pg_net`, with the secret read from Supabase Vault (`jobs_secret`):
 
@@ -179,7 +260,7 @@ The extensions `pg_cron` and `pg_net` and the Vault secret are set up in the Sup
 
 ## 9. Future Considerations
 
-Open architecture questions are listed in `docs/SPEC.md` §10 (for example U-9 error codes in OpenAPI, U-15 conflict detection, TBD-3 Google Play integration).
+Open architecture questions are listed in `docs/SPEC.md` §10 (for example U-9 error codes in OpenAPI, U-15 conflict detection).
 
 ## 10. Project Identification
 
