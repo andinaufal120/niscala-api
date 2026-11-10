@@ -713,13 +713,33 @@ def test_valid_subscription_request_is_neither_a_stub_nor_a_validation_failure(
         assert response.json().get("code") != "VALIDATION_FAILED"
 
 
-def test_valid_purchase_verification_request_responds_not_implemented(
+def test_valid_purchase_verification_request_for_an_unknown_order_is_not_a_stub(
     client, owner_headers
 ) -> None:
     response = client.post(
         VERIFICATION_URL, json=VALID_VERIFICATION_INPUT, headers=owner_headers
     )
-    assert response.status_code == 501
+    assert response.status_code == 404
+    assert response.json()["code"] == "SUBSCRIPTION_ORDER_NOT_FOUND"
+
+
+def test_valid_purchase_verification_request_for_an_order_returns_the_order(
+    client, database, make_user, sign_in, play
+) -> None:
+    from google_play_support import verification_url
+    from subscription_support import insert_order
+
+    owner = make_user()
+    order = insert_order(database, owner)
+    play.add("token-abc-123", owner=owner, state="PENDING")
+    response = client.post(
+        verification_url(order.id),
+        json=VALID_VERIFICATION_INPUT,
+        headers=sign_in(owner).headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == str(order.id)
+    assert response.json()["status"] == "awaitingPayment"
 
 
 @pytest.mark.parametrize(
@@ -765,7 +785,15 @@ def test_purchase_token_of_one_character_is_accepted(client, owner_headers) -> N
     response = client.post(
         VERIFICATION_URL, json={"purchaseToken": "t"}, headers=owner_headers
     )
-    assert response.status_code == 501
+    assert response.status_code == 404
+    assert response.json()["code"] == "SUBSCRIPTION_ORDER_NOT_FOUND"
+
+
+def test_the_notification_endpoint_is_not_part_of_the_contract(
+    openapi: OpenApiDoc,
+) -> None:
+    assert not [path for path in openapi.document["paths"] if "google-play" in path]
+    assert not [path for path in openapi.document["paths"] if "/internal" in path]
 
 
 # Runtime: invalid requests are rejected with a validation error
