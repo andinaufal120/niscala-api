@@ -1094,6 +1094,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
+    { name = "requests" },
     { name = "sqlalchemy" },
     { name = "tzdata" },
 ]
@@ -1119,6 +1120,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6" },
     { name = "pydantic-settings", specifier = ">=2.16.0" },
     { name = "pyjwt", specifier = ">=2.15.1" },
+    { name = "requests", specifier = ">=2.34.2" },
     { name = "sqlalchemy", specifier = ">=2.1.5" },
     { name = "tzdata", specifier = ">=2026.5" },
 ]
