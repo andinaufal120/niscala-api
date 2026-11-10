@@ -147,7 +147,9 @@ def _order_view(row: OrderRow) -> SubscriptionOrder:
     )
 
 
-def _schedule_view(schedule: ScheduleRow, subscription: SubscriptionRow):
+def _schedule_view(
+    schedule: ScheduleRow, subscription: SubscriptionRow
+) -> ScheduledDowngrade:
     return ScheduledDowngrade(
         plan_code=PlanCode(schedule.plan),
         effective_date=_jakarta_date(subscription.ends_at) + timedelta(days=1),
@@ -217,6 +219,11 @@ def create_order(
     awaiting payment is expired. The new order lapses three days after creation.
     """
     now = datetime.now(UTC)
+    # Serializes the owner's order requests, so a retried request cannot leave
+    # two orders awaiting payment.
+    db.execute(
+        select(UserAccount.id).where(UserAccount.id == owner.id).with_for_update()
+    )
     if (
         PLAN_RANK[PlanCode(data.plan_code)]
         <= PLAN_RANK[current_plan(db, owner.id, now)]
@@ -393,6 +400,8 @@ def _limit_rooms(
 def _limit_owner(db: Session, owner_id: UUID, now: datetime) -> None:
     plan = current_plan(db, owner_id, now)
     limits = PLAN_LIMITS[plan]
+    if limits.max_properties is None and limits.max_rooms_per_property is None:
+        return
     schedule = db.get(ScheduleRow, owner_id)
     confirmed = schedule if schedule is not None and schedule.plan == plan else None
     editable = list(
@@ -429,7 +438,8 @@ def apply_plan_limits(db: Session) -> None:
     Uses the owner's confirmed downgrade when its plan is the plan now in effect,
     otherwise keeps the earliest-created properties and, on the free plan,
     occupied rooms first and then the lowest room numbers. The confirmation is
-    deleted once it no longer applies. Safe to run repeatedly. Flushes, never commits.
+    deleted once it has been applied or the owner had to be limited. Safe to run
+    repeatedly. Flushes, never commits.
     """
     now = datetime.now(UTC)
     owner_ids = db.scalars(

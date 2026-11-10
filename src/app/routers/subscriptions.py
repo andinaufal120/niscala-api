@@ -24,7 +24,6 @@ router = APIRouter(prefix="/subscription", tags=["subscriptions"])
 plans_router = APIRouter(prefix="/subscription-plans", tags=["subscriptions"])
 
 OrderId = Annotated[UUID, Path(alias="orderId")]
-Db = SessionDep
 OwnerOnly = Annotated[CurrentUser, Depends(require_roles(UserRole.OWNER))]
 
 
@@ -35,14 +34,14 @@ def list_subscription_plans(owner: OwnerOnly) -> SubscriptionPlanList:
 
 
 @router.get("")
-def get_subscription(owner: OwnerOnly, db: Db) -> Subscription:
+def get_subscription(owner: OwnerOnly, db: SessionDep) -> Subscription:
     """Return the Owner's current subscription."""
     return subscriptions.get_subscription(db, owner.user)
 
 
 @router.post("/orders", status_code=status.HTTP_201_CREATED)
 def create_subscription_order(
-    body: SubscriptionOrderInput, owner: OwnerOnly, db: Db
+    body: SubscriptionOrderInput, owner: OwnerOnly, db: SessionDep
 ) -> SubscriptionOrder:
     """Start a purchase of a paid plan; the order expires if no purchase completes."""
     return subscriptions.create_order(db, owner.user, body)
@@ -50,7 +49,7 @@ def create_subscription_order(
 
 @router.get("/orders/{orderId}")
 def get_subscription_order(
-    order_id: OrderId, owner: OwnerOnly, db: Db
+    order_id: OrderId, owner: OwnerOnly, db: SessionDep
 ) -> SubscriptionOrder:
     """Return an order with its status."""
     return subscriptions.get_order(db, owner.user, order_id)
@@ -66,7 +65,7 @@ def verify_subscription_purchase(
 
 @router.put("/scheduled-downgrade")
 def schedule_subscription_downgrade(
-    body: ScheduledDowngradeInput, owner: OwnerOnly, db: Db
+    body: ScheduledDowngradeInput, owner: OwnerOnly, db: SessionDep
 ) -> ScheduledDowngrade:
     """Confirm a downgrade at the end of the paid period and the properties and rooms that stay editable."""
     return subscriptions.schedule_downgrade(db, owner.user, body)
@@ -77,6 +76,6 @@ def schedule_subscription_downgrade(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def cancel_subscription_downgrade(owner: OwnerOnly, db: Db) -> None:
+def cancel_subscription_downgrade(owner: OwnerOnly, db: SessionDep) -> None:
     """Cancel the scheduled downgrade."""
     subscriptions.cancel_downgrade(db, owner.user)
