@@ -90,7 +90,7 @@ def grant_subscription(
     """Set the owner's subscription to `plan` for `days` days counted from now.
 
     Replaces any existing subscription, running or ended, with a monthly one that
-    does not renew, and makes the owner's properties and rooms editable.
+    does not renew and has no Google Play purchase, and makes the owner's properties and rooms editable.
     Flushes, never commits. Raises ValueError when `days` is less than 1.
     """
     if days < 1:
@@ -105,6 +105,9 @@ def grant_subscription(
         row.ends_at = ends_at
         row.billing_period = SubscriptionPeriod.MONTHLY.value
         row.auto_renew = False
+        # A Google Play token left on the row would let a later sync overwrite
+        # the grant with the old purchase.
+        row.purchase_token = None
     db.flush()
     restore_editability(db, owner.id)
     return row
