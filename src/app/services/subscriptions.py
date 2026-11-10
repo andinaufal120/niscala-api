@@ -1,12 +1,20 @@
 """Plans, orders and downgrades of subscriptions, and resolving an owner's current plan."""
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from app import google_play
 from app.errors import ApiError
+from app.google_play import (
+    GooglePlay,
+    GooglePlayUnreachable,
+    PlaySubscription,
+    PurchaseNotFound,
+)
 from app.models import Lease, UserAccount
 from app.models import Property as PropertyRow
 from app.models import Room as RoomRow
@@ -38,7 +46,13 @@ from app.schemas.subscriptions import (
     SubscriptionStatus,
 )
 
+logger = logging.getLogger(__name__)
+
 ORDER_LIFETIME = timedelta(days=3)
+
+# Subscriptions ending between these offsets from now are fetched again daily.
+RECONCILE_LOOKBACK = timedelta(days=3)
+RECONCILE_LOOKAHEAD = timedelta(days=1)
 
 
 def _running_subscription(
@@ -48,6 +62,19 @@ def _running_subscription(
     if row is None or row.ends_at <= (now or datetime.now(UTC)):
         return None
     return row
+
+
+def _lock_owner(db: Session, owner_id: UUID) -> bool:
+    """Lock the owner's account row until the transaction ends.
+
+    Returns whether the account exists.
+    """
+    return (
+        db.scalar(
+            select(UserAccount.id).where(UserAccount.id == owner_id).with_for_update()
+        )
+        is not None
+    )
 
 
 def _jakarta_date(moment: datetime) -> date:
@@ -221,9 +248,7 @@ def create_order(
     now = datetime.now(UTC)
     # Serializes the owner's order requests, so a retried request cannot leave
     # two orders awaiting payment.
-    db.execute(
-        select(UserAccount.id).where(UserAccount.id == owner.id).with_for_update()
-    )
+    _lock_owner(db, owner.id)
     if (
         PLAN_RANK[PlanCode(data.plan_code)]
         <= PLAN_RANK[current_plan(db, owner.id, now)]
@@ -356,6 +381,255 @@ def restore_editability(db: Session, owner_id: UUID) -> None:
     )
     db.execute(delete(ScheduleRow).where(ScheduleRow.owner_id == owner_id))
     db.flush()
+
+
+def _purchase_outcome(purchase: PlaySubscription, now: datetime) -> OrderStatus:
+    """Map Google's state to the status the purchase gives an order.
+
+    SUCCEEDED means a paid period is running, AWAITING_PAYMENT that payment is
+    still pending, and FAILED that the purchase ended or never completed.
+    """
+    if purchase.state in ("ACTIVE", "IN_GRACE_PERIOD") or (
+        purchase.state == "CANCELED" and purchase.expiry_time > now
+    ):
+        return OrderStatus.SUCCEEDED
+    if purchase.state == "PENDING":
+        return OrderStatus.AWAITING_PAYMENT
+    return OrderStatus.FAILED
+
+
+def _plan_of(
+    purchase: PlaySubscription,
+) -> tuple[PaidPlanCode, SubscriptionPeriod] | None:
+    """Return the plan and billing period of the purchase's product, if it is ours."""
+    plans = {product: plan for plan, product in GOOGLE_PLAY_PRODUCT_IDS.items()}
+    periods = {base: period for period, base in GOOGLE_PLAY_BASE_PLAN_IDS.items()}
+    plan = plans.get(purchase.product_id)
+    period = periods.get(purchase.base_plan_id)
+    return None if plan is None or period is None else (plan, period)
+
+
+def _set_subscription(
+    db: Session,
+    owner_id: UUID,
+    plan: PaidPlanCode,
+    period: SubscriptionPeriod,
+    purchase: PlaySubscription,
+    token: str,
+) -> None:
+    row = db.get(SubscriptionRow, owner_id)
+    if row is None:
+        row = SubscriptionRow(owner_id=owner_id)
+        db.add(row)
+    row.plan = plan.value
+    row.billing_period = period.value
+    row.ends_at = purchase.expiry_time
+    row.auto_renew = purchase.auto_renewing
+    row.purchase_token = token
+    db.flush()
+
+
+def _token_in_use(db: Session, owner_id: UUID, order_id: UUID, token: str) -> bool:
+    """Whether the token is held by another order, or by another owner's subscription."""
+    return (
+        db.scalar(
+            select(OrderRow.id).where(
+                OrderRow.purchase_token == token, OrderRow.id != order_id
+            )
+        )
+        is not None
+        or db.scalar(
+            select(SubscriptionRow.owner_id).where(
+                SubscriptionRow.purchase_token == token,
+                SubscriptionRow.owner_id != owner_id,
+            )
+        )
+        is not None
+    )
+
+
+def verify_purchase(
+    db: Session, play: GooglePlay, owner: UserAccount, order_id: UUID, token: str
+) -> SubscriptionOrder:
+    """Check the purchase token of an order against Google Play and apply the result.
+
+    A paid purchase succeeds the order, acknowledges the purchase if needed and
+    sets the subscription; a pending one keeps the order awaiting payment with
+    the token stored; any other state fails the order. Repeating a succeeded
+    order with its own token returns it unchanged.
+
+    Raises 404 SUBSCRIPTION_ORDER_NOT_FOUND, 409 SUBSCRIPTION_ORDER_CLOSED for an
+    order that is not awaiting payment, 409 PURCHASE_TOKEN_IN_USE, 503
+    GOOGLE_PLAY_UNREACHABLE (also when the acknowledgement fails; nothing is
+    saved), 422 PURCHASE_TOKEN_INVALID for an unknown token or one bought for
+    another account, and 422 PURCHASE_PRODUCT_MISMATCH. Flushes, never commits.
+    """
+    now = datetime.now(UTC)
+    _lock_owner(db, owner.id)
+    _expire_lapsed_orders(db, owner.id, now)
+    row = db.scalars(
+        select(OrderRow).where(OrderRow.id == order_id, OrderRow.owner_id == owner.id)
+    ).first()
+    if row is None:
+        raise ApiError(404, "SUBSCRIPTION_ORDER_NOT_FOUND")
+    if row.status == OrderStatus.SUCCEEDED and row.purchase_token == token:
+        return _order_view(row)
+    if row.status != OrderStatus.AWAITING_PAYMENT:
+        raise ApiError(409, "SUBSCRIPTION_ORDER_CLOSED")
+    if _token_in_use(db, owner.id, row.id, token):
+        raise ApiError(409, "PURCHASE_TOKEN_IN_USE")
+    try:
+        purchase = play.get_subscription(token)
+    except PurchaseNotFound:
+        raise ApiError(422, "PURCHASE_TOKEN_INVALID", field="purchaseToken") from None
+    except GooglePlayUnreachable:
+        raise ApiError(503, "GOOGLE_PLAY_UNREACHABLE") from None
+    if purchase.obfuscated_account_id != str(owner.id):
+        raise ApiError(422, "PURCHASE_TOKEN_INVALID", field="purchaseToken")
+    plan = PaidPlanCode(row.plan)
+    period = SubscriptionPeriod(row.billing_period)
+    if (
+        purchase.product_id != GOOGLE_PLAY_PRODUCT_IDS[plan]
+        or purchase.base_plan_id != GOOGLE_PLAY_BASE_PLAN_IDS[period]
+    ):
+        raise ApiError(422, "PURCHASE_PRODUCT_MISMATCH", field="purchaseToken")
+    outcome = _purchase_outcome(purchase, now)
+    if outcome == OrderStatus.SUCCEEDED:
+        try:
+            if not purchase.acknowledged:
+                play.acknowledge(purchase.product_id, token)
+        except PurchaseNotFound:
+            raise ApiError(
+                422, "PURCHASE_TOKEN_INVALID", field="purchaseToken"
+            ) from None
+        except GooglePlayUnreachable:
+            raise ApiError(503, "GOOGLE_PLAY_UNREACHABLE") from None
+        row.status = outcome.value
+        row.purchase_token = token
+        _set_subscription(db, owner.id, plan, period, purchase, token)
+        restore_editability(db, owner.id)
+    else:
+        row.status = outcome.value
+        row.purchase_token = token
+    db.flush()
+    return _order_view(row)
+
+
+def _order_for_purchase(
+    db: Session,
+    owner_id: UUID,
+    token: str,
+    plan: PaidPlanCode,
+    period: SubscriptionPeriod,
+    paid: bool,
+) -> OrderRow | None:
+    """Find the order awaiting payment that a purchase belongs to.
+
+    The order holding the token is the one; without it, a paid purchase belongs
+    to the owner's newest order awaiting payment for the same plan and period.
+    A closed order holding the token is never reopened.
+    """
+    holding = db.scalars(
+        select(OrderRow).where(OrderRow.purchase_token == token)
+    ).first()
+    if holding is not None:
+        open_ = holding.owner_id == owner_id and (
+            holding.status == OrderStatus.AWAITING_PAYMENT
+        )
+        return holding if open_ else None
+    if not paid:
+        return None
+    return db.scalars(
+        select(OrderRow)
+        .where(
+            OrderRow.owner_id == owner_id,
+            OrderRow.status == OrderStatus.AWAITING_PAYMENT,
+            OrderRow.purchase_token.is_(None),
+            OrderRow.plan == plan.value,
+            OrderRow.billing_period == period.value,
+        )
+        .order_by(OrderRow.created_at.desc())
+        .limit(1)
+    ).first()
+
+
+def sync_purchase(db: Session, play: GooglePlay, token: str) -> None:
+    """Bring the purchase's owner in line with what Google Play reports for the token.
+
+    The owner is found by the purchase's obfuscated account id; a purchase of no
+    known owner or of a product that is not ours changes nothing, and neither
+    does a pending one. A paid purchase is adopted when it is the owner's current
+    one, replaces it (its linked token is the current one), belongs to an order
+    awaiting payment, or the owner has no running subscription. An ended
+    purchase updates the owner's subscription only when it is the current one or
+    replaces it. The matching order awaiting payment follows the purchase.
+    Editability is restored when the plan goes up.
+
+    Raises PurchaseNotFound and GooglePlayUnreachable from the Google Play calls,
+    before anything is changed. Flushes, never commits.
+    """
+    purchase = play.get_subscription(token)
+    try:
+        owner_id = UUID(purchase.obfuscated_account_id or "")
+    except ValueError:
+        return
+    plan_period = _plan_of(purchase)
+    if plan_period is None or not _lock_owner(db, owner_id):
+        return
+    plan, period = plan_period
+    now = datetime.now(UTC)
+    outcome = _purchase_outcome(purchase, now)
+    if outcome == OrderStatus.AWAITING_PAYMENT:
+        return
+    paid = outcome == OrderStatus.SUCCEEDED
+    order = _order_for_purchase(db, owner_id, token, plan, period, paid)
+    row = db.get(SubscriptionRow, owner_id)
+    current = row is not None and (
+        row.purchase_token == token
+        or (
+            purchase.linked_purchase_token is not None
+            and purchase.linked_purchase_token == row.purchase_token
+        )
+    )
+    adopt = current or (
+        paid and (order is not None or row is None or row.ends_at <= now)
+    )
+    if adopt:
+        if paid and not purchase.acknowledged:
+            play.acknowledge(purchase.product_id, token)
+        previous = current_plan(db, owner_id, now)
+        _set_subscription(db, owner_id, plan, period, purchase, token)
+        if PLAN_RANK[PlanCode(plan)] > PLAN_RANK[previous]:
+            restore_editability(db, owner_id)
+    if order is not None:
+        order.status = outcome.value
+        order.purchase_token = token
+    db.flush()
+
+
+def reconcile_google_play_subscriptions(db: Session) -> None:
+    """Fetch again every subscription ending from three days ago to a day ahead.
+
+    Recovers notifications that never arrived. A purchase that cannot be fetched
+    is logged and skipped, so the job itself does not fail. Flushes, never
+    commits.
+    """
+    now = datetime.now(UTC)
+    tokens = db.scalars(
+        select(SubscriptionRow.purchase_token).where(
+            SubscriptionRow.purchase_token.is_not(None),
+            SubscriptionRow.ends_at >= now - RECONCILE_LOOKBACK,
+            SubscriptionRow.ends_at <= now + RECONCILE_LOOKAHEAD,
+        )
+    ).all()
+    if not tokens:
+        return
+    play = google_play.get_google_play()
+    for token in tokens:
+        try:
+            sync_purchase(db, play, token)
+        except (PurchaseNotFound, GooglePlayUnreachable) as error:
+            logger.warning("Could not reconcile a Google Play purchase: %r", error)
 
 
 def _limit_rooms(

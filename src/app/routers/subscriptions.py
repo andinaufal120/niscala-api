@@ -1,12 +1,13 @@
-"""Endpoints under /subscription and /subscription-plans. Purchase verification is declared in the contract; not implemented yet."""
+"""Endpoints under /subscription and /subscription-plans."""
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, Path, Response, status
 
 from app.access import require_roles
 from app.db import SessionDep
+from app.google_play import GooglePlay, get_google_play
 from app.schemas.auth import UserRole
 from app.schemas.subscriptions import (
     PurchaseVerificationInput,
@@ -57,10 +58,16 @@ def get_subscription_order(
 
 @router.post("/orders/{orderId}/purchase-verification")
 def verify_subscription_purchase(
-    order_id: OrderId, body: PurchaseVerificationInput
+    order_id: OrderId,
+    body: PurchaseVerificationInput,
+    owner: OwnerOnly,
+    db: SessionDep,
+    play: Annotated[GooglePlay, Depends(get_google_play)],
 ) -> SubscriptionOrder:
     """Verify the Google Play purchase token of an order and update the order and subscription."""
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+    return subscriptions.verify_purchase(
+        db, play, owner.user, order_id, body.purchase_token
+    )
 
 
 @router.put("/scheduled-downgrade")

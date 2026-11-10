@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     jobs_secret: str | None = None
     invitation_encryption_key: str
     google_client_ids: Annotated[list[str], NoDecode] = []
+    google_play_package_name: str | None = None
+    google_play_credentials: str | None = None
+    google_play_rtdn_audience: str | None = None
+    google_play_rtdn_service_account: str | None = None
 
     @field_validator("google_client_ids", mode="before")
     @classmethod
