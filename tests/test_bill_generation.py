@@ -1207,6 +1207,6 @@ def test_a_failing_generator_makes_the_endpoint_answer_500_after_the_other_jobs(
     add_lease(billing_cycle="weekly", start_date=real_today())
     response = client.post(JOBS_URL, headers={"Authorization": f"Bearer {jobs_secret}"})
     assert response.status_code == 500
-    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert response.json()["code"] == "JOBS_FAILED"
     assert ran == ["ran"]
     assert stored_bills(database) == []
