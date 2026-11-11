@@ -12,7 +12,11 @@ from app.models.payment_patterns import PaymentPatternSummary
 from app.models.properties import ManagerAssignment, Property
 from app.models.rent_bills import RentBill, RentBillReceipt, RentBillStatusChange
 from app.models.rooms import Room
-from app.models.subscriptions import Subscription
+from app.models.subscriptions import (
+    ScheduledDowngrade,
+    Subscription,
+    SubscriptionOrder,
+)
 from app.models.tenants import EmergencyContact, Invitation, Lease, Tenant
 from app.models.users import UsedRefreshToken, UserAccount, UserSession
 
@@ -38,7 +42,9 @@ __all__ = [
     "RentBillReceipt",
     "RentBillStatusChange",
     "Room",
+    "ScheduledDowngrade",
     "Subscription",
+    "SubscriptionOrder",
     "Tenant",
     "UsedRefreshToken",
     "UserAccount",

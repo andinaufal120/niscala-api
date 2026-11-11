@@ -685,7 +685,12 @@ def test_subscription_scheduled_downgrade_is_nullable_scheduled_downgrade(
     assert openapi.ref_name(nullable_inner(schema)) == "ScheduledDowngrade"
 
 
-# Runtime: valid requests reach the not-implemented stub
+# Runtime: valid requests are not validation failures
+
+
+@pytest.fixture
+def owner_headers(make_user, sign_in) -> dict[str, str]:
+    return sign_in(make_user()).headers
 
 
 @pytest.mark.parametrize(
@@ -695,17 +700,25 @@ def test_subscription_scheduled_downgrade_is_nullable_scheduled_downgrade(
         pytest.param("get", "/subscription", None, id="get_subscription"),
         pytest.param("post", ORDERS_URL, VALID_ORDER_INPUT, id="create_order"),
         pytest.param("get", ORDER_URL, None, id="get_order"),
-        pytest.param(
-            "post", VERIFICATION_URL, VALID_VERIFICATION_INPUT, id="verify_purchase"
-        ),
         pytest.param("put", DOWNGRADE_URL, VALID_DOWNGRADE_INPUT, id="schedule"),
         pytest.param("delete", DOWNGRADE_URL, None, id="cancel_downgrade"),
     ],
 )
-def test_valid_subscription_request_responds_not_implemented(
-    client, method: str, url: str, body: dict[str, Any] | None
+def test_valid_subscription_request_is_neither_a_stub_nor_a_validation_failure(
+    client, owner_headers, method: str, url: str, body: dict[str, Any] | None
 ) -> None:
-    response = client.request(method, url, json=body)
+    response = client.request(method, url, json=body, headers=owner_headers)
+    assert response.status_code != 501
+    if response.content:
+        assert response.json().get("code") != "VALIDATION_FAILED"
+
+
+def test_valid_purchase_verification_request_responds_not_implemented(
+    client, owner_headers
+) -> None:
+    response = client.post(
+        VERIFICATION_URL, json=VALID_VERIFICATION_INPUT, headers=owner_headers
+    )
     assert response.status_code == 501
 
 
@@ -718,10 +731,10 @@ def test_valid_subscription_request_responds_not_implemented(
     ],
 )
 def test_order_input_every_paid_plan_and_period_is_accepted(
-    client, body: dict[str, Any]
+    client, owner_headers, body: dict[str, Any]
 ) -> None:
-    response = client.post(ORDERS_URL, json=body)
-    assert response.status_code == 501
+    response = client.post(ORDERS_URL, json=body, headers=owner_headers)
+    assert response.status_code == 201
 
 
 @pytest.mark.parametrize(
@@ -741,13 +754,17 @@ def test_order_input_every_paid_plan_and_period_is_accepted(
         ),
     ],
 )
-def test_downgrade_input_edge_body_is_accepted(client, body: dict[str, Any]) -> None:
-    response = client.put(DOWNGRADE_URL, json=body)
-    assert response.status_code == 501
+def test_downgrade_input_edge_body_is_accepted(
+    client, owner_headers, body: dict[str, Any]
+) -> None:
+    response = client.put(DOWNGRADE_URL, json=body, headers=owner_headers)
+    assert response.json()["code"] != "VALIDATION_FAILED"
 
 
-def test_purchase_token_of_one_character_is_accepted(client) -> None:
-    response = client.post(VERIFICATION_URL, json={"purchaseToken": "t"})
+def test_purchase_token_of_one_character_is_accepted(client, owner_headers) -> None:
+    response = client.post(
+        VERIFICATION_URL, json={"purchaseToken": "t"}, headers=owner_headers
+    )
     assert response.status_code == 501
 
 
@@ -775,14 +792,16 @@ def test_purchase_token_of_one_character_is_accepted(client) -> None:
     ],
 )
 def test_invalid_order_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, owner_headers, body: dict[str, Any]
 ) -> None:
-    response = client.post(ORDERS_URL, json=body)
+    response = client.post(ORDERS_URL, json=body, headers=owner_headers)
     assert response.status_code == 422
 
 
-def test_create_order_without_body_is_rejected_with_validation_error(client) -> None:
-    response = client.post(ORDERS_URL)
+def test_create_order_without_body_is_rejected_with_validation_error(
+    client, owner_headers
+) -> None:
+    response = client.post(ORDERS_URL, headers=owner_headers)
     assert response.status_code == 422
 
 
@@ -796,14 +815,16 @@ def test_create_order_without_body_is_rejected_with_validation_error(client) -> 
     ],
 )
 def test_invalid_purchase_verification_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, owner_headers, body: dict[str, Any]
 ) -> None:
-    response = client.post(VERIFICATION_URL, json=body)
+    response = client.post(VERIFICATION_URL, json=body, headers=owner_headers)
     assert response.status_code == 422
 
 
-def test_verify_purchase_without_body_is_rejected_with_validation_error(client) -> None:
-    response = client.post(VERIFICATION_URL)
+def test_verify_purchase_without_body_is_rejected_with_validation_error(
+    client, owner_headers
+) -> None:
+    response = client.post(VERIFICATION_URL, headers=owner_headers)
     assert response.status_code == 422
 
 
@@ -844,16 +865,17 @@ def test_verify_purchase_without_body_is_rejected_with_validation_error(client) 
     ],
 )
 def test_invalid_downgrade_input_is_rejected_with_validation_error(
-    client, body: dict[str, Any]
+    client, owner_headers, body: dict[str, Any]
 ) -> None:
-    response = client.put(DOWNGRADE_URL, json=body)
+    response = client.put(DOWNGRADE_URL, json=body, headers=owner_headers)
     assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_FAILED"
 
 
 def test_schedule_downgrade_without_body_is_rejected_with_validation_error(
-    client,
+    client, owner_headers
 ) -> None:
-    response = client.put(DOWNGRADE_URL)
+    response = client.put(DOWNGRADE_URL, headers=owner_headers)
     assert response.status_code == 422
 
 
@@ -870,7 +892,7 @@ def test_schedule_downgrade_without_body_is_rejected_with_validation_error(
     ],
 )
 def test_non_uuid_order_id_is_rejected_with_validation_error(
-    client, method: str, url: str, body: dict[str, Any] | None
+    client, owner_headers, method: str, url: str, body: dict[str, Any] | None
 ) -> None:
-    response = client.request(method, url, json=body)
+    response = client.request(method, url, json=body, headers=owner_headers)
     assert response.status_code == 422
