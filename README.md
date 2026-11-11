@@ -112,7 +112,7 @@ uv run alembic upgrade head   # apply database migrations to DATABASE_URL
 
 ### Granting a subscription (development only)
 
-AI features need an Owner with a paid plan, and buying one through Google Play is not built yet. This command gives an existing Owner a paid period in the database in `DATABASE_URL`:
+AI features need an Owner with a paid plan. To skip buying one through Google Play, this command gives an existing Owner a paid period in the database in `DATABASE_URL`:
 
 ```sh
 uv run niscala-api grant-subscription owner@example.com basic          # 30 days
@@ -162,6 +162,10 @@ Settings are read from environment variables, or from a `.env` file in the proje
 | `R2_SECRET_ACCESS_KEY` | none | Secret access key of that token |
 | `R2_BUCKET` | none | Name of the R2 bucket; keep it private |
 | `FILE_STORAGE_DIR` | `var/files` | Local directory for uploaded files, used when any of the four `R2_*` variables is missing or blank |
+| `GOOGLE_PLAY_PACKAGE_NAME` | none | Package name of the app in Google Play |
+| `GOOGLE_PLAY_CREDENTIALS` | none | Content of the Google Cloud service account JSON key that may read subscriptions in Play Console; without it (or the package name) every purchase check answers 503 |
+| `GOOGLE_PLAY_RTDN_AUDIENCE` | none | Audience set on the Pub/Sub push subscription; without it `POST /internal/google-play/notifications` answers 404 |
+| `GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT` | none | Email of the service account that the Pub/Sub push subscription signs its requests with |
 
 Until a mail service is set up, email verification codes are written to the server log instead of being emailed.
 
@@ -174,6 +178,29 @@ fly secrets set FIREBASE_CREDENTIALS="$(cat service-account.json)" -a niscala-ap
 Do not commit the key file.
 
 Without all four `R2_*` variables, uploaded files are written to `FILE_STORAGE_DIR` on the machine running the API, and a warning is logged. That is fine for local development but not for the deployed server, whose disk is not kept between deploys.
+
+## Google Play billing setup
+
+Paid plans are bought in Google Play and checked by the API. Do this once per environment.
+
+1. In Play Console, create two subscription products, `niscala_basic` and `niscala_pro`. Give each two base plans, `monthly` and `yearly`.
+2. In Google Cloud, enable the Google Play Android Developer API, create a service account and download a JSON key for it. In Play Console under Users and permissions, invite the service account's email and give it the permissions "View financial data" and "Manage orders and subscriptions".
+3. Create a Pub/Sub topic and give `google-play-developer-notifications@system.gserviceaccount.com` the Publisher role on it.
+4. Create a push subscription on the topic. Set the endpoint to `https://dev-api-niscala.andinaufal.com/internal/google-play/notifications`, turn on authentication with a service account, and choose an audience (any string; use the endpoint URL).
+5. In Play Console under Monetization setup, set the topic and send a test notification. The API answers 204 and logs it (`fly logs -a niscala-api-dev`).
+6. To try a purchase, add license testers in Play Console and install a build from the internal testing track.
+7. Set the four variables on the server. `GOOGLE_PLAY_CREDENTIALS` is the content of the JSON key:
+
+   ```sh
+   fly secrets set \
+     GOOGLE_PLAY_PACKAGE_NAME=<package name of the app> \
+     GOOGLE_PLAY_CREDENTIALS="$(cat google-play-service-account.json)" \
+     GOOGLE_PLAY_RTDN_AUDIENCE=<audience from step 4> \
+     GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT=<email of the push subscription's service account> \
+     -a niscala-api-dev
+   ```
+
+Do not commit the key file. `grant-subscription` stays available for development without Google Play.
 
 ## Docs
 

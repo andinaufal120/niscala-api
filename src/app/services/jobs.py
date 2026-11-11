@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 from app.db import get_engine
 from app.services.notifications import send_due_date_reminders, send_overdue_notices
 from app.services.sessions import end_expired_sessions
-from app.services.subscriptions import apply_plan_limits
+from app.services.subscriptions import (
+    apply_plan_limits,
+    reconcile_google_play_subscriptions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +21,7 @@ DAILY_JOBS: list[Job] = [
     end_expired_sessions,
     send_due_date_reminders,
     send_overdue_notices,
+    reconcile_google_play_subscriptions,
     apply_plan_limits,
 ]
 

@@ -32,6 +32,10 @@ _SETTINGS_FROM_ENVIRONMENT = (
     "R2_SECRET_ACCESS_KEY",
     "R2_BUCKET",
     "FILE_STORAGE_DIR",
+    "GOOGLE_PLAY_PACKAGE_NAME",
+    "GOOGLE_PLAY_CREDENTIALS",
+    "GOOGLE_PLAY_RTDN_AUDIENCE",
+    "GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT",
 )
 
 
@@ -1309,6 +1313,58 @@ def google(app) -> Any:
     app.dependency_overrides[get_google_verifier] = lambda: fake
     yield fake
     app.dependency_overrides.pop(get_google_verifier, None)
+
+
+@pytest.fixture
+def play(app, monkeypatch) -> Any:
+    """Install a `FakeGooglePlay` as the Google Play client for one test.
+
+    It is used by the request handlers through the dependency and by the daily
+    job through the module-level getter.
+    """
+    from google_play_support import FakeGooglePlay
+
+    import app.google_play as google_play_module
+    from app.google_play import get_google_play
+
+    fake = FakeGooglePlay()
+    app.dependency_overrides[get_google_play] = lambda: fake
+    monkeypatch.setattr(google_play_module, "get_google_play", lambda: fake)
+    monkeypatch.setattr(
+        "app.services.subscriptions.get_google_play", lambda: fake, raising=False
+    )
+    yield fake
+    app.dependency_overrides.pop(get_google_play, None)
+
+
+@pytest.fixture
+def rtdn(app, monkeypatch) -> Any:
+    """Configure the notification endpoint and a fake Pub/Sub token verifier.
+
+    The token `GOOD_BEARER` is accepted with the configured service account.
+    """
+    from google_play_support import (
+        AUDIENCE,
+        GOOD_BEARER,
+        PACKAGE,
+        SERVICE_ACCOUNT,
+        FakePubSubVerifier,
+        pubsub_verifier_getter,
+    )
+
+    from app.config import get_settings
+
+    monkeypatch.setenv("GOOGLE_PLAY_RTDN_AUDIENCE", AUDIENCE)
+    monkeypatch.setenv("GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT", SERVICE_ACCOUNT)
+    monkeypatch.setenv("GOOGLE_PLAY_PACKAGE_NAME", PACKAGE)
+    get_settings.cache_clear()
+    fake = FakePubSubVerifier()
+    fake.add(GOOD_BEARER)
+    getter = pubsub_verifier_getter()
+    app.dependency_overrides[getter] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(getter, None)
+    get_settings.cache_clear()
 
 
 @pytest.fixture(scope="session")
