@@ -300,7 +300,7 @@ def _notify_bill(
     prop = summary.property
     notify(
         db,
-        [summary.tenant.id],
+        [row[4].id],
         type_,
         prop.id,
         rent_bill=facts,
