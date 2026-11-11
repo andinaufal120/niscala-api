@@ -380,7 +380,7 @@ Checks run in this order: role, tenant access (`TENANT_NOT_FOUND`), property vie
 
 Owner, and Manager on an assigned property, only. A target that is not the next status, or any change once the complaint is *Selesai*, answers `COMPLAINT_STATUS_NOT_NEXT` (409, field `status`). A blank handling note is stored as none. Allowed on a view-only property.
 
-**UC-36 Classify complaint manually** (FR-32) · Management sets category and urgency on a complaint whose classification state is *Menunggu Klasifikasi* or *Belum Diklasifikasi*, or corrects an AI classification. The category MUST be one of the complaint categories, which an endpoint returns (list contents: U-16).
+**UC-36 Classify complaint manually** (FR-32) · Management sets category and urgency on a complaint whose classification state is *Menunggu Klasifikasi* or *Belum Diklasifikasi*, or corrects an AI classification. The category MUST be one of the complaint categories, which an endpoint returns: *Listrik (Electricity)*, *Air (Water)*, *Bangunan (Building)*, *Perabot (Furniture)*, *Kebersihan (Cleanliness)*, *Keamanan (Security)*, *Internet (Internet)* and *Lainnya (Other)*, in that order. The values are served and stored in Indonesian as written.
 - Stored: the original AI result (if any), the manual values, the actor and the timestamp.
 - An AI result that arrives after a manual classification is stored only as the original AI result; it never overwrites the manual values.
 - No active subscription is required; this is not an AI feature.
@@ -611,7 +611,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | U-6   | Bill generation (FR-31): when bills are created, how the amount is set, and proration.                                           | UC-04, UC-08, UC-25       |
 | U-9   | The complete list of error codes, and declaring error responses in the OpenAPI document. (The response shape is decided, §6 rule 2.) | §6, §7, all endpoints |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
-| U-16  | Complaint category list contents (the prototype list is placeholder data). Served by `GET /complaint-categories`, so the contract does not change when it is decided. | UC-02, UC-23, UC-36 |
 
 ## 11. Changelog
 
@@ -684,3 +683,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 10-11-2026 | Subscription plans, subscription and downgrade endpoints (UC-31) specified: order expiry after 3 days, one obfuscated account id per Owner, `SUBSCRIPTION_NOT_AN_UPGRADE`, `SUBSCRIPTION_NOT_A_DOWNGRADE`, `SUBSCRIPTION_ORDER_NOT_FOUND`, order of the downgrade checks, a daily job that applies downgrades, and an upgrade restoring editability. | NKMA-77 |
 | 11-11-2026 | UC-31: when a scheduled downgrade is applied, confirmed properties and rooms that were deleted meanwhile are skipped and the places they leave free are filled by the default choice, so an Owner is never left with fewer editable places than the plan allows. | NKMA-77 |
 | 11-11-2026 | TBD-3 decided and UC-32 specified: purchase verification with its check order and error codes, real-time developer notifications through Cloud Pub/Sub with an OIDC-authenticated internal endpoint, a daily re-check of subscriptions near their end, and a pending order that keeps its token no longer expiring by time. Removed from §10. | NKMA-78 |
+| 11-11-2026 | U-16 decided: the complaint categories are *Listrik*, *Air*, *Bangunan*, *Perabot*, *Kebersihan*, *Keamanan*, *Internet* and *Lainnya*, as served by `GET /complaint-categories`. Removed from §10. | NKMA-114 |
