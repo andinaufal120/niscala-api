@@ -597,6 +597,67 @@ def seed_rent_bills(db: Session, lease: LeaseRow, months: int) -> int:
     return created
 
 
+def generate_rent_bills(db: Session) -> int:
+    """Create the missing bill of the current period of every active lease.
+
+    Covers leases that are not ended, whose tenant record is not deleted and
+    that have a start date. The current period is the one containing today in
+    Asia/Jakarta. It is skipped when it starts after the lease end date or
+    already has a bill. A new bill is unpaid, due `grace_period_days` after the
+    period start, for the full rent, with one system status entry. Each new bill
+    then notifies its tenant; a failing notification never undoes a bill.
+    Flushes, never commits, and returns the number of bills created.
+    """
+    today = today_jakarta()
+    active = db.scalars(
+        select(LeaseRow)
+        .join(TenantRow, TenantRow.id == LeaseRow.tenant_id)
+        .where(
+            LeaseRow.ended_at.is_(None),
+            LeaseRow.start_date.is_not(None),
+            TenantRow.deleted_at.is_(None),
+        )
+    ).all()
+    created: list[RentBillRow] = []
+    for lease in active:
+        cycle = BillingCycle(lease.billing_cycle)
+        if lease.start_date > today:
+            continue
+        number = 0
+        while leases.period_start(lease.start_date, cycle, number + 1) <= today:
+            number += 1
+        start = leases.period_start(lease.start_date, cycle, number)
+        if lease.end_date is not None and start > lease.end_date:
+            continue
+        exists = db.scalar(
+            select(RentBillRow.id).where(
+                RentBillRow.lease_id == lease.id, RentBillRow.period_start == start
+            )
+        )
+        if exists is not None:
+            continue
+        bill = RentBillRow(
+            lease_id=lease.id,
+            period_start=start,
+            period_end=leases.period_start(lease.start_date, cycle, number + 1)
+            - timedelta(days=1),
+            due_date=start + timedelta(days=lease.grace_period_days),
+            amount=lease.rent,
+            payment_status=PaymentStatus.UNPAID.value,
+        )
+        db.add(bill)
+        db.flush()
+        db.add(
+            StatusChangeRow(
+                rent_bill_id=bill.id, status=PaymentStatus.UNPAID.value, manual=False
+            )
+        )
+        created.append(bill)
+    db.flush()
+    notifications.notify_bills_issued(db, [bill.id for bill in created])
+    return len(created)
+
+
 def _seed_bill(db: Session, lease: LeaseRow, number: int, current: bool) -> None:
     cycle = BillingCycle(lease.billing_cycle)
     start = leases.period_start(lease.start_date, cycle, number)

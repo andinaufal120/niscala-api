@@ -320,6 +320,27 @@ def _notify_bill(
         )
 
 
+def notify_bills_issued(db: Session, bill_ids: list[UUID]) -> None:
+    """Tell the tenant of each given bill that it was issued.
+
+    Only the tenant is notified. A failure for one bill is logged and never
+    stops the others or raises.
+    """
+    from app.services import rent_bills
+
+    if not bill_ids:
+        return
+    rows = [
+        tuple(row)
+        for row in db.execute(rent_bills._rows().where(RentBill.id.in_(bill_ids)))
+    ]
+    for row in rows:
+        try:
+            _notify_bill(db, row, NotificationType.BILL_ISSUED, None)
+        except Exception:
+            logger.exception("Notifying about the new bill %s failed", row[0].id)
+
+
 def send_due_date_reminders(db: Session) -> int:
     """Remind the tenant of each unpaid or rejected bill due within three days.
 
