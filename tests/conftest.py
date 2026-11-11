@@ -1322,9 +1322,10 @@ def play(app, monkeypatch) -> Any:
     It is used by the request handlers through the dependency and by the daily
     job through the module-level getter.
     """
+    from google_play_support import FakeGooglePlay
+
     import app.google_play as google_play_module
     from app.google_play import get_google_play
-    from google_play_support import FakeGooglePlay
 
     fake = FakeGooglePlay()
     app.dependency_overrides[get_google_play] = lambda: fake
