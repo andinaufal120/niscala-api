@@ -389,9 +389,8 @@ def _limit_rooms(
         key=lambda r: (r.id not in occupied, natural_number_key(r.number), r.id),
     )
     if confirmed is not None and prop.id in confirmed.kept_property_ids:
-        ranked = [r for r in rooms if r.id in confirmed.kept_room_ids] + [
-            r for r in ranked if r.id not in confirmed.kept_room_ids
-        ]
+        confirmed_rooms = set(confirmed.kept_room_ids)
+        ranked.sort(key=lambda r: r.id not in confirmed_rooms)
     kept = {room.id for room in ranked[:limit]}
     for room in rooms:
         room.view_only = room.id not in kept
@@ -420,12 +419,12 @@ def _limit_owner(db: Session, owner_id: UUID, now: datetime) -> None:
     if limits.max_properties is not None and len(editable) > limits.max_properties:
         ranked = editable
         if confirmed is not None:
-            ranked = [p for p in editable if p.id in confirmed.kept_property_ids] + [
-                p for p in editable if p.id not in confirmed.kept_property_ids
-            ]
+            confirmed_properties = set(confirmed.kept_property_ids)
+            ranked = sorted(editable, key=lambda p: p.id not in confirmed_properties)
         kept = ranked[: limits.max_properties]
+        kept_ids = {prop.id for prop in kept}
         for prop in editable:
-            prop.view_only = prop not in kept
+            prop.view_only = prop.id not in kept_ids
     trimmed = len(kept) < len(editable)
     if limits.max_rooms_per_property is not None:
         for prop in kept:
