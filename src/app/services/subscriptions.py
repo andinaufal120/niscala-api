@@ -376,22 +376,23 @@ def _limit_rooms(
     )
     if len(rooms) <= limit:
         return False
-    if confirmed is not None and prop.id in confirmed.kept_property_ids:
-        kept = set(confirmed.kept_room_ids)
-    else:
-        occupied = set(
-            db.scalars(
-                select(Lease.room_id).where(
-                    Lease.room_id.in_([room.id for room in rooms]),
-                    Lease.ended_at.is_(None),
-                )
+    occupied = set(
+        db.scalars(
+            select(Lease.room_id).where(
+                Lease.room_id.in_([room.id for room in rooms]),
+                Lease.ended_at.is_(None),
             )
         )
-        ranked = sorted(
-            rooms,
-            key=lambda r: (r.id not in occupied, natural_number_key(r.number), r.id),
-        )
-        kept = {room.id for room in ranked[:limit]}
+    )
+    ranked = sorted(
+        rooms,
+        key=lambda r: (r.id not in occupied, natural_number_key(r.number), r.id),
+    )
+    if confirmed is not None and prop.id in confirmed.kept_property_ids:
+        ranked = [r for r in rooms if r.id in confirmed.kept_room_ids] + [
+            r for r in ranked if r.id not in confirmed.kept_room_ids
+        ]
+    kept = {room.id for room in ranked[:limit]}
     for room in rooms:
         room.view_only = room.id not in kept
     return True
@@ -417,10 +418,12 @@ def _limit_owner(db: Session, owner_id: UUID, now: datetime) -> None:
     )
     kept = editable
     if limits.max_properties is not None and len(editable) > limits.max_properties:
+        ranked = editable
         if confirmed is not None:
-            kept = [p for p in editable if p.id in confirmed.kept_property_ids]
-        else:
-            kept = editable[: limits.max_properties]
+            ranked = [p for p in editable if p.id in confirmed.kept_property_ids] + [
+                p for p in editable if p.id not in confirmed.kept_property_ids
+            ]
+        kept = ranked[: limits.max_properties]
         for prop in editable:
             prop.view_only = prop not in kept
     trimmed = len(kept) < len(editable)
@@ -435,9 +438,13 @@ def _limit_owner(db: Session, owner_id: UUID, now: datetime) -> None:
 def apply_plan_limits(db: Session) -> None:
     """Set view-only on the properties and rooms beyond each owner's current plan.
 
-    Uses the owner's confirmed downgrade when its plan is the plan now in effect,
-    otherwise keeps the earliest-created properties and, on the free plan,
-    occupied rooms first and then the lowest room numbers. The confirmation is
+    Without a confirmed downgrade for the plan now in effect, keeps the
+    earliest-created properties and, on the free plan, occupied rooms first and
+    then the lowest room numbers. With one, keeps the confirmed properties and
+    rooms that are still live and editable, and tops up any places they leave
+    free: the earliest-created other properties, and in a confirmed property the
+    other rooms by the default rule. A property that was not confirmed gets the
+    default rooms. Never keeps more than the plan allows. The confirmation is
     deleted once it has been applied or the owner had to be limited. Safe to run
     repeatedly. Flushes, never commits.
     """
