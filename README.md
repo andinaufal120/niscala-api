@@ -74,12 +74,19 @@ A shared copy of the API runs on Fly.io at `https://dev-api-niscala.andinaufal.c
 
 ### Deploying
 
-A deploy starts by itself when a new version reaches `main`: after CI passes on `main`, the `CD` workflow (`.github/workflows/cd.yml`) checks whether the `version` in `pyproject.toml` already has a `v<version>` tag. If not, it runs `fly deploy` and then pushes that tag. A merge without a version bump deploys nothing, and a failed deploy is tried again by the next CI run on `main`. The workflow needs the GitHub secret `FLY_API_TOKEN` (`fly tokens create deploy -a niscala-api-dev`). The steps below are for releasing by hand.
+Releases are automatic. release-please (`.github/workflows/release-please.yml`) keeps a release pull request open on GitHub, built from the Conventional Commits merged to `main`. Merging that pull request bumps `version` in `pyproject.toml` and `uv.lock`, writes `CHANGELOG.md`, tags `v<version>`, publishes the GitHub release and calls the `CD` workflow (`.github/workflows/cd.yml`), which runs `fly deploy`. Do not bump the version or edit `CHANGELOG.md` by hand. Only `feat`, `fix`, `perf` and `revert` commits appear in the changelog.
 
-Deploy from an up-to-date `main`. A version bump is optional by hand, and is what starts the automatic deploy. The `version` in `pyproject.toml` is the version the API reports in its OpenAPI document (`info.version`, shown at `/docs` and `/openapi.json`), so bump it when a release should show a new number. The build installs with `uv sync --locked`, so `pyproject.toml` and `uv.lock` must always agree.
+One-time setup on GitHub:
 
-1. Optional: bump the version. Create a branch, change `version` in `pyproject.toml`, then run `uv lock` so `uv.lock` follows. Do not edit `uv.lock` by hand. Check that `git diff --stat` shows only those two files and that `uv lock --check` passes. Commit both together (`chore: bump the version to X.Y.Z`), open a pull request and merge it. The deployed API reports the new version after the next deploy. On your machine `uv run` and `uv sync` reinstall the project, so restart the server to see it.
-2. Update and check your copy of `main`:
+- Settings, Actions, General: turn on "Allow GitHub Actions to create and approve pull requests", or release-please cannot open its pull request.
+- Secret `FLY_API_TOKEN` (`fly tokens create deploy -a niscala-api-dev`).
+- Optional secret `RELEASE_PLEASE_TOKEN`, a personal access token with `contents` and `pull requests` write access. Pull requests opened with the default token do not start CI, so the release pull request would have no checks.
+
+The `version` in `pyproject.toml` is the version the API reports in its OpenAPI document (`info.version`, shown at `/docs` and `/openapi.json`). The build installs with `uv sync --locked`, so `pyproject.toml` and `uv.lock` must always agree; release-please updates both. On your machine `uv run` and `uv sync` reinstall the project after a release, so restart the server to see the new version.
+
+To redeploy a tag, run the `CD` workflow from the Actions tab and give the tag (for example `v0.7.0`). To deploy from your machine instead:
+
+1. Update and check your copy of `main`:
 
    ```sh
    git switch main && git pull
@@ -88,14 +95,14 @@ Deploy from an up-to-date `main`. A version bump is optional by hand, and is wha
    fly secrets list -a niscala-api-dev  # JWT_SECRET, INVITATION_ENCRYPTION_KEY and the database URL are set
    ```
 
-3. Deploy:
+2. Deploy:
 
    ```sh
    fly deploy -a niscala-api-dev
    ```
 
    The deploy builds the image from the `Dockerfile` and runs `alembic upgrade head` as its release command. If a migration fails, the deploy stops and the old machines keep running.
-4. Check that it worked: `fly status -a niscala-api-dev`, `fly logs -a niscala-api-dev`, then open `/docs` on the server and try a login. The first request can be slow because the machine stops when idle.
+3. Check that it worked: `fly status -a niscala-api-dev`, `fly logs -a niscala-api-dev`, then open `/docs` on the server and try a login. The first request can be slow because the machine stops when idle.
 
 To roll back, find the previous release with `fly releases -a niscala-api-dev` and run `fly deploy -a niscala-api-dev --image <previous-image>`. A rollback does not undo migrations. To revert one, run `fly ssh console -a niscala-api-dev -C "alembic downgrade -1"`, after checking that the old code works with the older schema.
 
