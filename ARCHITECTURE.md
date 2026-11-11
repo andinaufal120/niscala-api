@@ -114,7 +114,8 @@ Owner app                                  FastAPI                              
 |                                             |<----------------------- apply_plan_limits --|
 |                                             |  editable > new limit?                      |
 |                                             |  confirmation plan == effective plan?       |
-|                                             |    yes: keep the confirmed ids              |
+|                                             |    yes: keep the confirmed ids still there; |
+|                                             |          fill free places like the default  |
 |                                             |    no: earliest properties; Gratis:         |
 |                                             |        occupied rooms, then lowest          |
 |                                             |  set view_only on the rest                  |
