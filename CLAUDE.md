@@ -18,7 +18,7 @@ This repo is the **backend only**. It owns all business rules and the API contra
 
 - Before a change is called done, `uv run ruff check` MUST report no issues and `uv run pytest` MUST pass.
 - Edited `.py` files are auto-formatted by a hook in `.claude/settings.json`.
-- Agents MUST NOT edit generated or environment files: `uv.lock`, `.venv/`, `__pycache__/`. Change `pyproject.toml` through `uv add` / `uv remove` instead.
+- Agents MUST NOT edit generated or environment files: `uv.lock`, `CHANGELOG.md`, `.venv/`, `__pycache__/`. Change `pyproject.toml` through `uv add` / `uv remove` instead.
 - Test-Driven Development: tests for a use case MUST be written or updated before implementing it, by two separate subagents defined in `.claude/agents/`:
   1. `test-writer` writes an exhaustive set of tests from `docs/SPEC.md` and the approved plan. It MUST NOT write implementation code. Its output is committed on its own.
   2. `implementer` then writes the code to make those tests pass. It MUST NOT modify the tests. If a test looks wrong, it MUST stop and report the conflict instead.
@@ -111,7 +111,7 @@ Agents maintain the project docs (`docs/SPEC.md`, `ARCHITECTURE.md`, `README.md`
 
 ## CI
 
-`.github/workflows/` runs the checks (`ci.yml`: `ruff format --check`, `ruff check` and `pytest` on every PR and push to `main`), Claude Code PR review (`claude-code-review.yml`) and `@claude` mentions (`claude.yml`). `cd.yml` deploys to Fly.io when CI passes on `main` and the version in `pyproject.toml` has no tag yet. Agents MUST NOT bump the version unless asked.
+`.github/workflows/` runs the checks (`ci.yml`: `ruff format --check`, `ruff check` and `pytest` on every PR and push to `main`), Claude Code PR review (`claude-code-review.yml`) and `@claude` mentions (`claude.yml`). `release-please.yml` keeps a release pull request open from the Conventional Commits on `main`; merging it bumps the version, writes `CHANGELOG.md`, tags `v<version>` and calls `cd.yml`, which deploys that tag to Fly.io. Agents MUST NOT bump the version, edit `CHANGELOG.md` or merge the release pull request unless asked.
 
 ## Code review
 
