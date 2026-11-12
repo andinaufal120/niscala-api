@@ -1,5 +1,6 @@
 """Application settings read from environment variables and an optional .env file."""
 
+import re
 from functools import cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -17,6 +18,8 @@ COMPLAINT_CATEGORIES = (
     "Internet",
     "Lainnya",
 )
+
+FINGERPRINT = re.compile(r"([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}", re.ASCII)
 
 
 class Settings(BaseSettings):
@@ -41,13 +44,24 @@ class Settings(BaseSettings):
     google_play_rtdn_audience: str | None = None
     google_play_rtdn_service_account: str | None = None
 
-    @field_validator("google_client_ids", mode="before")
+    android_cert_sha256: Annotated[list[str], NoDecode] = []
+
+    @field_validator("google_client_ids", "android_cert_sha256", mode="before")
     @classmethod
-    def _split_client_ids(cls, value: Any) -> Any:
+    def _split_list(cls, value: Any) -> Any:
         """Read a comma-separated list, dropping blanks and surrounding spaces."""
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
+
+    @field_validator("android_cert_sha256")
+    @classmethod
+    def _check_fingerprints(cls, values: list[str]) -> list[str]:
+        """Require 32 colon-separated hex bytes per entry; store them upper-cased."""
+        for value in values:
+            if not FINGERPRINT.fullmatch(value):
+                raise ValueError("expected 32 hexadecimal bytes separated by colons")
+        return [value.upper() for value in values]
 
 
 @cache
