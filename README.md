@@ -80,9 +80,18 @@ One-time setup on GitHub:
 
 - Settings, Actions, General: turn on "Allow GitHub Actions to create and approve pull requests", or release-please cannot open its pull request.
 - Secret `FLY_API_TOKEN` (`fly tokens create deploy -a niscala-api-dev`).
+- Secret `FLY_PROD_API_TOKEN` (`fly tokens create deploy -a niscala-api`) once production exists. The `CD` workflow deploys production after the development deploy succeeded, and skips it with a notice while this secret is missing. To approve each production deploy by hand, add required reviewers to the `production` environment (Settings, Environments).
 - Optional secret `RELEASE_PLEASE_TOKEN`, a personal access token with `contents` and `pull requests` write access. Pull requests opened with the default token do not start CI, so the release pull request would have no checks.
 
 The `version` in `pyproject.toml` is the version the API reports in its OpenAPI document (`info.version`, shown at `/docs` and `/openapi.json`). The build installs with `uv sync --locked`, so `pyproject.toml` and `uv.lock` must always agree; release-please updates both. On your machine `uv run` and `uv sync` reinstall the project after a release, so restart the server to see the new version.
+
+Setting up production (once): production is the Fly.io app `niscala-api`, configured in `fly.prod.toml` (region `sin`, one machine always running, the same release command that runs `alembic upgrade head`).
+
+1. Create the app and its database: `fly apps create niscala-api`, plus a separate Postgres database for production (its own Supabase project, not the development one).
+2. Set the secrets the development app has (see "Configuration"): at least `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY` and `JOBS_SECRET`, then the ones for the features in use (`GEMINI_API_KEY`, `FIREBASE_CREDENTIALS`, `GOOGLE_CLIENT_IDS`, the `R2_*` storage settings, the `GOOGLE_PLAY_*` settings). Use new values, never the development ones, e.g. `fly secrets set JWT_SECRET=... -a niscala-api`.
+3. Set `INVITATION_BASE_URL` to the production API host and `ANDROID_CERT_SHA256` to the fingerprints of the release signing key, so that links open in the app.
+4. Point a domain at the app, and call `POST /internal/jobs/daily` every day at 07:00 Asia/Jakarta with the `JOBS_SECRET` bearer token (an external scheduler).
+5. Add the `FLY_PROD_API_TOKEN` GitHub secret. The next release deploys it.
 
 To redeploy a tag, run the `CD` workflow from the Actions tab and give the tag (for example `v0.7.0`). To deploy from your machine instead:
 
