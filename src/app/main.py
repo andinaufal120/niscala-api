@@ -16,6 +16,7 @@ from app.routers import (
     health,
     invitations,
     jobs,
+    links,
     managers,
     me,
     notifications,
@@ -50,6 +51,7 @@ app.include_router(auth.router)
 app.include_router(invitations.router)
 app.include_router(jobs.router)
 app.include_router(google_play.router)
+app.include_router(links.router)
 app.include_router(account.router, dependencies=session)
 app.include_router(sessions.router, dependencies=session)
 app.include_router(reauthentication.router, dependencies=session)

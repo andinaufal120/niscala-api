@@ -160,7 +160,8 @@ Settings are read from environment variables, or from a `.env` file in the proje
 | `INVITATION_ENCRYPTION_KEY` | none (required) | Fernet key that encrypts invitation tokens; make one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Gemini model used for AI features |
 | `GEMINI_API_KEY` | none | Gemini API key |
-| `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation links |
+| `INVITATION_BASE_URL` | `https://niscala.app` | Base of the invitation, password-reset and email-change links. Its host must be the API host (or forward to it) so that Android opens the links in the app |
+| `ANDROID_CERT_SHA256` | none | Comma-separated SHA-256 fingerprints of the app's signing certificates, each as 32 hex bytes separated by colons; with `GOOGLE_PLAY_PACKAGE_NAME` it makes `/.well-known/assetlinks.json` answer, otherwise that path answers 404 |
 | `FIREBASE_CREDENTIALS` | none | Content of a Firebase service account JSON file, on one line; enables push through FCM |
 | `GOOGLE_CLIENT_IDS` | none | Comma-separated OAuth client IDs accepted as the audience of Google ID tokens; without it Google sign-in is refused |
 | `JOBS_SECRET` | none | Bearer secret for `POST /internal/jobs/daily`; without it (or blank) that endpoint answers 404 |
