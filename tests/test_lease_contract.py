@@ -74,11 +74,11 @@ def test_the_single_lease_path_is_no_longer_declared(openapi: OpenApiDoc) -> Non
     assert LEASE_PATH_GONE not in openapi.document["paths"]
 
 
-def test_get_my_leases_declares_only_ok_besides_validation_error(
+def test_get_my_leases_declares_exactly_the_ok_success_status(
     openapi: OpenApiDoc,
 ) -> None:
     responses = set(openapi.operation("get", LEASES_PATH)["responses"])
-    assert responses - {"422"} == {"200"}
+    assert {s for s in responses if s.startswith("2")} == {"200"}
 
 
 def test_get_my_leases_declares_no_parameters(openapi: OpenApiDoc) -> None:

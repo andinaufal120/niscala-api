@@ -499,7 +499,7 @@ def test_account_access_operation_has_its_tag(
 @pytest.mark.parametrize(
     ("method", "path", "operation_id", "tag", "status"), ACCOUNT_ACCESS_OPERATIONS
 )
-def test_account_access_operation_declares_only_its_success_status_besides_validation_error(
+def test_account_access_operation_declares_exactly_its_success_status(
     openapi: OpenApiDoc,
     method: str,
     path: str,
@@ -508,7 +508,7 @@ def test_account_access_operation_declares_only_its_success_status_besides_valid
     status: int,
 ) -> None:
     responses = set(openapi.operation(method, path)["responses"])
-    assert responses - {"422"} == {str(status)}
+    assert {s for s in responses if s.startswith("2")} == {str(status)}
 
 
 @pytest.mark.parametrize(

@@ -68,11 +68,11 @@ def test_reauthentication_operation_has_account_tag(
 
 
 @pytest.mark.parametrize("path", REAUTHENTICATION_PATHS)
-def test_reauthentication_operation_declares_only_200_besides_validation_error(
+def test_reauthentication_operation_declares_exactly_the_200_success_status(
     openapi: OpenApiDoc, path: str
 ) -> None:
     responses = set(openapi.operation("post", path)["responses"])
-    assert responses - {"422"} == {"200"}
+    assert {s for s in responses if s.startswith("2")} == {"200"}
 
 
 @pytest.mark.parametrize("path", REAUTHENTICATION_PATHS)

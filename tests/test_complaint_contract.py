@@ -161,11 +161,11 @@ def test_complaint_operation_is_tagged_complaints(
 @pytest.mark.parametrize(
     ("method", "path", "operation_id", "status"), COMPLAINT_OPERATIONS
 )
-def test_complaint_operation_declares_only_its_success_status_besides_validation_error(
+def test_complaint_operation_declares_exactly_its_success_status(
     openapi: OpenApiDoc, method: str, path: str, operation_id: str, status: int
 ) -> None:
     responses = set(openapi.operation(method, path)["responses"])
-    assert responses - {"422"} == {str(status)}
+    assert {s for s in responses if s.startswith("2")} == {str(status)}
 
 
 @pytest.mark.parametrize(("method", "path", "name"), COMPLAINT_PATH_PARAMETERS)

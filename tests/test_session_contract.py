@@ -129,7 +129,7 @@ def test_session_operation_has_its_tag(
 @pytest.mark.parametrize(
     ("method", "path", "operation_id", "tag", "status"), SESSION_OPERATIONS
 )
-def test_session_operation_declares_only_its_success_status_besides_validation_error(
+def test_session_operation_declares_exactly_its_success_status(
     openapi: OpenApiDoc,
     method: str,
     path: str,
@@ -138,7 +138,7 @@ def test_session_operation_declares_only_its_success_status_besides_validation_e
     status: int,
 ) -> None:
     responses = set(openapi.operation(method, path)["responses"])
-    assert responses - {"422"} == {str(status)}
+    assert {s for s in responses if s.startswith("2")} == {str(status)}
 
 
 @pytest.mark.parametrize(

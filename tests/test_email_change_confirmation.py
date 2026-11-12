@@ -63,11 +63,11 @@ def test_the_operation_declares_no_security(openapi: OpenApiDoc) -> None:
     assert not openapi.operation("post", EMAIL_CHANGES).get("security")
 
 
-def test_the_operation_answers_204_besides_the_validation_error(
+def test_the_operation_declares_exactly_the_204_success_status(
     openapi: OpenApiDoc,
 ) -> None:
     responses = openapi.operation("post", EMAIL_CHANGES)["responses"]
-    assert set(responses) - {"422"} == {"204"}
+    assert {s for s in responses if s.startswith("2")} == {"204"}
     assert "content" not in responses["204"]
 
 

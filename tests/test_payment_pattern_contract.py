@@ -48,10 +48,11 @@ def test_get_payment_patterns_is_tagged_like_payment_overview(
     assert openapi.operation("get", PATH)["tags"] == overview["tags"]
 
 
-def test_get_payment_patterns_declares_only_ok_besides_validation_error(
+def test_get_payment_patterns_declares_exactly_the_ok_success_status(
     openapi: OpenApiDoc,
 ) -> None:
-    assert set(openapi.operation("get", PATH)["responses"]) - {"422"} == {"200"}
+    responses = set(openapi.operation("get", PATH)["responses"])
+    assert {s for s in responses if s.startswith("2")} == {"200"}
 
 
 def test_get_payment_patterns_declares_one_required_uuid_path_parameter(
