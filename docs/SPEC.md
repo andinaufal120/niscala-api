@@ -156,7 +156,7 @@ The allowed transitions are listed with the use case that causes them in §8.
 These apply to every use case below. Use cases do not repeat them.
 
 1. **Session:** every endpoint except `GET /health` and the endpoints marked *public* in §9 requires a valid session, sent as an access token (§7). A missing, expired, revoked or invalid access token gets an authentication error with the code `ACCESS_TOKEN_INVALID`, which the app can tell apart from other errors and answers by refreshing the token.
-2. **Errors** carry a stable error code, the field it belongs to (for validation errors), and an English message for developers and logs. The app shows Indonesian text mapped from the code, so validation errors can be shown next to their field. Every error response is one JSON object `{"code": string, "field": string or null, "message": string}`. `field` is the camelCase path of the offending request field (`bankAccount.accountNumber`, `facilities.0`) and is null when the error is not about one field. A request with several invalid fields reports the first one. A request that fails validation answers `422` with code `VALIDATION_FAILED`; any error not raised by a use case takes its HTTP status phrase as code (`NOT_FOUND`, `METHOD_NOT_ALLOWED`, `NOT_IMPLEMENTED`); an unexpected failure answers `500` with `INTERNAL_ERROR`. Use-case codes are listed with their use case. The codes are part of the OpenAPI document (declaring them there: U-9).
+2. **Errors** carry a stable error code, the field it belongs to (for validation errors), and an English message for developers and logs. The app shows Indonesian text mapped from the code, so validation errors can be shown next to their field. Every error response is one JSON object `{"code": string, "field": string or null, "message": string}`. `field` is the camelCase path of the offending request field (`bankAccount.accountNumber`, `facilities.0`) and is null when the error is not about one field. A request with several invalid fields reports the first one. A request that fails validation answers `422` with code `VALIDATION_FAILED`; any error not raised by a use case takes its HTTP status phrase as code (`NOT_FOUND`, `METHOD_NOT_ALLOWED`, `NOT_IMPLEMENTED`); an unexpected failure answers `500` with `INTERNAL_ERROR`. Use-case codes are listed with their use case, and all of them in *Error codes* below. The OpenAPI document declares the codes of every operation (§9).
 3. **Conflict:** a write based on data another user has changed since it was read is rejected with a conflict error and not applied (detection: U-15).
 4. **Failure is atomic:** a request that fails saves nothing, so the user can retry. The only partial outcomes are the ones a use case states (an invitation, a notification or an AI call failing after the main save).
 5. **Empty lists** are a successful response with no items, not an error.
@@ -165,6 +165,113 @@ These apply to every use case below. Use cases do not repeat them.
 8. **Soft delete** keeps history. Soft-deleted records are hidden from normal lists but kept for the history the use cases name.
 9. **Transport:** HTTPS only (NFR-08).
 10. **Plan limits:** the Owner's plan sets the maximum number of properties and the maximum number of rooms per property (§8.3, UC-31). Adding past a limit is rejected with an error code (UC-10, UC-14). After a downgrade takes effect, the properties and rooms the Owner did not keep are **view-only**: their data, leases and tenants cannot be changed (error codes `PROPERTY_READ_ONLY`, `ROOM_READ_ONLY`), but bills are still generated and payments and complaints are still processed. Responses carry `editable` on properties and rooms so the app does not compute this.
+
+### Error codes
+
+Every code the API returns, by HTTP status and then by code. A released code MUST NOT be renamed, removed or change meaning. *Field* is the request field of a field error; a dash means the error is about no field. The app shows its own Indonesian text for each code, and the Tenant, management and Admin flows of §8 say when each one applies.
+
+| Code | Status | Field | Meaning |
+|------|--------|-------|---------|
+| `ACCESS_TOKEN_INVALID` | 401 | - | The access token is missing, malformed, expired or revoked (rule 1). |
+| `GOOGLE_TOKEN_INVALID` | 401 | the Google token field | The Google ID token failed verification (signature, audience or expiry). |
+| `INVALID_CREDENTIALS` | 401 | - | Wrong email or password, an unknown or deleted account, or an unknown Google identity. |
+| `REFRESH_TOKEN_INVALID` | 401 | - | The refresh token is unknown, expired, already used, or its session has ended. |
+| `UNAUTHORIZED` | 401 | - | Internal endpoints only: the bearer secret or token is missing or wrong. |
+| `ACCOUNT_INACTIVE` | 403 | - | The account is *Nonaktif (Inactive)*. |
+| `EMAIL_NOT_VERIFIED` | 403 | - | The account's email is not verified yet (§7). |
+| `FORBIDDEN` | 403 | - | The caller's role may not use the endpoint. |
+| `NO_ACTIVE_LEASE` | 403 | - | A Tenant without an active lease submitted a complaint. |
+| `PASSWORD_LOGIN_REQUIRED` | 403 | - | The current session did not start with a password login. |
+| `PROPERTY_LIMIT_REACHED` | 403 | - | The Owner's plan allows no more properties. |
+| `PROPERTY_READ_ONLY` | 403 | - | The property is view-only (rule 10). |
+| `REAUTHENTICATION_REQUIRED` | 403 | - | The session has no recent re-authentication (§7). |
+| `ROOM_LIMIT_REACHED` | 403 | - | The Owner's plan allows no more rooms in the property. |
+| `ROOM_READ_ONLY` | 403 | - | The room is view-only (rule 10). |
+| `COMPLAINT_NOT_FOUND` | 404 | - | The complaint does not exist or the caller cannot see it. |
+| `EMAIL_CHANGE_NOT_FOUND` | 404 | - | The email-change link is unknown. |
+| `INVITATION_NOT_FOUND` | 404 | - | The invitation link is unknown, or its Tenant was deleted. |
+| `MANAGER_NOT_FOUND` | 404 | - | The Manager does not exist, was deleted or belongs to another Owner. |
+| `NOTIFICATION_NOT_FOUND` | 404 | - | The notification does not exist or belongs to another user. |
+| `NOT_FOUND` | 404 | - | No such path, or an internal endpoint that is switched off. |
+| `PASSWORD_RESET_NOT_FOUND` | 404 | - | The password-reset link is unknown. |
+| `PHOTO_NOT_FOUND` | 404 | - | The complaint has no photo. |
+| `PROPERTY_NOT_FOUND` | 404 | `propertyId` or `propertyIds.<index>` when sent in the body | The property does not exist, was deleted or the caller cannot access it. |
+| `RECEIPT_NOT_FOUND` | 404 | - | The rent bill has no receipt. |
+| `RENT_BILL_NOT_FOUND` | 404 | - | The rent bill does not exist or the caller cannot see it. |
+| `ROOM_NOT_FOUND` | 404 | `roomId` when sent in the body | The room does not exist, was deleted or the caller cannot access it. |
+| `SESSION_NOT_FOUND` | 404 | - | The session does not exist, has ended or belongs to another user. |
+| `SUBSCRIPTION_ORDER_NOT_FOUND` | 404 | - | The order does not exist or belongs to another Owner. |
+| `TENANT_NOT_FOUND` | 404 | - | The Tenant does not exist, was deleted or the caller cannot access it. |
+| `USER_ACCOUNT_NOT_FOUND` | 404 | - | The account does not exist or has not been activated. |
+| `CANNOT_MODIFY_OWN_ACCOUNT` | 409 | - | An Admin tried to deactivate or delete their own account. |
+| `COMPLAINT_NOT_NEW` | 409 | - | The complaint is no longer *Baru (New)*, so its photo cannot change. |
+| `COMPLAINT_STATUS_NOT_NEXT` | 409 | `status` | The target is not the complaint's next status, or the complaint is already *Selesai (Done)*. |
+| `EMAIL_ALREADY_REGISTERED` | 409 | `email` | The email belongs to another account. |
+| `EMAIL_ALREADY_VERIFIED` | 409 | - | Verification was asked for an account whose email is already verified. |
+| `EMAIL_CHANGE_EXPIRED` | 409 | - | The email-change link has expired. |
+| `EMAIL_CHANGE_USED` | 409 | - | The email-change link was already used. |
+| `GOOGLE_ACCOUNT_ALREADY_REGISTERED` | 409 | - | The Google identity is already linked to an account. |
+| `GOOGLE_ALREADY_LINKED` | 409 | - | The account already has a linked Google identity. |
+| `GOOGLE_NOT_LINKED` | 409 | - | The account has no linked Google identity. |
+| `INVITATION_EXPIRED` | 409 | - | The invitation link has expired. |
+| `INVITATION_ROLE_MISMATCH` | 409 | - | The caller's account cannot accept this kind of invitation. |
+| `INVITATION_USED` | 409 | - | The invitation link was already used or replaced by a newer one. |
+| `MANAGER_ALREADY_ACTIVE` | 409 | - | The Manager has activated their account, so there is no invitation link to regenerate. |
+| `MANAGER_ALREADY_ADDED` | 409 | - | The Manager already works for the inviting Owner. |
+| `OWNER_HAS_ACTIVE_LEASE` | 409 | - | The Owner has a property with an active lease. |
+| `PASSWORD_ALREADY_SET` | 409 | - | The account already has a local password. |
+| `PASSWORD_NOT_SET` | 409 | - | The account has no local password. |
+| `PASSWORD_RESET_EXPIRED` | 409 | - | The password-reset link has expired. |
+| `PASSWORD_RESET_USED` | 409 | - | The password-reset link was already used. |
+| `PROPERTY_BANK_ACCOUNT_MISSING` | 409 | - | The property has no bank account for rent transfers. |
+| `PROPERTY_HAS_ACTIVE_LEASE` | 409 | - | A room of the property has an active lease. |
+| `PROPERTY_NAME_TAKEN` | 409 | `name` | The Owner already has a property with this name. |
+| `PURCHASE_TOKEN_IN_USE` | 409 | - | The purchase token is held by another Owner. |
+| `RENT_BILL_NOT_AWAITING_VERIFICATION` | 409 | - | The rent bill is not *Menunggu Verifikasi (Awaiting Verification)*. |
+| `RENT_BILL_NOT_PAYABLE` | 409 | - | The rent bill is not *Belum Bayar (Unpaid)* or *Ditolak (Rejected)*. |
+| `RENT_BILL_NOT_UPLOADABLE` | 409 | - | A receipt cannot be uploaded for the rent bill in its current status. |
+| `ROOM_HAS_ACTIVE_LEASE` | 409 | - | The room has an active lease. |
+| `ROOM_NOT_VACANT` | 409 | `roomId` | The room already has a Tenant. |
+| `ROOM_NUMBER_TAKEN` | 409 | `number` | The property already has a room with this number. |
+| `SESSION_IS_CURRENT` | 409 | - | The session to end is the caller's own. |
+| `SUBSCRIPTION_NOT_AN_UPGRADE` | 409 | - | The ordered plan is not higher than the current one. |
+| `SUBSCRIPTION_ORDER_CLOSED` | 409 | - | The order failed or expired. |
+| `TENANT_ALREADY_ACTIVE` | 409 | - | The Tenant has activated their account, so there is no invitation link to regenerate. |
+| `TENANT_HAS_ACTIVE_LEASE` | 409 | - | The Tenant has an active lease. |
+| `USER_ACCOUNT_DELETED` | 409 | - | The account is *Dihapus (Deleted)* and cannot be changed. |
+| `COMPLAINT_CATEGORY_INVALID` | 422 | `category` | The category is not one of the complaint categories. |
+| `CURRENT_PASSWORD_INCORRECT` | 422 | `currentPassword` | The current password is wrong. |
+| `GOOGLE_ACCOUNT_MISMATCH` | 422 | the Google token field | The Google token belongs to another identity than the one linked to the account. |
+| `GOOGLE_EMAIL_UNVERIFIED` | 422 | `idToken` | The Google account's email is not verified. |
+| `KEPT_PROPERTIES_INVALID` | 422 | `keptPropertyIds` | The confirmed properties are not valid for the target plan. |
+| `KEPT_ROOMS_INVALID` | 422 | `keptRoomIds` | The confirmed rooms are not valid for the target plan. |
+| `MANAGER_NAME_NOT_EDITABLE` | 422 | `name` | The name of an *Aktif (Active)* Manager cannot be changed. |
+| `NOTIFICATION_CATEGORIES_INVALID` | 422 | `items` | The settings do not hold exactly the categories of the caller's role. |
+| `PASSWORD_INCORRECT` | 422 | `password` | The password is wrong. |
+| `PASSWORD_TOO_COMMON` | 422 | the password field | The password breaks a password rule (§7). |
+| `PASSWORD_UNCHANGED` | 422 | `newPassword` | The new password equals the current one. |
+| `PHOTO_TOO_LARGE` | 422 | `file` | The photo is larger than 5 MB. |
+| `PHOTO_TYPE_INVALID` | 422 | `file` | The photo is not a JPG or PNG image. |
+| `PURCHASE_PRODUCT_MISMATCH` | 422 | `purchaseToken` | The purchased product or base plan differs from the order. |
+| `PURCHASE_TOKEN_INVALID` | 422 | `purchaseToken` | Google does not know the purchase token, or it was bought for another account. |
+| `REASON_REQUIRED` | 422 | `reason` | A reason is required and was empty. |
+| `RECEIPT_TOO_LARGE` | 422 | `file` | The receipt is larger than 5 MB. |
+| `RECEIPT_TYPE_INVALID` | 422 | `file` | The receipt is not a JPG or PNG image. |
+| `RECEIVED_ON_IN_FUTURE` | 422 | `receivedOn` | The payment date is after today in Asia/Jakarta. |
+| `STATUS_UNCHANGED` | 422 | `status` | The target status equals the current one. |
+| `SUBSCRIPTION_NOT_A_DOWNGRADE` | 422 | `planCode` | The target plan is not lower than the current one. |
+| `TENANT_NAME_NOT_EDITABLE` | 422 | `name` | The name of an *Aktif (Active)* Tenant cannot be changed. |
+| `VALIDATION_FAILED` | 422 | the first invalid field | The request failed validation (rule 2). |
+| `VERIFICATION_CODE_EXPIRED` | 422 | `code` | There is no code, it expired, or 5 wrong attempts voided it. |
+| `VERIFICATION_CODE_INVALID` | 422 | `code` | The code is wrong. |
+| `TOO_MANY_ATTEMPTS` | 429 | - | Too many failed password changes in a row; sent with `Retry-After`. |
+| `TOO_MANY_LOGIN_ATTEMPTS` | 429 | - | The email is locked after repeated failed logins; sent with `Retry-After`. |
+| `VERIFICATION_CODE_TOO_SOON` | 429 | - | A new code was requested within 60 seconds of the last one; sent with `Retry-After`. |
+| `INTERNAL_ERROR` | 500 | - | An unexpected failure, or a stored receipt or photo that cannot be read. |
+| `JOBS_FAILED` | 500 | - | Internal endpoints only: at least one daily job failed. |
+| `GOOGLE_PLAY_UNREACHABLE` | 503 | - | Google Play could not be reached, or acknowledging the purchase failed; nothing was saved. |
+
+**In the OpenAPI document** every operation declares the error statuses it can return, each with the error object of rule 2 as its body (including `422`, which is `VALIDATION_FAILED` and the field errors of its use case, not the framework's default validation body), and an `x-error-codes` extension that lists the codes it can answer, sorted by status and then by code. The authentication, role and request-validation errors an operation can answer are included. Errors that reach no endpoint, such as an unknown path, take their HTTP status phrase as code (`NOT_FOUND`, `METHOD_NOT_ALLOWED`) and are not declared per operation. `NOT_FOUND`, `UNAUTHORIZED` and `JOBS_FAILED` also serve the internal endpoints, which are not in the OpenAPI document.
 
 ## 7. Account access
 
@@ -498,7 +605,7 @@ Conventions:
 - Role values are the lower-case code names: `tenant`, `owner`, `manager`, `admin`.
 - A query parameter that filters a list is optional; omitting it means no filter.
 - Authentication: an HTTP bearer scheme named `bearerAuth` (JWT access token) is declared on every operation except `GET /health` and the endpoints marked *public* below.
-- Error responses have the shape in §6 rule 2. They are not declared in the OpenAPI document yet (U-9).
+- Error responses have the shape in §6 rule 2. Every operation declares the error statuses it can return and lists its codes in the `x-error-codes` extension (§6, *Error codes*).
 
 Endpoints:
 
@@ -617,7 +724,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | ID    | Item                                                                                                                             | Affects                   |
 |-------|----------------------------------------------------------------------------------------------------------------------------------|---------------------------|
 | U-4   | Invitation and password-reset link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01, NFR-11 |
-| U-9   | The complete list of error codes, and declaring error responses in the OpenAPI document. (The response shape is decided, §6 rule 2.) | §6, §7, all endpoints |
 | U-15  | How conflicting writes are detected.                                                                                             | §6                        |
 
 ## 11. Changelog
@@ -693,3 +799,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 11-11-2026 | TBD-3 decided and UC-32 specified: purchase verification with its check order and error codes, real-time developer notifications through Cloud Pub/Sub with an OIDC-authenticated internal endpoint, a daily re-check of subscriptions near their end, and a pending order that keeps its token no longer expiring by time. Removed from §10. | NKMA-78 |
 | 11-11-2026 | U-16 decided: the complaint categories are *Listrik*, *Air*, *Bangunan*, *Perabot*, *Kebersihan*, *Keamanan*, *Internet* and *Lainnya*, as served by `GET /complaint-categories`. Removed from §10. | NKMA-114 |
 | 11-11-2026 | U-6 decided: the daily job creates the bill of the period containing today, at the lease rent and without proration, with no bills for earlier periods; each new bill creates a `billIssued` notification. Removed from §10. | NKMA-115 |
+| 12-11-2026 | U-9 decided: the complete list of error codes is in §6 (*Error codes*); every operation declares its error statuses with the error object as body, and an `x-error-codes` extension with its codes, in the OpenAPI document. Removed from §10. | NKMA-116 |
