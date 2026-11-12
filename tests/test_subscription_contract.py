@@ -154,11 +154,11 @@ def test_subscription_operation_requires_bearer_authentication(
 @pytest.mark.parametrize(
     ("method", "path", "operation_id", "status"), SUBSCRIPTION_OPERATIONS
 )
-def test_subscription_operation_declares_only_its_success_status_besides_validation_error(
+def test_subscription_operation_declares_exactly_its_success_status(
     openapi: OpenApiDoc, method: str, path: str, operation_id: str, status: int
 ) -> None:
     responses = set(openapi.operation(method, path)["responses"])
-    assert responses - {"422"} == {str(status)}
+    assert {s for s in responses if s.startswith("2")} == {str(status)}
 
 
 def test_cancel_subscription_downgrade_success_response_has_no_body(

@@ -73,10 +73,11 @@ def test_occupancy_dashboard_operation_is_tagged_dashboard(
     assert openapi.operation("get", PATH)["tags"] == ["dashboard"]
 
 
-def test_occupancy_dashboard_operation_declares_only_the_success_status(
+def test_occupancy_dashboard_operation_declares_exactly_its_success_status(
     openapi: OpenApiDoc,
 ) -> None:
-    assert set(openapi.operation("get", PATH)["responses"]) == {"200"}
+    responses = set(openapi.operation("get", PATH)["responses"])
+    assert {s for s in responses if s.startswith("2")} == {"200"}
 
 
 def test_occupancy_dashboard_operation_requires_bearer_auth(

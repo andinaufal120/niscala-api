@@ -6,6 +6,7 @@ from importlib.metadata import version
 from fastapi import Depends, FastAPI
 
 from app.errors import register_error_handlers
+from app.openapi import install_openapi
 from app.routers import (
     account,
     auth,
@@ -66,3 +67,4 @@ app.include_router(notifications.me_router, dependencies=session)
 app.include_router(user_accounts.router, dependencies=session)
 app.include_router(subscriptions.router, dependencies=session)
 app.include_router(subscriptions.plans_router, dependencies=session)
+install_openapi(app)

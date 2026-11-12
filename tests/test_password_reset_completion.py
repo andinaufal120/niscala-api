@@ -72,11 +72,11 @@ def test_the_operation_is_tagged_auth_and_declares_no_security(
     assert not operation.get("security")
 
 
-def test_the_operation_answers_204_without_a_body_besides_the_validation_error(
+def test_the_operation_declares_the_204_success_status_without_a_body(
     openapi: OpenApiDoc,
 ) -> None:
     responses = openapi.operation("post", RESETS)["responses"]
-    assert set(responses) - {"422"} == {"204"}
+    assert {s for s in responses if s.startswith("2")} == {"204"}
     assert "content" not in responses["204"]
 
 

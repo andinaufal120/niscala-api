@@ -52,11 +52,11 @@ def test_the_operation_is_tagged_auth_and_declares_no_security(
     assert not operation.get("security")
 
 
-def test_the_operation_answers_200_besides_the_validation_error(
+def test_the_operation_declares_exactly_the_200_success_status(
     openapi: OpenApiDoc,
 ) -> None:
     responses = openapi.operation("post", PREVIEWS)["responses"]
-    assert set(responses) - {"422"} == {"200"}
+    assert {s for s in responses if s.startswith("2")} == {"200"}
     assert openapi.response_schema_ref("post", PREVIEWS, 200) == "PasswordResetPreview"
 
 

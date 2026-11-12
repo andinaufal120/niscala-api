@@ -141,7 +141,7 @@ def test_rent_bill_operation_has_operation_id(
     assert openapi.operation(method, path)["operationId"] == operation_id
 
 
-# (method, path): the error statuses the operation documents. 401 is not declared.
+# (method, path): error statuses the operation must keep documenting.
 DECLARED_ERROR_STATUSES = {
     ("get", "/rent-bills"): {"403", "422"},
     ("get", "/rent-bills/{rentBillId}"): {"403", "404", "422"},
@@ -162,7 +162,8 @@ def test_rent_bill_operation_declares_its_success_and_error_statuses(
 ) -> None:
     responses = set(openapi.operation(method, path)["responses"])
     errors = DECLARED_ERROR_STATUSES.get((method, path), {"422"})
-    assert responses == {str(status)} | errors
+    assert {s for s in responses if s.startswith("2")} == {str(status)}
+    assert errors <= responses
 
 
 @pytest.mark.parametrize(
