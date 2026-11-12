@@ -27,6 +27,7 @@ class Manager(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("user_accounts.id"))
     nickname: Mapped[str | None]
     phone: Mapped[str]
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

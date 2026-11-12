@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Response, status
 
-from app.access import require_roles
+from app.access import IfMatch, require_roles
 from app.db import SessionDep
 from app.schemas.auth import UserRole
 from app.schemas.rooms import Room, RoomInput
@@ -29,10 +29,14 @@ def get_room(room_id: RoomId, caller: OwnerOrManager, db: Db) -> Room:
 
 @router.put("/{roomId}")
 def update_room(
-    room_id: RoomId, body: RoomInput, caller: OwnerOrManager, db: Db
+    room_id: RoomId,
+    body: RoomInput,
+    caller: OwnerOrManager,
+    db: Db,
+    if_match: IfMatch,
 ) -> Room:
     """Replace a room's fields."""
-    return rooms.update_room(db, caller.user, room_id, body)
+    return rooms.update_room(db, caller.user, room_id, body, if_match)
 
 
 @router.delete(

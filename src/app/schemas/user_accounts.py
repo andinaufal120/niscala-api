@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import EmailStr, Field
 
 from app.schemas.auth import PersonName, UserRole
-from app.schemas.base import ApiModel
+from app.schemas.base import VERSION_DESCRIPTION, ApiModel
 from app.schemas.sessions import LoginMethod
 
 
@@ -41,6 +41,7 @@ class UserAccountSummary(ApiModel):
     """An account as listed to an Admin."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     name: str
     email: str
     role: UserRole
@@ -72,6 +73,7 @@ class UserAccount(ApiModel):
     """An account with its login details and what it is linked to."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     name: str
     email: str = Field(description="The email the account logs in with.")
     pending_email: str | None = Field(

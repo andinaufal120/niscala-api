@@ -27,6 +27,7 @@ class Property(Base):
     bank_name: Mapped[str | None]
     bank_account_number: Mapped[str | None]
     bank_account_holder_name: Mapped[str | None]
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

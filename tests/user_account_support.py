@@ -23,7 +23,7 @@ PASSWORD = "T7#vq9-lorem-ipsum"
 DEVICE = {"name": "Pixel 8", "platform": "Android 14"}
 CHANGE_LIFETIME = timedelta(days=7)
 
-SUMMARY_FIELDS = {"id", "name", "email", "role", "status"}
+SUMMARY_FIELDS = {"id", "name", "email", "role", "status", "version"}
 ACCOUNT_FIELDS = {
     "id",
     "name",
@@ -38,6 +38,7 @@ ACCOUNT_FIELDS = {
     "properties",
     "activeLeaseCount",
     "tenancies",
+    "version",
 }
 TENANCY_FIELDS = {"propertyName", "roomNumber", "leaseEndDate"}
 PROPERTY_REF_FIELDS = {"id", "name"}

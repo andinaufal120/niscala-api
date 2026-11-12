@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from app.access import accessible_properties, get_accessible_property
+from app.access import accessible_properties, bump_version, get_accessible_property
 from app.errors import ApiError
 from app.models import Lease, ManagerAssignment, Property, Room, UserAccount
 from app.schemas.properties import (
@@ -85,6 +85,7 @@ def _detail(
 ) -> PropertyDetail:
     return PropertyDetail(
         id=row.id,
+        version=row.version,
         name=row.name,
         address=row.address,
         bank_account=_bank_account(row),
@@ -162,6 +163,7 @@ def list_properties(db: Session, user: UserAccount) -> list[PropertySummary]:
     return [
         PropertySummary(
             id=row.id,
+            version=row.version,
             name=row.name,
             address=row.address,
             room_count=room_counts.get(row.id, 0),
@@ -184,17 +186,20 @@ def update_property(
     property_id: UUID,
     data: PropertyInput,
     reauthenticated: bool,
+    expected_version: int | None = None,
 ) -> PropertyDetail:
-    """Replace a property's name, address and bank account.
+    """Replace a property's name, address and bank account, raising its version.
 
     Checks in order: access (404 PROPERTY_NOT_FOUND), view-only (403
-    PROPERTY_READ_ONLY), a changed bank account without `reauthenticated`
-    (403 REAUTHENTICATION_REQUIRED), a name used by another live property of
-    the owner (409 PROPERTY_NAME_TAKEN).
+    PROPERTY_READ_ONLY), `expected_version` not the current one (409
+    RESOURCE_VERSION_CONFLICT), a changed bank account without
+    `reauthenticated` (403 REAUTHENTICATION_REQUIRED), a name used by another
+    live property of the owner (409 PROPERTY_NAME_TAKEN).
     """
-    row = get_accessible_property(db, owner, property_id)
+    row = get_accessible_property(db, owner, property_id, lock=True)
     if row.view_only:
         raise ApiError(403, "PROPERTY_READ_ONLY")
+    bump_version(row, expected_version)
     if data.bank_account != _bank_account(row) and not reauthenticated:
         raise ApiError(403, "REAUTHENTICATION_REQUIRED")
     _ensure_name_free(db, owner.id, data.name, excluding=row.id)

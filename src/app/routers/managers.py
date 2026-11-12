@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
-from app.access import require_roles
+from app.access import IfMatch, require_roles
 from app.db import SessionDep
 from app.schemas.auth import UserRole
 from app.schemas.managers import (
@@ -48,10 +48,14 @@ def get_manager(manager_id: ManagerId, caller: Owner, db: Db) -> Manager:
 
 @router.put("/{managerId}")
 def update_manager(
-    manager_id: ManagerId, body: ManagerInput, caller: Owner, db: Db
+    manager_id: ManagerId,
+    body: ManagerInput,
+    caller: Owner,
+    db: Db,
+    if_match: IfMatch,
 ) -> Manager:
     """Replace a manager's fields; access to removed properties is revoked."""
-    return managers.update_manager(db, caller.user, manager_id, body)
+    return managers.update_manager(db, caller.user, manager_id, body, if_match)
 
 
 @router.delete(

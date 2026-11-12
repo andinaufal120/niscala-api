@@ -84,6 +84,7 @@ ERROR_STATUS: dict[str, int] = {
     "PROPERTY_HAS_ACTIVE_LEASE": 409,
     "PROPERTY_NAME_TAKEN": 409,
     "PURCHASE_TOKEN_IN_USE": 409,
+    "RESOURCE_VERSION_CONFLICT": 409,
     "RENT_BILL_NOT_AWAITING_VERIFICATION": 409,
     "RENT_BILL_NOT_PAYABLE": 409,
     "RENT_BILL_NOT_UPLOADABLE": 409,
@@ -231,7 +232,12 @@ ROUTE_ERRORS: dict[tuple[str, str], tuple[str, ...]] = {
     ("DELETE", "/managers/{managerId}"): MANAGER_SCOPED + INVALID,
     ("GET", "/managers/{managerId}"): MANAGER_SCOPED + INVALID,
     ("PUT", "/managers/{managerId}"): MANAGER_SCOPED
-    + ("PROPERTY_NOT_FOUND", "MANAGER_NAME_NOT_EDITABLE", *INVALID),
+    + (
+        "PROPERTY_NOT_FOUND",
+        "RESOURCE_VERSION_CONFLICT",
+        "MANAGER_NAME_NOT_EDITABLE",
+        *INVALID,
+    ),
     ("POST", "/managers/{managerId}/invitation"): MANAGER_SCOPED
     + ("MANAGER_ALREADY_ACTIVE", *INVALID),
     ("GET", "/me"): ("ACCESS_TOKEN_INVALID",),
@@ -300,6 +306,7 @@ ROUTE_ERRORS: dict[tuple[str, str], tuple[str, ...]] = {
         "PROPERTY_READ_ONLY",
         "REAUTHENTICATION_REQUIRED",
         "PROPERTY_NOT_FOUND",
+        "RESOURCE_VERSION_CONFLICT",
         "PROPERTY_NAME_TAKEN",
         *INVALID,
     ),
@@ -341,7 +348,13 @@ ROUTE_ERRORS: dict[tuple[str, str], tuple[str, ...]] = {
     + ("ROOM_NOT_FOUND", "ROOM_HAS_ACTIVE_LEASE", *INVALID),
     ("GET", "/rooms/{roomId}"): STAFF + ("ROOM_NOT_FOUND", *INVALID),
     ("PUT", "/rooms/{roomId}"): STAFF
-    + (*READ_ONLY, "ROOM_NOT_FOUND", "ROOM_NUMBER_TAKEN", *INVALID),
+    + (
+        *READ_ONLY,
+        "ROOM_NOT_FOUND",
+        "RESOURCE_VERSION_CONFLICT",
+        "ROOM_NUMBER_TAKEN",
+        *INVALID,
+    ),
     ("GET", "/subscription"): STAFF,
     ("GET", "/subscription-plans"): STAFF,
     ("POST", "/subscription/orders"): STAFF + ("SUBSCRIPTION_NOT_AN_UPGRADE", *INVALID),
@@ -373,6 +386,7 @@ ROUTE_ERRORS: dict[tuple[str, str], tuple[str, ...]] = {
         *READ_ONLY,
         "PROPERTY_NOT_FOUND",
         "TENANT_NOT_FOUND",
+        "RESOURCE_VERSION_CONFLICT",
         "TENANT_NAME_NOT_EDITABLE",
         *INVALID,
     ),
@@ -392,6 +406,7 @@ ROUTE_ERRORS: dict[tuple[str, str], tuple[str, ...]] = {
     + (
         "CANNOT_MODIFY_OWN_ACCOUNT",
         "EMAIL_ALREADY_REGISTERED",
+        "RESOURCE_VERSION_CONFLICT",
         "USER_ACCOUNT_DELETED",
         *INVALID,
     ),

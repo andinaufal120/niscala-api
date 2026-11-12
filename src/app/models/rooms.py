@@ -34,6 +34,7 @@ class Room(Base):
     width_m: Mapped[Decimal | None] = mapped_column(Numeric(4, 2))
     facilities: Mapped[list[str]] = mapped_column(ARRAY(Text))
     view_only: Mapped[bool]
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

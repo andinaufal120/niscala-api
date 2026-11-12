@@ -27,6 +27,7 @@ ROOM_FIELDS = {
     "facilities",
     "lease",
     "editable",
+    "version",
 }
 SUMMARY_FIELDS = ROOM_FIELDS - {"propertyId"}
 FREE_ROOM_LIMIT = 15
@@ -947,6 +948,7 @@ def test_the_list_shows_rooms_as_summaries(
         "facilities": ["ac", "wifi"],
         "lease": None,
         "editable": True,
+        "version": 1,
     }
 
 
@@ -1269,6 +1271,7 @@ def test_an_owner_reads_a_room(client, database, existing, signed_in, make_room)
         "facilities": ["ac"],
         "lease": None,
         "editable": True,
+        "version": 1,
     }
 
 
@@ -1395,6 +1398,7 @@ def test_an_owner_replaces_a_room(client, database, existing, signed_in, room):
         "facilities": ["kasur"],
         "lease": None,
         "editable": True,
+        "version": 2,
     }
     row = stored_room(database, room.id)
     assert (row.number, row.base_rate) == ("B2", 2000000)

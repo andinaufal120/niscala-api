@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import Field, StringConstraints
 
-from app.schemas.base import ApiModel
+from app.schemas.base import VERSION_DESCRIPTION, ApiModel
 from app.schemas.tenants import PHONE_DESCRIPTION
 
 
@@ -58,6 +58,7 @@ class Manager(ApiModel):
     """A manager with their assigned properties and invitation."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     name: str
     nickname: str | None
     phone: str = Field(description=PHONE_DESCRIPTION)
@@ -75,6 +76,7 @@ class ManagerSummary(ApiModel):
     """A manager as shown in the manager list."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     name: str
     nickname: str | None
     phone: str = Field(description=PHONE_DESCRIPTION)

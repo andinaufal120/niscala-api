@@ -48,6 +48,7 @@ class UserAccount(Base):
         default=EditableAccountStatus.ACTIVE,
         server_default=EditableAccountStatus.ACTIVE.value,
     )
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

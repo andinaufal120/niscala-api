@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from app.access import get_accessible_property
+from app.access import bump_version, get_accessible_property
 from app.errors import ApiError
 from app.models import EmergencyContact as ContactRow
 from app.models import Invitation as InvitationRow
@@ -151,6 +151,7 @@ def _detail(db: Session, found: Found) -> Tenant:
     cycle = BillingCycle(lease.billing_cycle)
     return Tenant(
         id=tenant.id,
+        version=tenant.version,
         name=user.name,
         phone=tenant.phone,
         email=user.email,
@@ -175,16 +176,24 @@ def _detail(db: Session, found: Found) -> Tenant:
     )
 
 
-def _find(db: Session, *conditions) -> list[Found]:
-    """Select live tenants with their active lease and room."""
-    rows = db.execute(
+def _find(db: Session, *conditions, lock: bool = False) -> list[Found]:
+    """Select live tenants with their active lease and room.
+
+    With `lock`, the tenant rows are locked until the transaction ends and read
+    fresh.
+    """
+    query = (
         select(TenantRow, UserAccount, LeaseRow, RoomRow)
         .join(UserAccount, UserAccount.id == TenantRow.user_id)
         .join(LeaseRow, LeaseRow.tenant_id == TenantRow.id)
         .join(RoomRow, RoomRow.id == LeaseRow.room_id)
         .where(TenantRow.deleted_at.is_(None), LeaseRow.ended_at.is_(None), *conditions)
     )
-    return [tuple(row) for row in rows]
+    if lock:
+        query = query.with_for_update(of=TenantRow).execution_options(
+            populate_existing=True
+        )
+    return [tuple(row) for row in db.execute(query)]
 
 
 def get_current_leases(db: Session, user: UserAccount) -> CurrentLeaseList:
@@ -335,6 +344,7 @@ def list_tenants(db: Session, user: UserAccount, property_id: UUID) -> TenantLis
         items=[
             TenantSummary(
                 id=tenant.id,
+                version=tenant.version,
                 name=account.name,
                 room=RoomRef(id=room.id, number=room.number),
                 account_status=_status(tenant),
@@ -347,13 +357,16 @@ def list_tenants(db: Session, user: UserAccount, property_id: UUID) -> TenantLis
     )
 
 
-def _find_accessible(db: Session, user: UserAccount, tenant_id: UUID) -> Found:
+def _find_accessible(
+    db: Session, user: UserAccount, tenant_id: UUID, *, lock: bool = False
+) -> Found:
     """Return a tenant with an active lease in a property the user may access.
 
     Raises 404 TENANT_NOT_FOUND for an unknown, deleted, lease-less or
-    inaccessible tenant.
+    inaccessible tenant. With `lock`, the tenant row is locked until the
+    transaction ends and read fresh.
     """
-    found = _find(db, TenantRow.id == tenant_id)
+    found = _find(db, TenantRow.id == tenant_id, lock=lock)
     if not found:
         raise ApiError(404, "TENANT_NOT_FOUND")
     try:
@@ -373,24 +386,30 @@ def get_tenant(db: Session, user: UserAccount, tenant_id: UUID) -> Tenant:
 
 
 def update_tenant(
-    db: Session, user: UserAccount, tenant_id: UUID, data: TenantInput
+    db: Session,
+    user: UserAccount,
+    tenant_id: UUID,
+    data: TenantInput,
+    expected_version: int | None = None,
 ) -> Tenant:
-    """Edit a tenant and their active lease; the room cannot change.
+    """Edit a tenant and their active lease, raising the tenant's version.
 
-    Checks in order: tenant access (404 TENANT_NOT_FOUND), view-only property
-    (403 PROPERTY_READ_ONLY), view-only room (403 ROOM_READ_ONLY), field rules
-    (422 VALIDATION_FAILED). The name belongs to the person's account, so an
+    The room cannot change. Checks in order: tenant access (404
+    TENANT_NOT_FOUND), view-only property (403 PROPERTY_READ_ONLY), view-only
+    room (403 ROOM_READ_ONLY), `expected_version` not the current one (409
+    RESOURCE_VERSION_CONFLICT), field rules (422 VALIDATION_FAILED). The name belongs to the person's account, so an
     activated tenant's name cannot change (422 TENANT_NAME_NOT_EDITABLE; the
     comparison ignores surrounding spaces). An activated tenant must keep at
     least two emergency contacts. The emergency contacts are replaced
     wholesale. A failure saves nothing.
     """
-    found = _find_accessible(db, user, tenant_id)
+    found = _find_accessible(db, user, tenant_id, lock=True)
     tenant, account, stored_lease, room = found
     if get_accessible_property(db, user, room.property_id).view_only:
         raise ApiError(403, "PROPERTY_READ_ONLY")
     if room.view_only:
         raise ApiError(403, "ROOM_READ_ONLY")
+    bump_version(tenant, expected_version)
 
     name = _text(data.name, "name")
     if tenant.activated_at is not None and name != account.name:

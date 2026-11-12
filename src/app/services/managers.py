@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from app.access import bump_version
 from app.errors import ApiError
 from app.models import Invitation as InvitationRow
 from app.models import Manager as ManagerRow
@@ -94,6 +95,7 @@ def _detail(db: Session, owner: UserAccount, found: Found) -> Manager:
         )
     return Manager(
         id=record.id,
+        version=record.version,
         name=user.name,
         nickname=record.nickname,
         phone=record.phone,
@@ -104,12 +106,16 @@ def _detail(db: Session, owner: UserAccount, found: Found) -> Manager:
     )
 
 
-def _find(db: Session, owner: UserAccount, manager_id: UUID) -> Found:
+def _find(
+    db: Session, owner: UserAccount, manager_id: UUID, *, lock: bool = False
+) -> Found:
     """Return the owner's live record with the id and its account.
 
-    Raises 404 MANAGER_NOT_FOUND for an unknown, deleted or another owner's record.
+    Raises 404 MANAGER_NOT_FOUND for an unknown, deleted or another owner's
+    record. With `lock`, the record row is locked until the transaction ends
+    and read fresh.
     """
-    row = db.execute(
+    query = (
         select(ManagerRow, UserAccount)
         .join(UserAccount, UserAccount.id == ManagerRow.user_id)
         .where(
@@ -117,7 +123,12 @@ def _find(db: Session, owner: UserAccount, manager_id: UUID) -> Found:
             ManagerRow.owner_id == owner.id,
             ManagerRow.deleted_at.is_(None),
         )
-    ).first()
+    )
+    if lock:
+        query = query.with_for_update(of=ManagerRow).execution_options(
+            populate_existing=True
+        )
+    row = db.execute(query).first()
     if row is None:
         raise ApiError(404, "MANAGER_NOT_FOUND")
     return tuple(row)
@@ -238,6 +249,7 @@ def list_managers(
         items=[
             ManagerSummary(
                 id=record.id,
+                version=record.version,
                 name=user.name,
                 nickname=record.nickname,
                 phone=record.phone,
@@ -259,18 +271,24 @@ def get_manager(db: Session, owner: UserAccount, manager_id: UUID) -> Manager:
 
 
 def update_manager(
-    db: Session, owner: UserAccount, manager_id: UUID, data: ManagerInput
+    db: Session,
+    owner: UserAccount,
+    manager_id: UUID,
+    data: ManagerInput,
+    expected_version: int | None = None,
 ) -> Manager:
     """Replace a manager's nickname, phone and assignments to the owner's properties.
 
-    Checks in order: record (404 MANAGER_NOT_FOUND), phone, duplicate property
-    ids (422 VALIDATION_FAILED), properties of the owner (404
-    PROPERTY_NOT_FOUND), a changed name of an activated manager (422
-    MANAGER_NAME_NOT_EDITABLE). A manager who has not activated is renamed.
-    Assignments to the properties of other owners are never touched. A failure
-    saves nothing.
+    Raises the record's version. Checks in order: record (404
+    MANAGER_NOT_FOUND), `expected_version` not the current one (409
+    RESOURCE_VERSION_CONFLICT), phone, duplicate property ids (422
+    VALIDATION_FAILED), properties of the owner (404 PROPERTY_NOT_FOUND), a
+    changed name of an activated manager (422 MANAGER_NAME_NOT_EDITABLE). A
+    manager who has not activated is renamed. Assignments to the properties of
+    other owners are never touched. A failure saves nothing.
     """
-    record, user = _find(db, owner, manager_id)
+    record, user = _find(db, owner, manager_id, lock=True)
+    bump_version(record, expected_version)
     phone = normalize_phone(data.phone, "phone")
     wanted = set(_live_property_ids(db, owner, data.property_ids))
     if record.activated_at is None:

@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from app.schemas.base import ApiModel
+from app.schemas.base import VERSION_DESCRIPTION, ApiModel
 
 DIMENSION_DESCRIPTION = (
     "In metres, with at most 2 decimals. Give both lengthM and widthM, or neither."
@@ -56,6 +56,7 @@ class Room(ApiModel):
     """A room with its occupancy and, if occupied, its active lease."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     property_id: UUID
     number: str
     base_rate: int = Field(description="Per month, in rupiah.")
@@ -78,6 +79,7 @@ class RoomSummary(ApiModel):
     """A room as shown in the room list."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     number: str
     base_rate: int = Field(description="Per month, in rupiah.")
     occupancy: Occupancy

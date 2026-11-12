@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
-from app.access import has_recent_reauthentication, require_roles
+from app.access import IfMatch, has_recent_reauthentication, require_roles
 from app.db import SessionDep
 from app.schemas.auth import UserRole
 from app.schemas.payments import PaymentOverview, PaymentPatternList
@@ -49,7 +49,11 @@ def get_property(property_id: PropertyId, caller: OwnerOrManager, db: Db) -> Pro
 
 @router.put("/{propertyId}", tags=["properties"])
 def update_property(
-    property_id: PropertyId, body: PropertyInput, owner: OwnerOnly, db: Db
+    property_id: PropertyId,
+    body: PropertyInput,
+    owner: OwnerOnly,
+    db: Db,
+    if_match: IfMatch,
 ) -> Property:
     """Replace a property's name, address and bank account."""
     return properties.update_property(
@@ -58,6 +62,7 @@ def update_property(
         property_id,
         body,
         reauthenticated=has_recent_reauthentication(owner.session),
+        expected_version=if_match,
     )
 
 

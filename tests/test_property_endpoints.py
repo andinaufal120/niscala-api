@@ -25,6 +25,7 @@ DETAIL_FIELDS = {
     "vacantRoomCount",
     "managers",
     "editable",
+    "version",
 }
 SUMMARY_FIELDS = {
     "id",
@@ -34,6 +35,7 @@ SUMMARY_FIELDS = {
     "occupiedRoomCount",
     "managers",
     "editable",
+    "version",
 }
 WINDOW = timedelta(minutes=5)
 
@@ -564,6 +566,7 @@ def test_an_owner_lists_their_own_properties_as_summaries(
         "occupiedRoomCount": 0,
         "managers": [],
         "editable": True,
+        "version": 1,
     }
 
 
@@ -705,6 +708,7 @@ def test_an_owner_reads_a_property_with_its_bank_account(
         "vacantRoomCount": 0,
         "managers": [],
         "editable": True,
+        "version": 1,
     }
 
 
@@ -844,6 +848,7 @@ def test_the_edit_answers_with_the_whole_property(
         "vacantRoomCount": 0,
         "managers": [{"id": str(helper.id), "name": "Mira"}],
         "editable": True,
+        "version": 2,
     }
     assert client.get(detail_url(existing.id), headers=signed_in.headers).json() == (
         response.json()

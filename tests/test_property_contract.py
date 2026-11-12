@@ -102,7 +102,11 @@ def test_delete_property_success_response_has_no_body(openapi: OpenApiDoc) -> No
 def test_property_id_path_parameter_is_required_uuid(
     openapi: OpenApiDoc, method: str
 ) -> None:
-    parameters = openapi.operation(method, "/properties/{propertyId}")["parameters"]
+    parameters = [
+        p
+        for p in openapi.operation(method, "/properties/{propertyId}")["parameters"]
+        if p["in"] != "header"
+    ]
     assert [p["name"] for p in parameters] == ["propertyId"]
     (parameter,) = parameters
     assert parameter["in"] == "path"
@@ -303,6 +307,7 @@ PROPERTY_FIELDS = {
     "vacantRoomCount",
     "managers",
     "editable",
+    "version",
 }
 
 
@@ -366,6 +371,7 @@ PROPERTY_SUMMARY_FIELDS = {
     "occupiedRoomCount",
     "managers",
     "editable",
+    "version",
 }
 
 

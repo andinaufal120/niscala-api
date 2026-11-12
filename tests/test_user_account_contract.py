@@ -134,7 +134,9 @@ def test_delete_user_account_success_response_has_no_body(
 def test_user_account_operation_path_parameter_is_required_uuid(
     openapi: OpenApiDoc, method: str, path: str
 ) -> None:
-    parameters = openapi.operation(method, path)["parameters"]
+    parameters = [
+        p for p in openapi.operation(method, path)["parameters"] if p["in"] != "header"
+    ]
     assert [p["name"] for p in parameters] == ["userAccountId"]
     (parameter,) = parameters
     assert parameter["in"] == "path"
@@ -333,7 +335,7 @@ def test_user_account_input_status_is_editable_account_status_enum(
 
 # UserAccountSummary
 
-SUMMARY_FIELDS = {"id", "name", "email", "role", "status"}
+SUMMARY_FIELDS = {"id", "name", "email", "role", "status", "version"}
 
 
 @pytest.fixture
@@ -479,6 +481,7 @@ USER_ACCOUNT_FIELDS = {
     "properties",
     "activeLeaseCount",
     "tenancies",
+    "version",
 }
 
 

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import Field, StringConstraints
 
-from app.schemas.base import ApiModel
+from app.schemas.base import VERSION_DESCRIPTION, ApiModel
 
 TrimmedText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -40,6 +40,7 @@ class Property(ApiModel):
     """A property with its room counts and assigned managers."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     name: str
     address: str
     bank_account: BankAccount | None
@@ -54,6 +55,7 @@ class PropertySummary(ApiModel):
     """A property as shown in the property list."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     name: str
     address: str
     room_count: int

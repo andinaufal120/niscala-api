@@ -149,8 +149,11 @@ def test_submitting_the_current_values_changes_nothing(
     before = detail(client, admin_in, owner)
     response = edit_account(client, admin_in.headers, owner)
     assert response.status_code == 200
-    assert response.json() == before
-    assert detail(client, admin_in, owner) == before
+    data = {k: v for k, v in before.items() if k != "version"}
+    assert {k: v for k, v in response.json().items() if k != "version"} == data
+    assert response.json()["version"] == before["version"] + 1
+    after = detail(client, admin_in, owner)
+    assert after == response.json()
     assert all_change_requests(database) == []
     assert mailbox.is_empty
 

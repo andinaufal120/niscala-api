@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, and_, delete, exists, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.access import bump_version
 from app.email import EmailSender
 from app.errors import ApiError
 from app.models import (
@@ -133,6 +134,7 @@ def list_user_accounts(
         items=[
             UserAccountSummary(
                 id=user.id,
+                version=user.version,
                 name=user.name,
                 email=user.email or "",
                 role=user.role,
@@ -211,6 +213,7 @@ def _detail(db: Session, found: Found) -> UserAccountDetail:
         lease_count = len(tenancies)
     return UserAccountDetail(
         id=user.id,
+        version=user.version,
         name=user.name,
         email=user.email or "",
         pending_email=pending and pending.new_email,
@@ -265,12 +268,14 @@ def update_user_account(
     found: Found,
     data: UserAccountInput,
     sender: EmailSender,
+    expected_version: int | None = None,
 ) -> UserAccountDetail:
     """Change an account's name and status at once and handle its email.
 
-    `found` comes from `find_user_account`, which raises 404
-    USER_ACCOUNT_NOT_FOUND. Checks in order: deleted (409
-    USER_ACCOUNT_DELETED), the caller deactivating themselves (409
+    Raises the account's version. `found` comes from `find_user_account`, which
+    raises 404 USER_ACCOUNT_NOT_FOUND. Checks in order: deleted (409
+    USER_ACCOUNT_DELETED), `expected_version` not the current one (409
+    RESOURCE_VERSION_CONFLICT), the caller deactivating themselves (409
     CANNOT_MODIFY_OWN_ACCOUNT), an email used by another account, deleted ones
     included (409 EMAIL_ALREADY_REGISTERED); a refusal saves nothing.
     Deactivating ends every session of the account. An email other than the
@@ -281,6 +286,8 @@ def update_user_account(
     user, deleted = found
     if deleted:
         raise ApiError(409, "USER_ACCOUNT_DELETED")
+    db.refresh(user, with_for_update=True)
+    bump_version(user, expected_version)
     if user.id == caller.id and data.status == UserAccountStatus.INACTIVE:
         raise ApiError(409, "CANNOT_MODIFY_OWN_ACCOUNT")
     new_email = data.email.strip().lower()
