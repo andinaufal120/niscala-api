@@ -578,6 +578,80 @@ def test_a_complaint_to_an_owner_without_a_plan_is_not_classified(world):
     world.stubs.assert_classifier_called(0)
 
 
+def test_releasing_the_stubs_ends_the_thread_a_timed_out_classifier_left(
+    seeded_world, world
+):
+    world.stubs.classifier_times_out()
+
+    seeded_world.budi.submit_complaint(seeded_world.rooms["A1"])
+
+    [thread] = world.stubs.stalled_threads
+    assert thread.is_alive()
+    world.stubs.release_stalled()
+    assert not thread.is_alive()
+
+
+def test_releasing_the_stubs_ends_the_thread_a_timed_out_summarizer_left(
+    seeded_world, world
+):
+    owner, budi = seeded_world.owner, seeded_world.budi
+    world.stubs.summarizer_times_out()
+    bill = budi.rent_bills()[0]
+
+    owner.post(
+        f"/rent-bills/{bill['id']}/cash-payment",
+        json={"receivedOn": "2026-10-01"},
+        expect=200,
+    )
+
+    [thread] = world.stubs.stalled_threads
+    assert thread.is_alive()
+    world.stubs.release_stalled()
+    assert not thread.is_alive()
+    assert len(world.stubs.summarizer.calls) == 1
+
+
+def test_a_stalled_classifier_answers_again_once_it_is_told_to_work(
+    seeded_world, world
+):
+    world.stubs.classifier_times_out()
+    stalled = seeded_world.budi.submit_complaint(seeded_world.rooms["A1"])
+    world.stubs.classifier_works(category="Air", urgency="low")
+
+    worked = seeded_world.budi.submit_complaint(seeded_world.rooms["A1"])
+
+    assert seeded_world.owner.complaint(stalled)["classification"] is None
+    assert seeded_world.owner.complaint(worked)["classification"]["category"] == "Air"
+    assert len(world.stubs.stalled_threads) == 1
+
+
+LEFT_BEHIND = []
+
+
+def test_a_timeout_scenario_leaves_its_stalled_thread_to_the_teardown(
+    seeded_world, world
+):
+    world.stubs.classifier_times_out()
+
+    seeded_world.budi.submit_complaint(seeded_world.rooms["A1"])
+
+    LEFT_BEHIND.extend(world.stubs.stalled_threads)
+    assert LEFT_BEHIND
+    assert all(thread.is_alive() for thread in LEFT_BEHIND)
+
+
+def test_the_test_after_a_timeout_scenario_starts_clean(seeded_world, world):
+    from app.services import complaints
+
+    assert not any(thread.is_alive() for thread in LEFT_BEHIND)
+    assert world.stubs.stalled_threads == []
+    assert complaints.CLASSIFICATION_TIMEOUT_SECONDS == 10.0
+
+    created = seeded_world.budi.submit_complaint(seeded_world.rooms["A1"])
+
+    assert seeded_world.owner.complaint(created)["classification"] is not None
+
+
 # Push, mail and the clock
 
 

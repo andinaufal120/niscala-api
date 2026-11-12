@@ -1,6 +1,7 @@
 """Fixtures of the end-to-end scenarios, built on the shared test setup."""
 
 import sys
+from collections.abc import Iterator
 
 import pytest
 
@@ -46,10 +47,13 @@ def stubs(
     firebase_credentials,
     fcm,
     monkeypatch,
-) -> Stubs:
-    """Every external service stubbed, with push delivery going to the FCM outbox."""
+) -> Iterator[Stubs]:
+    """Every external service stubbed, with push delivery going to the FCM outbox.
+
+    When the test ends, every stalled stub call is released and its thread joined.
+    """
     firebase_credentials(FAKE_FIREBASE_CREDENTIALS)
-    return Stubs(
+    stubs = Stubs(
         classifier=fake_classifier,
         summarizer=fake_summarizer,
         play=play,
@@ -59,6 +63,8 @@ def stubs(
         files=file_store,
         monkeypatch=monkeypatch,
     )
+    yield stubs
+    stubs.release_stalled()
 
 
 @pytest.fixture
