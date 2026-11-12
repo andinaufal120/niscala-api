@@ -222,6 +222,7 @@ Do not commit the key file. `grant-subscription` stays available for development
 ## Docs
 
 - `docs/SPEC.md`: what the backend has to do
+- `docs/TRACEABILITY.md`: which tests cover each use case
 - `ARCHITECTURE.md`: how the backend is built
 - `CLAUDE.md`: conventions for coding agents (and a good summary for people)
 - `REVIEW.md`: what code review checks
