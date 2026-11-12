@@ -435,9 +435,7 @@ def test_a_tenant_of_a_view_only_room_refuses_the_edit_before_the_version(
 def test_a_deleted_account_is_refused_before_the_version(
     client, database, admin_in, make_user
 ):
-    deleted = make_user(
-        name="Sari Dewi", email="sari@example.com", status="deleted", deleted=True
-    )
+    deleted = make_user(name="Sari Dewi", email="sari@example.com", deleted=True)
     body = {"name": "Sari Dewi", "email": "sari@example.com", "status": "active"}
     response = client.put(
         account_url(deleted.id),

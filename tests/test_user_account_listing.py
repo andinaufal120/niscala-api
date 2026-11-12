@@ -59,6 +59,7 @@ def test_the_list_holds_the_accounts_of_every_role(
         "email": "rina@example.com",
         "role": "owner",
         "status": "active",
+        "version": 1,
     }
     assert found[str(tenant.user.id)]["role"] == "tenant"
     assert found[str(tenant.user.id)]["name"] == "Budi Tenant"

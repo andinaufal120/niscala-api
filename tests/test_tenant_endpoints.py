@@ -2103,7 +2103,11 @@ def test_editing_with_the_same_values_succeeds(client, database, signed_in, room
     ).json()
     response = edit(client, signed_in.headers, stored["id"])
     assert response.status_code == 200, response.text
-    assert response.json() == stored
+    body = response.json()
+    assert body["version"] == stored["version"] + 1
+    assert {k: v for k, v in body.items() if k != "version"} == {
+        k: v for k, v in stored.items() if k != "version"
+    }
     assert len(fetch_all(database, Lease)) == 1
 
 
