@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import StringConstraints
 
-from app.access import require_roles
+from app.access import IfMatch, require_roles
 from app.db import SessionDep
 from app.email import EmailSender, get_email_sender
 from app.schemas.auth import UserRole
@@ -63,9 +63,12 @@ def update_user_account(
     caller: Admin,
     db: SessionDep,
     sender: Annotated[EmailSender, Depends(get_email_sender)],
+    if_match: IfMatch,
 ) -> UserAccount:
     """Change name, email and status; a new email stays pending until verified."""
-    return user_accounts.update_user_account(db, caller.user, found, body, sender)
+    return user_accounts.update_user_account(
+        db, caller.user, found, body, sender, if_match
+    )
 
 
 @router.delete(

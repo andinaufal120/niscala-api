@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Response, status
 
-from app.access import require_roles
+from app.access import IfMatch, require_roles
 from app.db import SessionDep
 from app.schemas.auth import UserRole
 from app.schemas.tenants import Tenant, TenantInput, TenantInvitation
@@ -29,10 +29,14 @@ def get_tenant(tenant_id: TenantId, caller: OwnerOrManager, db: Db) -> Tenant:
 
 @router.put("/{tenantId}")
 def update_tenant(
-    tenant_id: TenantId, body: TenantInput, caller: OwnerOrManager, db: Db
+    tenant_id: TenantId,
+    body: TenantInput,
+    caller: OwnerOrManager,
+    db: Db,
+    if_match: IfMatch,
 ) -> Tenant:
     """Replace a tenant's fields. The room cannot be changed."""
-    return tenants.update_tenant(db, caller.user, tenant_id, body)
+    return tenants.update_tenant(db, caller.user, tenant_id, body, if_match)
 
 
 @router.delete(

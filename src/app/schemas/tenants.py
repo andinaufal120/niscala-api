@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from app.schemas.base import ApiModel
+from app.schemas.base import VERSION_DESCRIPTION, ApiModel
 
 PHONE_DESCRIPTION = "Indonesian mobile number; returned as digits starting with 08."
 
@@ -148,6 +148,7 @@ class Tenant(ApiModel):
     """A tenant with their room, lease, emergency contacts and invitation."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     name: str
     phone: str = Field(description=PHONE_DESCRIPTION)
     email: str | None
@@ -165,6 +166,7 @@ class TenantSummary(ApiModel):
     """A tenant as shown in the tenant list."""
 
     id: UUID
+    version: int = Field(description=VERSION_DESCRIPTION)
     name: str
     room: RoomRef
     account_status: TenantAccountStatus

@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.access import accessible_properties, get_accessible_property
+from app.access import accessible_properties, bump_version, get_accessible_property
 from app.errors import ApiError
 from app.models import Lease, Property, Tenant, UserAccount
 from app.models import Room as RoomRow
@@ -114,6 +114,7 @@ def _detail(
         )
     return Room(
         id=row.id,
+        version=row.version,
         property_id=row.property_id,
         number=row.number,
         base_rate=row.base_rate,
@@ -135,6 +136,7 @@ def _summary(
         lease = RoomLeaseSummary(tenant_name=name, end_date=found.end_date)
     return RoomSummary(
         id=row.id,
+        version=row.version,
         number=row.number,
         base_rate=row.base_rate,
         occupancy=Occupancy.VACANT if active is None else Occupancy.OCCUPIED,
@@ -161,18 +163,25 @@ def _ensure_number_free(
 
 
 def _accessible_room(
-    db: Session, user: UserAccount, room_id: UUID
+    db: Session, user: UserAccount, room_id: UUID, *, lock: bool = False
 ) -> tuple[RoomRow, Property]:
-    """Return a live room and its property, or raise 404 ROOM_NOT_FOUND."""
-    row = db.scalars(
-        select(RoomRow).where(
-            RoomRow.id == room_id,
-            RoomRow.deleted_at.is_(None),
-            RoomRow.property_id.in_(
-                accessible_properties(user).with_only_columns(Property.id)
-            ),
+    """Return a live room and its property, or raise 404 ROOM_NOT_FOUND.
+
+    With `lock`, the room row is locked until the transaction ends and read
+    fresh.
+    """
+    query = select(RoomRow).where(
+        RoomRow.id == room_id,
+        RoomRow.deleted_at.is_(None),
+        RoomRow.property_id.in_(
+            accessible_properties(user).with_only_columns(Property.id)
+        ),
+    )
+    if lock:
+        query = query.with_for_update(of=RoomRow).execution_options(
+            populate_existing=True
         )
-    ).first()
+    row = db.scalars(query).first()
     if row is None:
         raise ApiError(404, "ROOM_NOT_FOUND")
     return row, db.get_one(Property, row.property_id)
@@ -247,19 +256,27 @@ def get_room(db: Session, user: UserAccount, room_id: UUID) -> Room:
     return _detail(row, parent, _active_leases(db, [row.id]).get(row.id))
 
 
-def update_room(db: Session, user: UserAccount, room_id: UUID, data: RoomInput) -> Room:
-    """Replace a room's fields.
+def update_room(
+    db: Session,
+    user: UserAccount,
+    room_id: UUID,
+    data: RoomInput,
+    expected_version: int | None = None,
+) -> Room:
+    """Replace a room's fields, raising its version.
 
     Checks in order: access (404 ROOM_NOT_FOUND), view-only property (403
-    PROPERTY_READ_ONLY), view-only room (403 ROOM_READ_ONLY), field rules (422
+    PROPERTY_READ_ONLY), view-only room (403 ROOM_READ_ONLY), `expected_version`
+    not the current one (409 RESOURCE_VERSION_CONFLICT), field rules (422
     VALIDATION_FAILED), a number used by another live room of the property (409
     ROOM_NUMBER_TAKEN).
     """
-    row, parent = _accessible_room(db, user, room_id)
+    row, parent = _accessible_room(db, user, room_id, lock=True)
     if parent.view_only:
         raise ApiError(403, "PROPERTY_READ_ONLY")
     if row.view_only:
         raise ApiError(403, "ROOM_READ_ONLY")
+    bump_version(row, expected_version)
     fields = _Fields(data)
     _ensure_number_free(db, parent.id, fields.number, excluding=row.id)
     for name, value in vars(fields).items():
