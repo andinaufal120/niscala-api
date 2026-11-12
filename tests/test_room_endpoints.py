@@ -27,6 +27,7 @@ ROOM_FIELDS = {
     "facilities",
     "lease",
     "editable",
+    "version",
 }
 SUMMARY_FIELDS = ROOM_FIELDS - {"propertyId"}
 FREE_ROOM_LIMIT = 15

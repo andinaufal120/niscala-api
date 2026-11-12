@@ -117,7 +117,9 @@ def test_delete_manager_success_response_has_no_body(openapi: OpenApiDoc) -> Non
 def test_manager_operation_path_parameter_is_required_uuid(
     openapi: OpenApiDoc, method: str, path: str
 ) -> None:
-    parameters = openapi.operation(method, path)["parameters"]
+    parameters = [
+        p for p in openapi.operation(method, path)["parameters"] if p["in"] != "header"
+    ]
     assert [p["name"] for p in parameters] == ["managerId"]
     (parameter,) = parameters
     assert parameter["in"] == "path"
@@ -378,6 +380,7 @@ MANAGER_FIELDS = {
     "accountStatus",
     "properties",
     "invitation",
+    "version",
 }
 
 
@@ -446,6 +449,7 @@ MANAGER_SUMMARY_FIELDS = {
     "email",
     "accountStatus",
     "properties",
+    "version",
 }
 
 

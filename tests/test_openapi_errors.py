@@ -493,9 +493,50 @@ GOLDEN = {
     | {
         "FORBIDDEN",
         "PROPERTY_READ_ONLY",
+        "RESOURCE_VERSION_CONFLICT",
         "REAUTHENTICATION_REQUIRED",
         "PROPERTY_NOT_FOUND",
         "PROPERTY_NAME_TAKEN",
+        "VALIDATION_FAILED",
+    },
+    ("PUT", "/rooms/{roomId}"): AUTHENTICATED_READ
+    | {
+        "FORBIDDEN",
+        "PROPERTY_READ_ONLY",
+        "ROOM_READ_ONLY",
+        "RESOURCE_VERSION_CONFLICT",
+        "ROOM_NOT_FOUND",
+        "ROOM_NUMBER_TAKEN",
+        "VALIDATION_FAILED",
+    },
+    ("PUT", "/tenants/{tenantId}"): AUTHENTICATED_READ
+    | {
+        "FORBIDDEN",
+        "PROPERTY_READ_ONLY",
+        "ROOM_READ_ONLY",
+        "RESOURCE_VERSION_CONFLICT",
+        "PROPERTY_NOT_FOUND",
+        "TENANT_NOT_FOUND",
+        "TENANT_NAME_NOT_EDITABLE",
+        "VALIDATION_FAILED",
+    },
+    ("PUT", "/managers/{managerId}"): AUTHENTICATED_READ
+    | {
+        "FORBIDDEN",
+        "RESOURCE_VERSION_CONFLICT",
+        "MANAGER_NOT_FOUND",
+        "PROPERTY_NOT_FOUND",
+        "MANAGER_NAME_NOT_EDITABLE",
+        "VALIDATION_FAILED",
+    },
+    ("PUT", "/user-accounts/{userAccountId}"): AUTHENTICATED_READ
+    | {
+        "FORBIDDEN",
+        "USER_ACCOUNT_NOT_FOUND",
+        "USER_ACCOUNT_DELETED",
+        "RESOURCE_VERSION_CONFLICT",
+        "CANNOT_MODIFY_OWN_ACCOUNT",
+        "EMAIL_ALREADY_REGISTERED",
         "VALIDATION_FAILED",
     },
     ("DELETE", "/properties/{propertyId}"): AUTHENTICATED_READ

@@ -189,7 +189,9 @@ def test_delete_tenant_success_response_has_no_body(openapi: OpenApiDoc) -> None
 def test_tenant_operation_path_parameter_is_required_uuid(
     openapi: OpenApiDoc, method: str, path: str, name: str
 ) -> None:
-    parameters = openapi.operation(method, path)["parameters"]
+    parameters = [
+        p for p in openapi.operation(method, path)["parameters"] if p["in"] != "header"
+    ]
     assert [p["name"] for p in parameters] == [name]
     (parameter,) = parameters
     assert parameter["in"] == "path"
@@ -484,6 +486,7 @@ TENANT_FIELDS = {
     "lease",
     "emergencyContacts",
     "invitation",
+    "version",
 }
 
 
@@ -676,6 +679,7 @@ TENANT_SUMMARY_FIELDS = {
     "billingCycle",
     "leaseEndDate",
     "invitationExpiresAt",
+    "version",
 }
 
 

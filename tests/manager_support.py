@@ -22,6 +22,7 @@ MANAGER_FIELDS = {
     "accountStatus",
     "properties",
     "invitation",
+    "version",
 }
 SUMMARY_FIELDS = MANAGER_FIELDS - {"invitation"}
 INVITATION_FIELDS = {"url", "createdAt", "expiresAt", "expired"}

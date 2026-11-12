@@ -72,6 +72,7 @@ SPEC_CODES = {
     "RENT_BILL_NOT_UPLOADABLE": 409,
     "ROOM_HAS_ACTIVE_LEASE": 409,
     "ROOM_NOT_VACANT": 409,
+    "RESOURCE_VERSION_CONFLICT": 409,
     "ROOM_NUMBER_TAKEN": 409,
     "SESSION_IS_CURRENT": 409,
     "SUBSCRIPTION_NOT_AN_UPGRADE": 409,
@@ -152,7 +153,7 @@ def api_error_literals() -> list[tuple[Path, int, str, int]]:
 
 def test_the_status_table_holds_exactly_the_documented_codes(catalog):
     assert set(catalog.ERROR_STATUS) == set(SPEC_CODES)
-    assert len(catalog.ERROR_STATUS) == 98
+    assert len(catalog.ERROR_STATUS) == 99
 
 
 @pytest.mark.parametrize(("code", "status"), sorted(SPEC_CODES.items()))

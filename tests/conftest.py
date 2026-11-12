@@ -1367,6 +1367,34 @@ def rtdn(app, monkeypatch) -> Any:
     get_settings.cache_clear()
 
 
+@pytest.fixture(
+    params=["property", "room", "tenant", "manager", "user_account"], ids=str
+)
+def target(
+    request,
+    database,
+    make_user,
+    sign_in,
+    make_property,
+    make_room,
+    make_tenant,
+    make_manager,
+):
+    """One editable record of each versioned kind, in turn, with its requests."""
+    from resource_version_support import build_target
+
+    return build_target(
+        request.param,
+        database=database,
+        make_user=make_user,
+        sign_in=sign_in,
+        make_property=make_property,
+        make_room=make_room,
+        make_tenant=make_tenant,
+        make_manager=make_manager,
+    )
+
+
 @pytest.fixture(scope="session")
 def app():
     from app.main import app as fastapi_app

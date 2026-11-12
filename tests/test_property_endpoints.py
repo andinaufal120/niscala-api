@@ -25,6 +25,7 @@ DETAIL_FIELDS = {
     "vacantRoomCount",
     "managers",
     "editable",
+    "version",
 }
 SUMMARY_FIELDS = {
     "id",
@@ -34,6 +35,7 @@ SUMMARY_FIELDS = {
     "occupiedRoomCount",
     "managers",
     "editable",
+    "version",
 }
 WINDOW = timedelta(minutes=5)
 

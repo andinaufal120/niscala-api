@@ -32,6 +32,7 @@ TENANT_FIELDS = {
     "lease",
     "emergencyContacts",
     "invitation",
+    "version",
 }
 LEASE_FIELDS = {
     "startDate",
@@ -50,6 +51,7 @@ SUMMARY_FIELDS = {
     "billingCycle",
     "leaseEndDate",
     "invitationExpiresAt",
+    "version",
 }
 
 
