@@ -1,7 +1,9 @@
 name: CD
 
-# Deploys a release tag to Fly.io. release-please.yml calls this after it
-# publishes a release. To redeploy a tag by hand, run it from the Actions tab.
+# Deploys a release tag to Fly.io: the development app first, then production
+# once that succeeded. Production is skipped while the FLY_PROD_API_TOKEN secret
+# is not set. release-please.yml calls this after it publishes a release. To
+# redeploy a tag by hand, run it from the Actions tab.
 on:
   workflow_call:
     inputs:
@@ -39,3 +41,35 @@ jobs:
         run: flyctl deploy --remote-only -a niscala-api-dev
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  deploy-prod:
+    name: Deploy to Fly.io (production)
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Add required reviewers to the production environment to approve each deploy.
+    environment: production
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_PROD_API_TOKEN }}
+    steps:
+      - name: Check that production is set up
+        id: ready
+        run: |
+          if [ -n "$FLY_API_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::FLY_PROD_API_TOKEN is not set; production was not deployed."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.ready.outputs.ready == 'true'
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+        if: steps.ready.outputs.ready == 'true'
+
+      - name: Deploy
+        if: steps.ready.outputs.ready == 'true'
+        run: flyctl deploy --remote-only -c fly.prod.toml -a niscala-api
