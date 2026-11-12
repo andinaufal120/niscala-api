@@ -18,7 +18,6 @@ from fastapi import (
 from app.access import require_roles
 from app.ai.summarizer import PaymentPatternSummarizer, get_payment_pattern_summarizer
 from app.db import SessionDep
-from app.errors import ErrorBody
 from app.schemas.auth import UserRole
 from app.schemas.payments import (
     CashPaymentInput,
@@ -50,11 +49,6 @@ Summarizer = Annotated[
 Store = Annotated[FileStore, Depends(get_file_store)]
 
 
-def _errors(*statuses: int) -> dict[int | str, dict]:
-    """Declare error responses with the uniform error body."""
-    return {code: {"model": ErrorBody} for code in statuses}
-
-
 def _commit_and_summarize(
     db: Db,
     background_tasks: BackgroundTasks,
@@ -69,7 +63,7 @@ def _commit_and_summarize(
     return changed
 
 
-@router.get("", responses=_errors(403))
+@router.get("")
 def list_rent_bills(
     caller: Reader,
     db: Db,
@@ -85,13 +79,13 @@ def list_rent_bills(
     )
 
 
-@router.get("/{rentBillId}", responses=_errors(403, 404))
+@router.get("/{rentBillId}")
 def get_rent_bill(rent_bill_id: RentBillId, caller: Reader, db: Db) -> RentBill:
     """Return a rent bill's detail."""
     return rent_bills.get_rent_bill(db, caller.user, rent_bill_id)
 
 
-@router.put("/{rentBillId}/receipt", responses=_errors(403, 404, 409))
+@router.put("/{rentBillId}/receipt")
 def upload_receipt(
     rent_bill_id: RentBillId,
     file: Annotated[UploadFile, File(json_schema_extra={"format": "binary"})],
@@ -110,10 +104,7 @@ def upload_receipt(
 @router.get(
     "/{rentBillId}/receipt",
     response_class=Response,
-    responses={
-        200: {"content": {"image/jpeg": {}, "image/png": {}}},
-        **_errors(403, 404),
-    },
+    responses={200: {"content": {"image/jpeg": {}, "image/png": {}}}},
 )
 def get_receipt(
     rent_bill_id: RentBillId, caller: Reader, db: Db, store: Store
@@ -123,7 +114,7 @@ def get_receipt(
     return Response(content=content, media_type=content_type)
 
 
-@router.post("/{rentBillId}/verification", responses=_errors(403, 404, 409))
+@router.post("/{rentBillId}/verification")
 def verify_receipt(
     rent_bill_id: RentBillId,
     caller: Management,
@@ -136,7 +127,7 @@ def verify_receipt(
     return _commit_and_summarize(db, background_tasks, summarizer, changed)
 
 
-@router.post("/{rentBillId}/rejection", responses=_errors(403, 404, 409))
+@router.post("/{rentBillId}/rejection")
 def reject_receipt(
     rent_bill_id: RentBillId,
     body: ReceiptRejectionInput,
@@ -150,7 +141,7 @@ def reject_receipt(
     return _commit_and_summarize(db, background_tasks, summarizer, changed)
 
 
-@router.post("/{rentBillId}/cash-payment", responses=_errors(403, 404, 409))
+@router.post("/{rentBillId}/cash-payment")
 def record_cash_payment(
     rent_bill_id: RentBillId,
     body: CashPaymentInput,
@@ -166,11 +157,7 @@ def record_cash_payment(
     return _commit_and_summarize(db, background_tasks, summarizer, changed)
 
 
-@router.post(
-    "/{rentBillId}/status-changes",
-    status_code=status.HTTP_201_CREATED,
-    responses=_errors(403, 404),
-)
+@router.post("/{rentBillId}/status-changes", status_code=status.HTTP_201_CREATED)
 def change_payment_status(
     rent_bill_id: RentBillId,
     body: PaymentStatusChangeInput,
