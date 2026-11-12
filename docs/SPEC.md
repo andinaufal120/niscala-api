@@ -343,6 +343,7 @@ Additional backend rules:
 - **Add a local password (profile).** For a Google-only account. The request carries a fresh Google ID token whose identity MUST be the one linked to the account. An account that already has a password answers `PASSWORD_ALREADY_SET` (409). A token that fails verification answers `GOOGLE_TOKEN_INVALID` (401, field `googleIdToken`); an account without a linked Google identity answers `GOOGLE_NOT_LINKED` (409); a token of another Google identity answers `GOOGLE_ACCOUNT_MISMATCH` (422, field `googleIdToken`). The password rules of this section apply. Adding a password does not end any session.
 - **Link Google (profile).** For an account with a local password. The current session MUST come from a password login (`PASSWORD_LOGIN_REQUIRED`, 403, otherwise). A token that fails verification answers `GOOGLE_TOKEN_INVALID` (401, field `idToken`). A token whose email is unverified answers `GOOGLE_EMAIL_UNVERIFIED` (422, field `idToken`). An account that is already linked answers `GOOGLE_ALREADY_LINKED` (409); a Google identity linked to another account answers `GOOGLE_ACCOUNT_ALREADY_REGISTERED` (409). The account's email, name and password do not change.
 - **Profile.** The profile is read-only for its owner; only an Admin edits an account (UC-34).
+- **Links and the app.** Invitation links (`/invitations/{token}`), password-reset links (`/password-reset?token=`) and email-change links (`/email-change?token=`) are https links on `INVITATION_BASE_URL`. Its host MUST be the API host, or a host that forwards to it, because Android opens such a link in the app only when the host serves a verified Digital Asset Links file. The API serves it at `GET /.well-known/assetlinks.json`: one `delegate_permission/common.handle_all_urls` statement for the Android package named by `GOOGLE_PLAY_PACKAGE_NAME` with the signing-certificate fingerprints of `ANDROID_CERT_SHA256` (comma separated, each 32 hexadecimal bytes separated by colons; another format stops the server from starting). It answers `404` while the package or the fingerprints are not configured. When the app is not installed, or the link is opened on a computer, the browser gets a small HTML page at the same three paths. The page is in Indonesian: it says to open the link on a phone with the Niscala app and, when the package is configured, links to the app's Google Play page; after installing the app, the user opens the link again. The page does not read the token, never repeats it and says nothing about whether it is valid. It is sent with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. The file and the pages are not part of the OpenAPI document.
 
 ## 8. Server-side rules per use case
 
@@ -606,6 +607,7 @@ Conventions:
 - Role values are the lower-case code names: `tenant`, `owner`, `manager`, `admin`.
 - A query parameter that filters a list is optional; omitting it means no filter.
 - Authentication: an HTTP bearer scheme named `bearerAuth` (JWT access token) is declared on every operation except `GET /health` and the endpoints marked *public* below.
+- Besides the operations below, the server answers the Digital Asset Links file and the link pages of §7 (*Links and the app*); they are not in the OpenAPI document.
 - Properties, rooms, Tenants, Managers and user accounts carry a `version`, and their `PUT` operations take an optional `If-Match` header (§6 rule 3).
 - Error responses have the shape in §6 rule 2. Every operation declares the error statuses it can return and lists its codes in the `x-error-codes` extension (§6, *Error codes*).
 
@@ -725,7 +727,6 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 
 | ID    | Item                                                                                                                             | Affects                   |
 |-------|----------------------------------------------------------------------------------------------------------------------------------|---------------------------|
-| U-4   | Invitation and password-reset link handling: how a link opens the app (Android App Links / deep link) and what happens if the app is not installed. | UC-18, UC-20, FR-01, NFR-11 |
 
 ## 11. Changelog
 
@@ -802,3 +803,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 11-11-2026 | U-6 decided: the daily job creates the bill of the period containing today, at the lease rent and without proration, with no bills for earlier periods; each new bill creates a `billIssued` notification. Removed from §10. | NKMA-115 |
 | 12-11-2026 | U-9 decided: the complete list of error codes is in §6 (*Error codes*); every operation declares its error statuses with the error object as body, and an `x-error-codes` extension with its codes, in the OpenAPI document. Removed from §10. | NKMA-116 |
 | 12-11-2026 | U-15 decided: property, room, Tenant, Manager and user account carry a `version` raised by each successful `PUT`; `PUT` takes an optional `If-Match` header and a stale one answers `RESOURCE_VERSION_CONFLICT` (409); without it the last write wins. Removed from §10. | NKMA-117 |
+| 12-11-2026 | U-4 decided: invitation, password-reset and email-change links are https links on the API host that open the app through Android App Links; the API serves the Digital Asset Links file and an Indonesian page that points to Google Play when the app is not installed. Removed from §10. | NKMA-118 |
