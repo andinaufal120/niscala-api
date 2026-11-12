@@ -6,6 +6,7 @@ rules read. Only the Admin account is inserted directly, since no endpoint
 creates one.
 """
 
+import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -27,6 +28,8 @@ from e2e.e2e_people import (
 )
 
 JOBS_PATH = "/internal/jobs/daily"
+# The longest a stalled stub call waits for the end of its test.
+STALL_LIMIT_SECONDS = 5.0
 PAID_DAYS = {"monthly": 30, "yearly": 365}
 
 
@@ -58,6 +61,9 @@ class Stubs:
         self.files = files
         self._monkeypatch = monkeypatch
         self._purchases = 0
+        self._release = threading.Event()
+        self._classifier_stall = None
+        self.stalled_threads: list[threading.Thread] = []
 
     # Gemini
 
@@ -68,11 +74,15 @@ class Stubs:
         self.classifier.error = ClassificationUnavailable("Gemini is down")
 
     def classifier_times_out(self) -> None:
-        """Make the classifier answer later than the classification timeout."""
+        """Make the classifier answer later than the classification timeout.
+
+        The stalled call waits until the stubs are released at the end of the
+        test (or for a few seconds at most), so no thread outlives the test.
+        """
         self._monkeypatch.setattr(
             "app.services.complaints.CLASSIFICATION_TIMEOUT_SECONDS", 0.2
         )
-        self.classifier.delay = 1.0
+        self._stall_classifier()
 
     def classifier_works(
         self,
@@ -88,6 +98,7 @@ class Stubs:
         )
         self.classifier.error = None
         self.classifier.delay = 0.0
+        self._unstall_classifier()
         self.classifier.result = AiComplaintClassification(
             category=category,
             urgency=ComplaintUrgency(urgency),
@@ -99,6 +110,63 @@ class Stubs:
         from app.ai.summarizer import SummaryUnavailable
 
         self.summarizer.error = SummaryUnavailable("Gemini is down")
+
+    def summarizer_times_out(self) -> None:
+        """Make the summarizer answer later than the summary timeout.
+
+        Like the classifier, the stalled call ends when the stubs are released.
+        """
+        self._monkeypatch.setattr(
+            "app.services.payment_patterns.SUMMARY_TIMEOUT_SECONDS", 0.2
+        )
+        self.summarizer.on_call = self._stall_here
+
+    def summarizer_works(self, result: str | None = None) -> None:
+        """Make the summarizer answer quickly, with `result` when given."""
+        self._monkeypatch.setattr(
+            "app.services.payment_patterns.SUMMARY_TIMEOUT_SECONDS", 10.0
+        )
+        self.summarizer.error = None
+        self.summarizer.delay = 0.0
+        self.summarizer.on_call = None
+        if result is not None:
+            self.summarizer.result = result
+
+    def _stall_here(self) -> None:
+        self.stalled_threads.append(threading.current_thread())
+        self._release.wait(STALL_LIMIT_SECONDS)
+
+    def _stall_classifier(self) -> None:
+        fake = self.classifier
+        if self._classifier_stall is not None:
+            return
+
+        def classify(description, categories):
+            fake.calls.append((description, tuple(categories)))
+            self._stall_here()
+            if fake.error is not None:
+                raise fake.error
+            return fake.result
+
+        self._classifier_stall = classify
+        fake.classify = classify
+
+    def _unstall_classifier(self) -> None:
+        stall, self._classifier_stall = self._classifier_stall, None
+        if stall is not None and self.classifier.__dict__.get("classify") is stall:
+            del self.classifier.__dict__["classify"]
+
+    def release_stalled(self) -> None:
+        """Let every stalled call finish and wait until its thread has ended.
+
+        Called when the test ends, so that no thread of a timeout scenario runs
+        after the test or during the next one. Fails when a thread stays alive.
+        """
+        self._release.set()
+        for thread in self.stalled_threads:
+            thread.join(STALL_LIMIT_SECONDS)
+        alive = [t.name for t in self.stalled_threads if t.is_alive()]
+        assert not alive, f"stalled stub threads are still running: {alive}"
 
     def assert_classifier_called(self, times: int) -> None:
         calls = len(self.classifier.calls)
