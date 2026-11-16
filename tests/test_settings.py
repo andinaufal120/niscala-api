@@ -4,7 +4,14 @@ import pytest
 from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
-ENV_NAMES = ("GEMINI_MODEL", "GEMINI_API_KEY", "INVITATION_BASE_URL", "DATABASE_URL")
+ENV_NAMES = (
+    "GEMINI_MODEL",
+    "GEMINI_API_KEY",
+    "INVITATION_BASE_URL",
+    "DATABASE_URL",
+    "RESEND_API_KEY",
+    "EMAIL_FROM",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -110,3 +117,60 @@ def test_get_settings_reflects_environment_after_cache_clear(monkeypatch):
     assert get_settings().gemini_model == "first"
     get_settings.cache_clear()
     assert get_settings().gemini_model == "second"
+
+
+def test_email_settings_default_to_none():
+    settings = make_settings()
+    assert settings.resend_api_key is None
+    assert settings.email_from is None
+
+
+def test_resend_api_key_and_email_from_are_read_from_environment(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "re_key")
+    monkeypatch.setenv("EMAIL_FROM", "Niscala <no-reply@example.com>")
+    settings = make_settings()
+    assert settings.resend_api_key == "re_key"
+    assert settings.email_from == "Niscala <no-reply@example.com>"
+
+
+def test_resend_api_key_without_email_from_fails_naming_email_from(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "re_key")
+    with pytest.raises(ValidationError) as error:
+        make_settings()
+    assert "email_from" in str(error.value).lower()
+
+
+def test_email_from_without_resend_api_key_fails_naming_resend_api_key(monkeypatch):
+    monkeypatch.setenv("EMAIL_FROM", "Niscala <no-reply@example.com>")
+    with pytest.raises(ValidationError) as error:
+        make_settings()
+    assert "resend_api_key" in str(error.value).lower()
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_email_from_with_a_key_fails_naming_email_from(monkeypatch, blank):
+    monkeypatch.setenv("RESEND_API_KEY", "re_key")
+    monkeypatch.setenv("EMAIL_FROM", blank)
+    with pytest.raises(ValidationError) as error:
+        make_settings()
+    assert "email_from" in str(error.value).lower()
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_resend_api_key_with_a_sender_fails_naming_resend_api_key(
+    monkeypatch, blank
+):
+    monkeypatch.setenv("RESEND_API_KEY", blank)
+    monkeypatch.setenv("EMAIL_FROM", "Niscala <no-reply@example.com>")
+    with pytest.raises(ValidationError) as error:
+        make_settings()
+    assert "resend_api_key" in str(error.value).lower()
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_both_email_settings_blank_load_as_unset(monkeypatch, blank):
+    monkeypatch.setenv("RESEND_API_KEY", blank)
+    monkeypatch.setenv("EMAIL_FROM", blank)
+    settings = make_settings()
+    assert not (settings.resend_api_key or "").strip()
+    assert not (settings.email_from or "").strip()
