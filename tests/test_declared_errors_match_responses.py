@@ -229,6 +229,65 @@ def test_ending_the_current_session_answers_a_declared_conflict(app, client, own
     )
 
 
+def test_deleting_the_own_account_as_an_admin_answers_a_declared_forbidden(
+    app, client, make_user, sign_in
+):
+    from app.schemas.auth import UserRole
+
+    session = sign_in(make_user(role=UserRole.ADMIN))
+    response = client.delete("/me", headers=session.headers)
+    assert_declared(app, response, "DELETE", "/me", "FORBIDDEN", 403)
+
+
+def test_deleting_the_own_account_without_re_authenticating_answers_a_declared_error(
+    app, client, owner_in
+):
+    response = client.delete("/me", headers=owner_in.headers)
+    assert_declared(app, response, "DELETE", "/me", "REAUTHENTICATION_REQUIRED", 403)
+
+
+def test_deleting_the_own_account_of_an_owner_with_a_lease_answers_a_declared_conflict(
+    app, client, owner, owner_in, make_property, make_room, make_verified_tenant
+):
+    make_verified_tenant(make_room(make_property(owner)))
+    response = client.delete("/me", headers=owner_in.headers)
+    assert_declared(app, response, "DELETE", "/me", "OWNER_HAS_ACTIVE_LEASE", 409)
+
+
+def test_deleting_the_own_account_of_a_tenant_with_a_lease_answers_a_declared_conflict(
+    app, client, scene
+):
+    response = client.delete("/me", headers=scene.tenant_in.headers)
+    assert_declared(app, response, "DELETE", "/me", "TENANT_HAS_ACTIVE_LEASE", 409)
+
+
+def test_deleting_the_own_account_with_a_renewing_subscription_answers_a_declared_conflict(
+    app, client, database, owner, owner_in
+):
+    from subscription_support import set_subscription
+
+    set_subscription(database, owner, auto_renew=True)
+    response = client.delete("/me", headers=owner_in.headers)
+    assert_declared(app, response, "DELETE", "/me", "SUBSCRIPTION_AUTO_RENEWING", 409)
+
+
+def test_an_admin_deleting_an_owner_with_a_renewing_subscription_answers_a_declared_conflict(
+    app, client, database, owner, admin_in
+):
+    from subscription_support import set_subscription
+
+    set_subscription(database, owner, auto_renew=True)
+    response = client.delete(f"/user-accounts/{owner.id}", headers=admin_in.headers)
+    assert_declared(
+        app,
+        response,
+        "DELETE",
+        "/user-accounts/{userAccountId}",
+        "SUBSCRIPTION_AUTO_RENEWING",
+        409,
+    )
+
+
 def test_a_malformed_path_id_answers_a_declared_validation_failure(
     app, client, owner_in
 ):
