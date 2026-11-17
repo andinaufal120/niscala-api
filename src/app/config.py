@@ -3,9 +3,9 @@
 import re
 from functools import cache
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 COMPLAINT_CATEGORIES = (
@@ -45,6 +45,19 @@ class Settings(BaseSettings):
     google_play_rtdn_service_account: str | None = None
 
     android_cert_sha256: Annotated[list[str], NoDecode] = []
+    resend_api_key: str | None = None
+    email_from: str | None = None
+
+    @model_validator(mode="after")
+    def _check_email_settings(self) -> Self:
+        """Require the Resend API key and the sender address to be set together."""
+        has_key = bool(self.resend_api_key and self.resend_api_key.strip())
+        has_from = bool(self.email_from and self.email_from.strip())
+        if has_key and not has_from:
+            raise ValueError("EMAIL_FROM is required when RESEND_API_KEY is set")
+        if has_from and not has_key:
+            raise ValueError("RESEND_API_KEY is required when EMAIL_FROM is set")
+        return self
 
     @field_validator("google_client_ids", "android_cert_sha256", mode="before")
     @classmethod

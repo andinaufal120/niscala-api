@@ -58,7 +58,7 @@ These steps start the API on your machine with a ready-made *Pemilik Kost (Owner
 
 Good to know:
 
-- Accounts you create through the API (sign up, or a Tenant accepting an invitation) must confirm their email. There is no mail service yet, so the 6-digit code is written to the server output as `Verification code for <email>: <code>`.
+- Accounts you create through the API (sign up, or a Tenant accepting an invitation) must confirm their email. Without Resend configured (see "Configuration"), the 6-digit code is written to the server output as `Verification code for <email>: <code>`.
 - To get a billing history for the demo Tenant, run `uv run niscala-api seed-rent-bills tenant@example.com`.
 - To start over, stop the server, run `docker rm -f niscala-pg`, and repeat steps 1 and 3.
 
@@ -88,7 +88,7 @@ The `version` in `pyproject.toml` is the version the API reports in its OpenAPI 
 Setting up production (once): production is the Fly.io app `niscala-api`, configured in `fly.prod.toml` (region `sin`, one machine always running, the same release command that runs `alembic upgrade head`).
 
 1. Create the app and its database: `fly apps create niscala-api`, plus a separate Postgres database for production (its own Supabase project, not the development one).
-2. Set the secrets the development app has (see "Configuration"): at least `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY` and `JOBS_SECRET`, then the ones for the features in use (`GEMINI_API_KEY`, `FIREBASE_CREDENTIALS`, `GOOGLE_CLIENT_IDS`, the `R2_*` storage settings, the `GOOGLE_PLAY_*` settings). Use new values, never the development ones, e.g. `fly secrets set JWT_SECRET=... -a niscala-api`.
+2. Set the secrets the development app has (see "Configuration"): at least `DATABASE_URL`, `JWT_SECRET`, `INVITATION_ENCRYPTION_KEY` and `JOBS_SECRET`, then the ones for the features in use (`GEMINI_API_KEY`, `FIREBASE_CREDENTIALS`, `GOOGLE_CLIENT_IDS`, `RESEND_API_KEY` with `EMAIL_FROM`, the `R2_*` storage settings, the `GOOGLE_PLAY_*` settings). Use new values, never the development ones, e.g. `fly secrets set JWT_SECRET=... -a niscala-api`.
 3. Set `INVITATION_BASE_URL` to the production API host and `ANDROID_CERT_SHA256` to the fingerprints of the release signing key, so that links open in the app.
 4. Point a domain at the app, and call `POST /internal/jobs/daily` every day at 07:00 Asia/Jakarta with the `JOBS_SECRET` bearer token (an external scheduler).
 5. Add the `FLY_PROD_API_TOKEN` GitHub secret. The next release deploys it.
@@ -173,6 +173,8 @@ Settings are read from environment variables, or from a `.env` file in the proje
 | `ANDROID_CERT_SHA256` | none | Comma-separated SHA-256 fingerprints of the app's signing certificates, each as 32 hex bytes separated by colons; with `GOOGLE_PLAY_PACKAGE_NAME` it makes `/.well-known/assetlinks.json` answer, otherwise that path answers 404 |
 | `FIREBASE_CREDENTIALS` | none | Content of a Firebase service account JSON file, on one line; enables push through FCM |
 | `GOOGLE_CLIENT_IDS` | none | Comma-separated OAuth client IDs accepted as the audience of Google ID tokens; without it Google sign-in is refused |
+| `RESEND_API_KEY` | none | Resend API key with sending access; enables email delivery and needs `EMAIL_FROM` |
+| `EMAIL_FROM` | none | Sender of every email, such as `Niscala <no-reply@your-domain>`, on the domain verified in Resend; needs `RESEND_API_KEY` |
 | `JOBS_SECRET` | none | Bearer secret for `POST /internal/jobs/daily`; without it (or blank) that endpoint answers 404 |
 | `R2_ACCOUNT_ID` | none | Cloudflare account ID of the R2 bucket that stores receipts and complaint photos |
 | `R2_ACCESS_KEY_ID` | none | Access key ID of an R2 API token with read and write access to the bucket |
@@ -184,7 +186,11 @@ Settings are read from environment variables, or from a `.env` file in the proje
 | `GOOGLE_PLAY_RTDN_AUDIENCE` | none | Audience set on the Pub/Sub push subscription; without it `POST /internal/google-play/notifications` answers 404 |
 | `GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT` | none | Email of the service account that the Pub/Sub push subscription signs its requests with |
 
-Until a mail service is set up, email verification codes are written to the server log instead of being emailed.
+Without `RESEND_API_KEY` and `EMAIL_FROM`, emails (verification codes, password-reset and email-change links) are written to the server log instead of being sent. Setting only one of the two stops the app at startup. To send them for real, verify a domain in Resend, create an API key with sending access, and put both values in `.env`, or on the deployed server:
+
+```sh
+fly secrets set RESEND_API_KEY=... EMAIL_FROM="Niscala <no-reply@your-domain>" -a niscala-api-dev
+```
 
 Without `FIREBASE_CREDENTIALS`, push notifications are written to the server log instead of being sent. To send them for real, create a service account key in the Firebase console (Project settings, Service accounts, Generate new private key) and put its JSON on one line in `.env`, or on the deployed server:
 
