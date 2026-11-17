@@ -106,6 +106,7 @@ The code names above are used in PEP 8 form in this repository (see `CLAUDE.md`,
 | Choose and pay for a subscription                            |   —    |  ✓   |    —    |   —   |
 | View / edit / delete any user account                        |   —    |   —   |    —    |  ✓   |
 | View / end own sessions, change own password                 |   ✓   |  ✓   |    ✓    |  ✓   |
+| Delete own account                                           |   ✓   |  ✓   |    ✓    |  —   |
 | View own notifications, change own notification settings     |   ✓   |  ✓   |    ✓    |   —   |
 
 Each role sees only the menus it is allowed to use. The backend enforces permissions; the app hides what a role cannot do.
@@ -235,6 +236,7 @@ Every code the API returns, by HTTP status and then by code. A released code MUS
 | `ROOM_NOT_VACANT` | 409 | `roomId` | The room already has a Tenant. |
 | `ROOM_NUMBER_TAKEN` | 409 | `number` | The property already has a room with this number. |
 | `SESSION_IS_CURRENT` | 409 | - | The session to end is the caller's own. |
+| `SUBSCRIPTION_AUTO_RENEWING` | 409 | - | The Owner's Google Play subscription still renews; it must be cancelled in Google Play first. |
 | `SUBSCRIPTION_NOT_AN_UPGRADE` | 409 | - | The ordered plan is not higher than the current one. |
 | `SUBSCRIPTION_ORDER_CLOSED` | 409 | - | The order failed or expired. |
 | `TENANT_ALREADY_ACTIVE` | 409 | - | The Tenant has activated their account, so there is no invitation link to regenerate. |
@@ -567,7 +569,7 @@ The Owner's **effective plan** is the stored paid plan while its period has not 
 - an Owner with a property that has an active lease (`OWNER_HAS_ACTIVE_LEASE`);
 - a Tenant with an active lease (`TENANT_HAS_ACTIVE_LEASE`).
 
-Deleting an Owner archives their properties, rooms and the Managers' assignments to them (hidden and read-only, history kept). Deleting a Manager revokes their assignments. Payment and complaint history is kept in every case. An account already deleted through UC-21 or UC-30 is also *Dihapus* here. Deleting an already deleted account is rejected (`USER_ACCOUNT_DELETED`). Archiving is the same soft delete as UC-13. Deleting a Manager also deletes their Manager record at every Owner; deleting a Tenant also deletes the tenant record, as UC-21 does. `OWNER_HAS_ACTIVE_LEASE` and `TENANT_HAS_ACTIVE_LEASE` answer 409, `USER_ACCOUNT_NOT_FOUND` 404.
+Deleting an Owner archives their properties, rooms and the Managers' assignments to them (hidden and read-only, history kept). Deleting a Manager revokes their assignments. Payment and complaint history is kept in every case. An account already deleted through UC-21 or UC-30 is also *Dihapus* here. Deleting an already deleted account is rejected (`USER_ACCOUNT_DELETED`). Archiving is the same soft delete as UC-13. Deleting a Manager also deletes their Manager record at every Owner; deleting a Tenant also deletes the tenant record, as UC-21 does. An Owner whose Google Play subscription still renews is also rejected (`SUBSCRIPTION_AUTO_RENEWING`, 409), checked after the lease checks. The account's personal data is erased as in UC-39. `OWNER_HAS_ACTIVE_LEASE`, `TENANT_HAS_ACTIVE_LEASE` and `SUBSCRIPTION_AUTO_RENEWING` answer 409, `USER_ACCOUNT_NOT_FOUND` 404.
 
 ### 8.5 All roles
 
@@ -589,6 +591,16 @@ Deleting an Owner archives their properties, rooms and the Managers' assignments
 The current session stays logged in. The response says whether the user has other active sessions (`hasOtherSessions`), so the app can offer to end them (UC-37). Ending them is a separate call.
 
 Checks run in this order: no password (`PASSWORD_NOT_SET`, 409), lock (`TOO_MANY_ATTEMPTS`, 429 with `Retry-After`), current password (`CURRENT_PASSWORD_INCORRECT`, 422), unchanged (`PASSWORD_UNCHANGED`, 422, field `newPassword`), blocklist (`PASSWORD_TOO_COMMON`, 422, field `newPassword`). A wrong current password counts toward the same per-email lock as failed logins (§7), and a successful change clears it.
+
+**UC-39 Delete own account** (Google Play account deletion) · Tenant, Owner and Manager. An Admin answers `FORBIDDEN`. The caller's account is deleted as in UC-35 and its personal data is erased (below). It cannot be undone, and the response has no body (204). Checks run in this order: role, an Owner whose properties have an active lease (`OWNER_HAS_ACTIVE_LEASE`, 409), a Tenant with an active lease (`TENANT_HAS_ACTIVE_LEASE`, 409), an Owner whose Google Play subscription still renews (`SUBSCRIPTION_AUTO_RENEWING`, 409), recent re-authentication (`REAUTHENTICATION_REQUIRED`, 403, §7). The refusals come before re-authentication so nobody re-authenticates only to be refused. A refusal saves nothing.
+
+**Erasure of personal data** (UC-35 and UC-39) · Done in the same transaction as the deletion.
+- The account name becomes `Deleted account`. Email, password hash, Google identity and Google email are cleared, so the email address can be registered again and the Google identity can be linked to another account.
+- The account's sessions end and their device names and push tokens are cleared. Pending email changes, password-reset links, email-verification codes, login-failure records and the account's notifications are deleted.
+- Tenant records of the account: phone and occupation are emptied, emergency contacts and payment-pattern summaries are deleted.
+- Manager records of the account: phone and nickname are emptied.
+- The bank account of an Owner's deleted properties is cleared.
+- Kept, because they are the Owner's records or purchase records: bills and their status history, transfer receipts, complaints and their photos, subscription orders. They no longer name a person.
 
 ## 9. API contract
 
@@ -688,6 +700,7 @@ Endpoints:
 | `POST`   | `/notifications/read-all`                       | Mark all of the caller's notifications read.              | UC-06                                                     |
 | `GET`    | `/me/notification-settings`                     | The caller's push settings, one entry per category of their role. | UC-06                                                     |
 | `PUT`    | `/me/notification-settings`                     | Replace the caller's push settings.                       | UC-06                                                     |
+| `DELETE` | `/me`                                           | Delete the caller's own account.                          | UC-39                                                     |
 | `PUT`    | `/me/push-token`                                | Register the current session's device push token.         | UC-06                                                     |
 | `GET`    | `/user-accounts`                                | List user accounts, optionally by `email` (substring), `role` and `includeDeleted` (default false). Admin only. | UC-33      |
 | `GET`    | `/user-accounts/{userAccountId}`                | User account detail. Admin only.                          | UC-33                                                     |
@@ -806,3 +819,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 12-11-2026 | U-4 decided: invitation, password-reset and email-change links are https links on the API host that open the app through Android App Links; the API serves the Digital Asset Links file and an Indonesian page that points to Google Play when the app is not installed. Removed from §10. | NKMA-118 |
 | 17-11-2026 | Email delivery decided: Resend sends verification codes, password-reset links, email-change links and notices as Indonesian plain text; without its settings they go to the server log. | NKMA-119 |
 | 17-11-2026 | §9: removed the not-implemented note and the list of implemented endpoints, since every listed endpoint is implemented. | NKMA-120 |
+| 18-11-2026 | UC-39 Delete own account added for Google Play: Tenant, Owner and Manager delete their own account after a recent re-authentication, `DELETE /me`. Deleting an account (UC-35 or UC-39) erases its personal data and keeps the Owner's bills, receipts and complaints without the name. An Owner whose Google Play subscription still renews is refused (`SUBSCRIPTION_AUTO_RENEWING`). Permission row added to §4. | NKMA-121 |

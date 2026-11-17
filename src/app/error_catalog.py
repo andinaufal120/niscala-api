@@ -92,6 +92,7 @@ ERROR_STATUS: dict[str, int] = {
     "ROOM_NOT_VACANT": 409,
     "ROOM_NUMBER_TAKEN": 409,
     "SESSION_IS_CURRENT": 409,
+    "SUBSCRIPTION_AUTO_RENEWING": 409,
     "SUBSCRIPTION_NOT_AN_UPGRADE": 409,
     "SUBSCRIPTION_ORDER_CLOSED": 409,
     "TENANT_ALREADY_ACTIVE": 409,
@@ -241,6 +242,13 @@ ROUTE_ERRORS: dict[tuple[str, str], tuple[str, ...]] = {
     ("POST", "/managers/{managerId}/invitation"): MANAGER_SCOPED
     + ("MANAGER_ALREADY_ACTIVE", *INVALID),
     ("GET", "/me"): ("ACCESS_TOKEN_INVALID",),
+    ("DELETE", "/me"): STAFF
+    + (
+        "OWNER_HAS_ACTIVE_LEASE",
+        "TENANT_HAS_ACTIVE_LEASE",
+        "SUBSCRIPTION_AUTO_RENEWING",
+        "REAUTHENTICATION_REQUIRED",
+    ),
     ("POST", "/me/google-link"): (
         "ACCESS_TOKEN_INVALID",
         *GOOGLE_SIGN_IN,
@@ -397,6 +405,7 @@ ROUTE_ERRORS: dict[tuple[str, str], tuple[str, ...]] = {
     + (
         "CANNOT_MODIFY_OWN_ACCOUNT",
         "OWNER_HAS_ACTIVE_LEASE",
+        "SUBSCRIPTION_AUTO_RENEWING",
         "TENANT_HAS_ACTIVE_LEASE",
         "USER_ACCOUNT_DELETED",
         *INVALID,

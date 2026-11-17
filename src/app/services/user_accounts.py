@@ -8,15 +8,21 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, and_, delete, exists, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.access import bump_version
+from app.access import bump_version, has_recent_reauthentication
 from app.email import EmailSender
 from app.errors import ApiError
 from app.models import (
     EmailChangeRequest,
+    EmailVerificationCode,
+    EmergencyContact,
     Invitation,
     Lease,
+    LoginFailure,
     Manager,
     ManagerAssignment,
+    Notification,
+    PasswordResetToken,
+    PaymentPatternSummary,
     Property,
     Room,
     Tenant,
@@ -34,11 +40,13 @@ from app.schemas.user_accounts import (
     UserAccountSummary,
 )
 from app.schemas.user_accounts import UserAccount as UserAccountDetail
-from app.services import sessions
+from app.security import CurrentUser
+from app.services import sessions, subscriptions
 from app.services.invitations import email_change_url
 from app.services.properties import count_active_leases, remove_property
 
 EMAIL_CHANGE_LIFETIME = timedelta(days=7)
+ERASED_NAME = "Deleted account"
 
 type Found = tuple[UserAccount, bool]
 
@@ -346,27 +354,105 @@ def confirm_email_change(db: Session, token: str) -> None:
     request.used_at = now
 
 
+def _refuse_blocked_deletion(db: Session, user: UserAccount) -> None:
+    """Raise 409 when the account has an active lease or a renewing subscription.
+
+    Checks in order: an Owner's properties with an active lease
+    (OWNER_HAS_ACTIVE_LEASE), a Tenant with an active lease
+    (TENANT_HAS_ACTIVE_LEASE), an Owner whose running subscription still
+    renews (SUBSCRIPTION_AUTO_RENEWING).
+    """
+    if user.role == UserRole.OWNER and count_active_leases(db, user.id) > 0:
+        raise ApiError(409, "OWNER_HAS_ACTIVE_LEASE")
+    if user.role == UserRole.TENANT and _tenancies(db, user):
+        raise ApiError(409, "TENANT_HAS_ACTIVE_LEASE")
+    if user.role == UserRole.OWNER and subscriptions.is_auto_renewing(db, user.id):
+        raise ApiError(409, "SUBSCRIPTION_AUTO_RENEWING")
+
+
+def _erase_personal_data(db: Session, user: UserAccount) -> None:
+    """Clear the account's identity and delete the rows that only hold personal data.
+
+    Bills, receipts, complaints and subscription orders are kept.
+    """
+    if user.email is not None:
+        db.execute(delete(LoginFailure).where(LoginFailure.email == user.email))
+    user.name = ERASED_NAME
+    user.email = None
+    user.password_hash = None
+    user.google_subject = None
+    user.google_email = None
+    db.execute(
+        update(UserSession)
+        .where(UserSession.user_id == user.id)
+        .values(device_name="", push_token=None)
+    )
+    for model in (EmailChangeRequest, PasswordResetToken, EmailVerificationCode):
+        db.execute(delete(model).where(model.user_id == user.id))
+    db.execute(delete(Notification).where(Notification.recipient_id == user.id))
+
+    tenants = select(Tenant.id).where(Tenant.user_id == user.id)
+    db.execute(delete(EmergencyContact).where(EmergencyContact.tenant_id.in_(tenants)))
+    db.execute(
+        delete(PaymentPatternSummary).where(
+            PaymentPatternSummary.lease_id.in_(
+                select(Lease.id).where(Lease.tenant_id.in_(tenants))
+            )
+        )
+    )
+    db.execute(
+        update(Tenant)
+        .where(Tenant.user_id == user.id)
+        .values(phone="", occupation=None)
+    )
+    db.execute(
+        update(Manager)
+        .where(Manager.user_id == user.id)
+        .values(phone="", nickname=None)
+    )
+    db.execute(
+        update(Property)
+        .where(Property.owner_id == user.id)
+        .values(bank_name=None, bank_account_number=None, bank_account_holder_name=None)
+    )
+
+
 def delete_user_account(db: Session, caller: UserAccount, user_id: UUID) -> None:
     """Soft-delete an account, end its sessions and delete what it owns or works for.
 
     Checks in order: account (404 USER_ACCOUNT_NOT_FOUND), the caller's own
     account (409 CANNOT_MODIFY_OWN_ACCOUNT), already deleted (409
-    USER_ACCOUNT_DELETED), an Owner whose properties have an active lease (409
-    OWNER_HAS_ACTIVE_LEASE), a Tenant with an active lease (409
-    TENANT_HAS_ACTIVE_LEASE). An Owner's properties are deleted as in property
-    deletion, a Manager loses every assignment and record, every record of a
-    Tenant is deleted. A refusal saves nothing.
+    USER_ACCOUNT_DELETED), then the lease and subscription refusals. An Owner's
+    properties are deleted as in property deletion, a Manager loses every
+    assignment and record, every record of a Tenant is deleted, and the
+    account's personal data is erased. A refusal saves nothing.
     """
     user, deleted = find_user_account(db, user_id)
     if user.id == caller.id:
         raise ApiError(409, "CANNOT_MODIFY_OWN_ACCOUNT")
     if deleted:
         raise ApiError(409, "USER_ACCOUNT_DELETED")
-    if user.role == UserRole.OWNER and count_active_leases(db, user.id) > 0:
-        raise ApiError(409, "OWNER_HAS_ACTIVE_LEASE")
-    if user.role == UserRole.TENANT and _tenancies(db, user):
-        raise ApiError(409, "TENANT_HAS_ACTIVE_LEASE")
+    _refuse_blocked_deletion(db, user)
+    _delete_account(db, user)
 
+
+def delete_own_account(db: Session, current: CurrentUser) -> None:
+    """Delete the caller's own account as `delete_user_account` does.
+
+    Checks in order: the role is not Admin (403 FORBIDDEN), the lease and
+    subscription refusals, then a re-authentication of the session within the
+    window (403 REAUTHENTICATION_REQUIRED). A refusal saves nothing.
+    """
+    user = current.user
+    if user.role == UserRole.ADMIN:
+        raise ApiError(403, "FORBIDDEN")
+    _refuse_blocked_deletion(db, user)
+    if not has_recent_reauthentication(current.session):
+        raise ApiError(403, "REAUTHENTICATION_REQUIRED")
+    _delete_account(db, user)
+
+
+def _delete_account(db: Session, user: UserAccount) -> None:
     now = datetime.now(UTC)
     user.deleted_at = now
     sessions.end_all_sessions(db, user.id)
@@ -402,4 +488,5 @@ def delete_user_account(db: Session, caller: UserAccount, user_id: UUID) -> None
             .where(Tenant.user_id == user.id, Tenant.deleted_at.is_(None))
             .values(deleted_at=now)
         )
+    _erase_personal_data(db, user)
     db.flush()
