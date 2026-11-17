@@ -207,19 +207,165 @@ pg_cron                                    FastAPI                              
 |                                             |                                             |
 ```
 
+### 3.6. Gemini flows (complaint classification and payment-pattern summaries)
+
+Both Gemini calls run after the response, in a background task with its own database session, one try with a 10 second timeout. A failure never undoes the request.
+
+Complaint classification:
+
+```
+Tenant app                                 FastAPI                                        Gemini
+|                                             |                                             |
+|-- POST /complaints ------------------------>|                                             |
+|                                             |  save complaint (classifying)               |
+|                                             |  notify Owner and Managers                  |
+|                                             |  commit, send queued pushes                 |
+|<------------- 201 complaint (classifying) --|                                             |
+|                                             |                                             |
+|                                             |  background task:                           |
+|                                             |-- complaint in random tag, categories ----->|
+|                                             |<------- JSON category, urgency, action -----|
+|                                             |  check answer                               |
+|                                             |    ok: store the classification             |
+|                                             |    failed: awaitingClassification           |
+|                                             |  high urgency: push highOnly recipients     |
+|                                             |                                             |
+```
+
+Payment-pattern summary:
+
+```
+Owner or Manager app                       FastAPI                                        Gemini
+|                                             |                                             |
+|-- POST /rent-bills/{id}/verification ------>|                                             |
+|   (or any payment status change)            |  change status                              |
+|                                             |  delete the lease's summary                 |
+|                                             |  commit                                     |
+|<------------------------------- rent bill --|                                             |
+|                                             |                                             |
+|                                             |  background task:                           |
+|                                             |  lease running, Owner subscribed?           |
+|                                             |    no: stop                                 |
+|                                             |  compute facts and counted bills            |
+|                                             |-- facts, counted bills -------------------->|
+|                                             |<------------------------------ summary -----|
+|                                             |  empty, over 500 chars, link or HTML: drop  |
+|                                             |  facts unchanged? save the summary          |
+|                                             |                                             |
+|-- GET /properties/{id}/payment-patterns --->|                                             |
+|<---------- facts, summary (if stored) ------|                                             |
+|                                             |                                             |
+```
+
+### 3.7. Push notification flow (FCM)
+
+Each session registers its device token. Notifications are stored with the event; pushes are sent only after the event's outermost commit.
+
+```
+App (device)                               FastAPI                                          FCM
+|                                             |                                             |
+|-- PUT /me/push-token {token} -------------->|                                             |
+|                                             |  store token on the session                 |
+|<------------------------------------- 204 --|                                             |
+|                                             |                                             |
+|                                             |  event (status change, complaint,           |
+|                                             |         daily job):                         |
+|                                             |  store notification rows (savepoint)        |
+|                                             |  category on? queue a push per              |
+|                                             |    live session with a token                |
+|                                             |  outermost commit:                          |
+|                                             |-- send(token, notificationId, type) ------->|
+|                                             |<---------- ok, or unregistered/invalid -----|
+|                                             |  invalid: clear push_token on that session  |
+|<------------------------- push with title_loc_key, body_loc_key, data --------------------|
+|                                             |                                             |
+```
+
+The push carries no text, only `notificationId`, `type` and localization keys. A rollback drops the queue, and each push is tried once.
+
+### 3.8. Email flow (Resend)
+
+Emails are sent inside the request. A failed send fails the request, so nothing is saved.
+
+```
+App                                        FastAPI                                       Resend
+|                                             |                                             |
+|-- POST /auth/password-reset-requests ------>|                                             |
+|                                             |  create token, store its hash               |
+|                                             |-- POST /emails (from, to, subject, text) -->|
+|                                             |<------------------------- 200, or error ----|
+|                                             |  error or no answer in 10 s:                |
+|                                             |    EmailDeliveryFailed, roll back           |
+|<----------------------------- 202, or 500 --|                                             |
+|                                             |                                             |
+```
+
+`POST /auth/email-verification` (the code) and `PUT /user-accounts/{id}` with a new email (a link to the new address, a notice to the old one) have the same shape. Templates are plain-text Indonesian in `email.py`; without `RESEND_API_KEY` the console sender logs them.
+
+### 3.9. File storage flow (R2)
+
+Receipts and complaint photos are stored in R2 under a new key per upload. The object's fate follows the request's transaction.
+
+```
+App                                        FastAPI                                           R2
+|                                             |                                             |
+|-- PUT /rent-bills/{id}/receipt (image) ---->|                                             |
+|                                             |  type from the file signature               |
+|                                             |-- put_object(new key) --------------------->|
+|                                             |  row keeps the new key                      |
+|                                             |  commit ok:                                 |
+|                                             |-- delete_object(replaced key) ------------->|
+|                                             |  rollback:                                  |
+|                                             |-- delete_object(new key) ------------------>|
+|<------------------------------- rent bill --|                                             |
+|                                             |                                             |
+|-- GET /rent-bills/{id}/receipt ------------>|                                             |
+|                                             |  access check                               |
+|                                             |-- get_object(key) ------------------------->|
+|                                             |<-------------------------------- bytes -----|
+|<----------------------------------- image --|                                             |
+|                                             |                                             |
+```
+
+Complaint photos (`PUT /complaints/{id}/photo`) work the same. The bucket is private and the app never gets an R2 URL. Without R2 settings the local directory store is used.
+
+### 3.10. Android App Links flow
+
+Links in emails and invitations open the app when it is installed, and a small page otherwise.
+
+```
+Android                                    FastAPI                                  Niscala app
+|                                             |                                             |
+|-- GET /.well-known/assetlinks.json -------->|                                             |
+|<---------------- package name, SHA-256 -----|                                             |
+|  link verified for the app                  |                                             |
+|                                             |                                             |
+|  user taps /password-reset?token=...        |                                             |
+|  app installed:                             |                                             |
+|-- open the link ------------------------------------------------------------------------->|
+|                                             |<--- POST /auth/password-reset-previews -----|
+|                                             |-------------------- account email --------->|
+|  app not installed (browser):               |                                             |
+|-- GET /password-reset --------------------->|                                             |
+|<---------- Indonesian page, Play link ------|                                             |
+|                                             |                                             |
+```
+
+`/invitations/{token}` and `/email-change` work the same. The page never reads the token, and the host of `INVITATION_BASE_URL` must be the API host or forward to it.
+
 ## 4. Data Stores
 
 PostgreSQL (Supabase on the deployed server), reached through `DATABASE_URL`. Schema changes are Alembic revisions in `migrations/`; a test checks that the migrated schema matches the models. Tables so far: `user_accounts`, `sessions`, `used_refresh_tokens`, `email_verification_codes`, `login_failures`, `properties`, `manager_assignments`, `managers`, `subscriptions`, `rooms`, `tenants`, `emergency_contacts`, `leases`, `rent_bills`, `rent_bill_status_changes`, `rent_bill_receipts`, `invitations`, `complaints`, `complaint_status_changes`, `complaint_photos`, `email_change_requests`, `password_reset_tokens`, `notifications`, `notification_settings`, `payment_pattern_summaries`, `subscription_orders` (purchase attempts, with status, optional purchase token and expiry) and `scheduled_downgrades` (one row per Owner: the target plan and the kept property and room ids, as UUID arrays). Facility tags are a text-array column on the room. Uploaded files (receipts, complaint photos) are in the Cloudflare R2 bucket named by `R2_BUCKET`, private, read only by the API.
 
 ## 5. External Integrations / APIs
 
-- **Gemini** (complaint classification, built; payment-pattern summaries, built): `ai/gemini.py` calls the `google-genai` SDK with the model in `GEMINI_MODEL`, sends the instructions as a system instruction and the complaint wrapped in a per-request random tag, asks for a JSON answer restricted to the complaint categories, and turns any SDK error, bad JSON, unknown category or suspicious suggested action (too long, a link, an HTML tag, 8 or more digits in a row ignoring spaces, dots and dashes) into `ClassificationUnavailable`. Without `GEMINI_API_KEY` the unavailable classifier is used. Complaint classification runs through the `ComplaintClassifier` protocol: the complaint is saved and committed first, then a background task of the same request calls the classifier once with a 10 second timeout, in its own database session. Any failure leaves the complaint saved in the state *awaitingClassification*. Payment-pattern summaries go through the `PaymentPatternSummarizer` protocol the same way: one request with a 10 second timeout, only the computed facts and counted bills sent, and any error, empty answer, answer over 500 characters, link or HTML tag treated as a failure (`SummaryUnavailable`); without a key the unavailable summarizer is used.
-- **Firebase Cloud Messaging** (push, built): `push.py` calls the `firebase-admin` SDK with the service account in `FIREBASE_CREDENTIALS`. Without it the console sender is used.
-- **Resend** (email, built): `email.py` posts plain-text emails to the Resend REST API through `requests` with `RESEND_API_KEY`, from `EMAIL_FROM`, with a 10 second timeout. A refusal or a network error raises `EmailDeliveryFailed`, so the request fails and rolls back. Without the key the console sender is used; setting only one of the two settings fails at startup.
-- **Cloudflare R2** (file storage, built): `storage.py` uses boto3 against R2's S3 API with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`. Without them, files go to the local directory in `FILE_STORAGE_DIR`.
+- **Gemini** (complaint classification, built; payment-pattern summaries, built): `ai/gemini.py` calls the `google-genai` SDK with the model in `GEMINI_MODEL`, sends the instructions as a system instruction and the complaint wrapped in a per-request random tag, asks for a JSON answer restricted to the complaint categories, and turns any SDK error, bad JSON, unknown category or suspicious suggested action (too long, a link, an HTML tag, 8 or more digits in a row ignoring spaces, dots and dashes) into `ClassificationUnavailable`. Without `GEMINI_API_KEY` the unavailable classifier is used. Complaint classification runs through the `ComplaintClassifier` protocol: the complaint is saved and committed first, then a background task of the same request calls the classifier once with a 10 second timeout, in its own database session. Any failure leaves the complaint saved in the state *awaitingClassification*. Payment-pattern summaries go through the `PaymentPatternSummarizer` protocol the same way: one request with a 10 second timeout, only the computed facts and counted bills sent, and any error, empty answer, answer over 500 characters, link or HTML tag treated as a failure (`SummaryUnavailable`); without a key the unavailable summarizer is used. The flows are described in section 3.6.
+- **Firebase Cloud Messaging** (push, built): `push.py` calls the `firebase-admin` SDK with the service account in `FIREBASE_CREDENTIALS`. Without it the console sender is used. The flow is described in section 3.7.
+- **Resend** (email, built): `email.py` posts plain-text emails to the Resend REST API through `requests` with `RESEND_API_KEY`, from `EMAIL_FROM`, with a 10 second timeout. A refusal or a network error raises `EmailDeliveryFailed`, so the request fails and rolls back. Without the key the console sender is used; setting only one of the two settings fails at startup. The flow is described in section 3.8.
+- **Cloudflare R2** (file storage, built): `storage.py` uses boto3 against R2's S3 API with `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`. Without them, files go to the local directory in `FILE_STORAGE_DIR`. The flow is described in section 3.9.
 - **Google Sign-In** (ID token verification, built): `google.py` verifies ID tokens with `google-auth` against the audiences in `GOOGLE_CLIENT_IDS`; without any, every token is rejected. Tests replace the verifier through `get_google_verifier`. The flow is described in section 3.3.
 - **Google Play Developer API** (subscription verification, built): `google_play.py` calls the Android Publisher v3 REST API (`purchases.subscriptionsv2.get` and `purchases.subscriptions.acknowledge`) for `GOOGLE_PLAY_PACKAGE_NAME` with an authorized session from the service account in `GOOGLE_PLAY_CREDENTIALS` and a 10 second timeout. Without both settings the unavailable client is used and every call fails as unreachable. Pub/Sub pushes are checked with `google-auth` against `GOOGLE_PLAY_RTDN_AUDIENCE` and `GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT`. Tests replace the client through `get_google_play` and the token verifier through `get_pubsub_token_verifier`. The flow is described in section 3.5.
-- **Android App Links** (built): `routers/links.py` serves `/.well-known/assetlinks.json` from `GOOGLE_PLAY_PACKAGE_NAME` and `ANDROID_CERT_SHA256`, and a small Indonesian page at `/invitations/{token}`, `/password-reset` and `/email-change`, the paths of the links the backend sends. The page is what a browser shows when the app is not installed: it never reads or repeats the token and points to the app's Google Play page. For Android to verify the links, the host of `INVITATION_BASE_URL` must be the API host or forward to it. The app declares the matching intent filter.
+- **Android App Links** (built): `routers/links.py` serves `/.well-known/assetlinks.json` from `GOOGLE_PLAY_PACKAGE_NAME` and `ANDROID_CERT_SHA256`, and a small Indonesian page at `/invitations/{token}`, `/password-reset` and `/email-change`, the paths of the links the backend sends. The page is what a browser shows when the app is not installed: it never reads or repeats the token and points to the app's Google Play page. For Android to verify the links, the host of `INVITATION_BASE_URL` must be the API host or forward to it. The app declares the matching intent filter. The flow is described in section 3.10.
 
 ## 6. Deployment & Infrastructure
 
@@ -266,7 +412,7 @@ Open architecture questions are listed in `docs/SPEC.md` §10.
 
 - Project: niscala-api
 - Repository: https://github.com/andinaufal120/niscala-api
-- Last updated: 2026-10-18
+- Last updated: 2026-11-18
 
 ## 11. Glossary
 
