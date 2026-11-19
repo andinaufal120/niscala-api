@@ -49,6 +49,7 @@ Keep it current: when a use case or a test file is added or renamed, update its 
 | UC-37 Manage active sessions | `test_sessions_and_passwords` | `test_my_sessions`, `test_session_endpoints`, `test_session_contract`, `test_session_models`, `test_end_expired_sessions`, `test_start_session` |
 | UC-38 Change password | `test_sessions_and_passwords` | `test_change_password`, `test_password_rules`, `test_passwords` |
 | UC-39 Delete own account | - | `test_own_account_deletion`, `test_user_account_deletion` |
+| Retention of a deleted Owner's data (daily purge) | `test_admin_journeys` | `test_owner_purge`, `test_daily_jobs` |
 
 ## Beyond the use cases
 
