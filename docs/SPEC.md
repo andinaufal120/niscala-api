@@ -163,7 +163,7 @@ These apply to every use case below. Use cases do not repeat them.
 5. **Empty lists** are a successful response with no items, not an error.
 6. **Subscription gating:** the API decides whether the Owner of the property has an active paid subscription (plan Basic or Pro, paid period running). Without one, gated content (AI classification, payment-pattern summary) is withheld, and the response says so. The rest of the response is unaffected.
 7. **AI failure** (error or timeout) never blocks or rolls back saving data (policies: UC-02, UC-26).
-8. **Soft delete** keeps history. Soft-deleted records are hidden from normal lists but kept for the history the use cases name.
+8. **Soft delete** keeps history. Soft-deleted records are hidden from normal lists but kept for the history the use cases name. The history of a deleted Owner's account is the exception: it is deleted for good 90 days after the account was deleted (§8.5, *Retention of a deleted Owner's data*).
 9. **Transport:** HTTPS only (NFR-08).
 10. **Plan limits:** the Owner's plan sets the maximum number of properties and the maximum number of rooms per property (§8.3, UC-31). Adding past a limit is rejected with an error code (UC-10, UC-14). After a downgrade takes effect, the properties and rooms the Owner did not keep are **view-only**: their data, leases and tenants cannot be changed (error codes `PROPERTY_READ_ONLY`, `ROOM_READ_ONLY`), but bills are still generated and payments and complaints are still processed. Responses carry `editable` on properties and rooms so the app does not compute this.
 
@@ -401,7 +401,7 @@ Notification types and who receives them:
 
 `complaintSubmitted` is created when the complaint is saved, before classification, so it carries no category or urgency. Under `allUrgencies` it is pushed at once; under `highOnly` its push waits for the classification and is sent only when the urgency is *Tinggi*. Push is sent through Firebase Cloud Messaging once the event is saved, so an event that fails sends no push (message format: §9). A push is tried once, with no retries beyond the FCM client's own. A token that FCM reports as unregistered or invalid is removed from its session, and any other failure is logged. A server without FCM credentials only writes pushes to its log. Errors: `NOTIFICATION_NOT_FOUND` (404); settings whose categories are not exactly the caller's role's `NOTIFICATION_CATEGORIES_INVALID` (422, field `items`).
 
-A Manager sees only notifications about properties currently assigned to them; a removed assignment hides them immediately. Times are 07:00 in Asia/Jakarta (WIB) for every user. Retention: notifications are kept; there is no automatic deletion.
+A Manager sees only notifications about properties currently assigned to them; a removed assignment hides them immediately. Times are 07:00 in Asia/Jakarta (WIB) for every user. Retention: notifications are kept, except those about the properties of an Owner whose account was deleted more than 90 days ago, which are deleted with that Owner's data (§8.5).
 
 **Notification settings** (UC-06) · All roles except Admin. Each user has one push on/off switch per notification category, and the settings only control **push** delivery; every notification still appears in the list (UC-06). Categories by role:
 
@@ -569,7 +569,7 @@ The Owner's **effective plan** is the stored paid plan while its period has not 
 - an Owner with a property that has an active lease (`OWNER_HAS_ACTIVE_LEASE`);
 - a Tenant with an active lease (`TENANT_HAS_ACTIVE_LEASE`).
 
-Deleting an Owner archives their properties, rooms and the Managers' assignments to them (hidden and read-only, history kept). Deleting a Manager revokes their assignments. Payment and complaint history is kept in every case. An account already deleted through UC-21 or UC-30 is also *Dihapus* here. Deleting an already deleted account is rejected (`USER_ACCOUNT_DELETED`). Archiving is the same soft delete as UC-13. Deleting a Manager also deletes their Manager record at every Owner; deleting a Tenant also deletes the tenant record, as UC-21 does. An Owner whose Google Play subscription still renews is also rejected (`SUBSCRIPTION_AUTO_RENEWING`, 409), checked after the lease checks. The account's personal data is erased as in UC-39. `OWNER_HAS_ACTIVE_LEASE`, `TENANT_HAS_ACTIVE_LEASE` and `SUBSCRIPTION_AUTO_RENEWING` answer 409, `USER_ACCOUNT_NOT_FOUND` 404.
+Deleting an Owner archives their properties, rooms and the Managers' assignments to them (hidden and read-only; the history is kept for 90 days, §8.5). Deleting a Manager revokes their assignments. Payment and complaint history is kept in every case, and for an Owner until the purge in §8.5. An account already deleted through UC-21 or UC-30 is also *Dihapus* here. Deleting an already deleted account is rejected (`USER_ACCOUNT_DELETED`). Archiving is the same soft delete as UC-13. Deleting a Manager also deletes their Manager record at every Owner; deleting a Tenant also deletes the tenant record, as UC-21 does. An Owner whose Google Play subscription still renews is also rejected (`SUBSCRIPTION_AUTO_RENEWING`, 409), checked after the lease checks. The account's personal data is erased as in UC-39. `OWNER_HAS_ACTIVE_LEASE`, `TENANT_HAS_ACTIVE_LEASE` and `SUBSCRIPTION_AUTO_RENEWING` answer 409, `USER_ACCOUNT_NOT_FOUND` 404.
 
 ### 8.5 All roles
 
@@ -600,7 +600,13 @@ Checks run in this order: no password (`PASSWORD_NOT_SET`, 409), lock (`TOO_MANY
 - Tenant records of the account: phone and occupation are emptied, emergency contacts and payment-pattern summaries are deleted.
 - Manager records of the account: phone and nickname are emptied.
 - The bank account of an Owner's deleted properties is cleared.
-- Kept, because they are the Owner's records or purchase records: bills and their status history, transfer receipts, complaints and their photos, subscription orders. They no longer name a person.
+- Kept at deletion, because they are the Owner's records or purchase records: bills and their status history, transfer receipts, complaints and their photos, subscription orders. They no longer name a person. The Owner's records are deleted 90 days later (below); subscription orders stay.
+
+**Retention of a deleted Owner's data** (UC-35 and UC-39) · A daily job deletes for good everything an Owner account owns once the account has been deleted for more than 90 days. The 90 days run from the deletion time of the account.
+- Deleted: the Owner's properties and rooms, leases, bills with their status history and receipts (the stored files too), complaints with their status history and photos, payment-pattern summaries, invitations, the Tenant records and Manager records of the Owner, the notifications about the Owner's properties for every recipient, the Owner's subscription and scheduled downgrade, and the Owner's notification settings.
+- Kept: the Owner's account row with its erased data, the subscription orders (they are Niscala's purchase records), and everything of other Owners. The accounts of Tenants and Managers are never deleted by the purge, nor are their records at other Owners; their sessions are not ended.
+- The Owner's own bookkeeping is the Owner's responsibility. Until an export exists, an Owner who wants their records asks the developer by email within the 90 days.
+- The job runs in one transaction: when it fails nothing is deleted, the daily job answer is 500, and the next day it tries again. An Owner already purged is not touched again, so a repeated run is harmless. Stored files are deleted only after the commit.
 
 ## 9. API contract
 
@@ -820,3 +826,4 @@ When work touches one of these items, stop and raise it in Plan mode. Items that
 | 17-11-2026 | Email delivery decided: Resend sends verification codes, password-reset links, email-change links and notices as Indonesian plain text; without its settings they go to the server log. | NKMA-119 |
 | 17-11-2026 | §9: removed the not-implemented note and the list of implemented endpoints, since every listed endpoint is implemented. | NKMA-120 |
 | 18-11-2026 | UC-39 Delete own account added for Google Play: Tenant, Owner and Manager delete their own account after a recent re-authentication, `DELETE /me`. Deleting an account (UC-35 or UC-39) erases its personal data and keeps the Owner's bills, receipts and complaints without the name. An Owner whose Google Play subscription still renews is refused (`SUBSCRIPTION_AUTO_RENEWING`). Permission row added to §4. | NKMA-121 |
+| 20-11-2026 | Retention of a deleted Owner's data: a daily job deletes an Owner's records for good 90 days after the account was deleted (§8.5); subscription orders and the erased account row stay. §6 rule 8 and the notification retention note name the exception. | NKMA-122 |
