@@ -935,11 +935,18 @@ def test_the_erased_account_reads_as_deleted_without_name_or_email(
 def test_the_erased_account_is_no_longer_found_by_its_old_email(
     client, database, admin_in, person
 ):
-    from user_account_support import list_accounts
+    from user_account_support import list_accounts, set_columns
 
+    from app.models import UserAccount
+
+    if person.landlord is not None:
+        set_columns(
+            database, UserAccount, person.landlord.id, email="landlord@example.com"
+        )
+    old_email = person.email
     delete_account(client, admin_in.headers, person.user.id)
     response = list_accounts(
-        client, admin_in.headers, email="subject@", includeDeleted="true"
+        client, admin_in.headers, email=old_email, includeDeleted="true"
     )
     assert response.status_code == 200
     assert response.json()["items"] == []

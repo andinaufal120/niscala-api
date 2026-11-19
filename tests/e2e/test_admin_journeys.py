@@ -6,6 +6,7 @@ import pytest
 
 from e2e.e2e_auth import raw_login, token_in
 from e2e.e2e_rent import assert_field_error
+from e2e.e2e_subscription import last_token, notify_play
 from e2e.e2e_world import MELATI
 
 ACCOUNTS = "/user-accounts"
@@ -419,7 +420,7 @@ def test_a_tenant_with_an_active_lease_cannot_be_deleted_until_the_lease_ends(
 
 
 def test_deleting_an_owner_waits_for_the_leases_to_end_then_archives_everything(
-    seeded_world, world
+    seeded_world, world, rtdn
 ):
     owner, manager = seeded_world.owner, seeded_world.manager
     budi, sari = seeded_world.budi, seeded_world.sari
@@ -436,6 +437,14 @@ def test_deleting_an_owner_waits_for_the_leases_to_end_then_archives_everything(
             owner.delete(f"/tenants/{tenant['id']}", expect=204)
     assert budi.email not in listed(admin)
     assert sari.email not in listed(admin)
+
+    error(admin.delete(path), 409, "SUBSCRIPTION_AUTO_RENEWING")
+    assert admin.read(path)["status"] == "active"
+    assert owner.get("/properties").status_code == 200
+    token = last_token(world)
+    world.stubs.play.change(token, state="CANCELED", auto_renewing=False)
+    assert notify_play(world, token).status_code == 204
+    assert owner.subscription()["autoRenew"] is False
 
     deleted = admin.delete(path)
 
