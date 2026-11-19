@@ -14,7 +14,7 @@ from user_account_support import rows_of, set_columns
 # Tables the purge keeps for the Owner: the erased account row, the purchase
 # records and the sessions.
 KEPT_TABLES = frozenset(
-    {"user_accounts", "subscription_orders", "user_sessions", "used_refresh_tokens"}
+    {"user_accounts", "subscription_orders", "sessions", "used_refresh_tokens"}
 )
 
 
