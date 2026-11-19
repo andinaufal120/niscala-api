@@ -30,6 +30,7 @@ OPERATIONS = {
     ("POST", "/invitations/acceptance-previews"): "200",
     ("POST", "/invitations/acceptances"): "204",
     ("GET", "/me"): "200",
+    ("DELETE", "/me"): "204",
     ("POST", "/me/local-password"): "200",
     ("POST", "/me/google-link"): "200",
     ("GET", "/me/sessions"): "200",
@@ -307,7 +308,7 @@ def test_the_document_declares_exactly_the_known_operations(document):
         for method in item
     }
     assert declared == set(OPERATIONS)
-    assert len(declared) == 87
+    assert len(declared) == 88
 
 
 # The error object
@@ -452,6 +453,14 @@ GOLDEN = {
     ("POST", "/auth/refresh"): {"REFRESH_TOKEN_INVALID", "VALIDATION_FAILED"},
     ("POST", "/auth/logout"): {"ACCESS_TOKEN_INVALID"},
     ("GET", "/me"): {"ACCESS_TOKEN_INVALID"},
+    ("DELETE", "/me"): AUTHENTICATED_READ
+    | {
+        "FORBIDDEN",
+        "OWNER_HAS_ACTIVE_LEASE",
+        "TENANT_HAS_ACTIVE_LEASE",
+        "SUBSCRIPTION_AUTO_RENEWING",
+        "REAUTHENTICATION_REQUIRED",
+    },
     ("POST", "/auth/email-verification"): {
         "ACCESS_TOKEN_INVALID",
         "EMAIL_ALREADY_VERIFIED",
@@ -621,6 +630,7 @@ GOLDEN = {
         "CANNOT_MODIFY_OWN_ACCOUNT",
         "OWNER_HAS_ACTIVE_LEASE",
         "TENANT_HAS_ACTIVE_LEASE",
+        "SUBSCRIPTION_AUTO_RENEWING",
         "USER_ACCOUNT_DELETED",
         "VALIDATION_FAILED",
     },

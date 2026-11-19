@@ -342,7 +342,7 @@ def test_a_token_is_not_found_when_the_account_was_deleted(
     token = start(client, admin_in, owner, mailbox)
     assert delete_account(client, admin_in.headers, owner.id).status_code == 204
     assert_error_code(confirm_change(client, token), 404, "EMAIL_CHANGE_NOT_FOUND")
-    assert read_user(database, owner.id).email == "rina@example.com"
+    assert read_user(database, owner.id).email is None
 
 
 def test_a_token_is_not_found_when_the_tenant_was_deleted(

@@ -577,13 +577,13 @@ def test_the_page_methods_are_not_declared_on_neighbouring_paths(openapi) -> Non
     assert not any(path.startswith("/email-change") for path in paths)
 
 
-def test_the_openapi_document_still_has_87_operations(openapi) -> None:
+def test_the_openapi_document_still_has_88_operations(openapi) -> None:
     operations = [
         (method, path)
         for path, item in openapi.document["paths"].items()
         for method in item
     ]
-    assert len(operations) == 87
+    assert len(operations) == 88
 
 
 def test_the_route_errors_still_match_the_operations_of_the_document(app) -> None:

@@ -6,6 +6,7 @@ import pytest
 
 from e2e.e2e_auth import raw_login, token_in
 from e2e.e2e_rent import assert_field_error
+from e2e.e2e_subscription import last_token, notify_play
 from e2e.e2e_world import MELATI
 
 ACCOUNTS = "/user-accounts"
@@ -385,7 +386,10 @@ def test_an_admin_cannot_deactivate_or_delete_themselves_but_can_manage_other_ad
 
     assert admin.delete(other).status_code == 204
     assert colleague.email not in listed(admin)
-    assert listed(admin, includeDeleted="true")[colleague.email]["status"] == "deleted"
+    erased = admin.read(other)
+    assert erased["status"] == "deleted"
+    assert erased["name"] == "Deleted account"
+    assert erased["email"] == ""
     error(admin.delete(other), 409, "USER_ACCOUNT_DELETED")
 
 
@@ -416,7 +420,7 @@ def test_a_tenant_with_an_active_lease_cannot_be_deleted_until_the_lease_ends(
 
 
 def test_deleting_an_owner_waits_for_the_leases_to_end_then_archives_everything(
-    seeded_world, world
+    seeded_world, world, rtdn
 ):
     owner, manager = seeded_world.owner, seeded_world.manager
     budi, sari = seeded_world.budi, seeded_world.sari
@@ -434,6 +438,14 @@ def test_deleting_an_owner_waits_for_the_leases_to_end_then_archives_everything(
     assert budi.email not in listed(admin)
     assert sari.email not in listed(admin)
 
+    error(admin.delete(path), 409, "SUBSCRIPTION_AUTO_RENEWING")
+    assert admin.read(path)["status"] == "active"
+    assert owner.get("/properties").status_code == 200
+    token = last_token(world)
+    world.stubs.play.change(token, state="CANCELED", auto_renewing=False)
+    assert notify_play(world, token).status_code == 204
+    assert owner.subscription()["autoRenew"] is False
+
     deleted = admin.delete(path)
 
     assert deleted.status_code == 204
@@ -446,11 +458,16 @@ def test_deleting_an_owner_waits_for_the_leases_to_end_then_archives_everything(
     assert manager.properties() == []
     assert owner.email not in listed(admin)
     assert owner.email not in listed(admin, role="owner")
-    with_deleted = listed(admin, role="owner", includeDeleted="true")
-    assert list(with_deleted) == [owner.email]
-    assert with_deleted[owner.email]["status"] == "deleted"
+    with_deleted = admin.read(
+        ACCOUNTS, params={"role": "owner", "includeDeleted": "true"}
+    )["items"]
+    assert [(a["id"], a["status"]) for a in with_deleted] == [
+        (str(owner.user_id), "deleted")
+    ]
     detail = admin.read(path)
     assert detail["status"] == "deleted"
+    assert detail["name"] == "Deleted account"
+    assert detail["email"] == ""
     assert detail["properties"] == []
     error(
         admin.put(path, json=edit("Rina Owner", owner.email)),
@@ -473,13 +490,11 @@ def test_deleting_an_owner_waits_for_the_leases_to_end_then_archives_everything(
             "device": {"name": "Pixel 8", "platform": "Android 14"},
         },
     )
-    error(registration, 409, "EMAIL_ALREADY_REGISTERED", "email")
-    error(
-        admin.put(account_path(manager), json=edit("Mira Manager", owner.email)),
-        409,
-        "EMAIL_ALREADY_REGISTERED",
-        "email",
+    assert registration.status_code == 201, registration.text
+    changed = admin.put(
+        account_path(manager), json=edit("Mira Manager", "rina.lain@example.com")
     )
+    assert changed.status_code == 200, changed.text
 
 
 def test_deleting_a_manager_revokes_the_assignments_and_ends_the_sessions(
@@ -502,7 +517,9 @@ def test_deleting_a_manager_revokes_the_assignments_and_ends_the_sessions(
     assert owner.read(f"/properties/{seeded_world.melati['id']}")["managers"] == []
     assert len(owner.complaints()) == 1
     assert manager.email not in listed(admin)
-    assert listed(admin, includeDeleted="true")[manager.email]["status"] == "deleted"
+    erased = admin.read(account_path(manager))
+    assert erased["status"] == "deleted"
+    assert erased["name"] == "Deleted account"
 
 
 # Concurrent edits

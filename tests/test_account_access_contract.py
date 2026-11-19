@@ -27,7 +27,7 @@ ACCOUNT_ACCESS_PATHS = {
     "/invitations/activations/google": {"post"},
     "/invitations/acceptance-previews": {"post"},
     "/invitations/acceptances": {"post"},
-    "/me": {"get"},
+    "/me": {"get", "delete"},
     "/me/local-password": {"post"},
     "/me/google-link": {"post"},
 }

@@ -134,6 +134,12 @@ def has_active_subscription(
     return _running_subscription(db, owner_id, now) is not None
 
 
+def is_auto_renewing(db: Session, owner_id: UUID) -> bool:
+    """Return whether the owner has a running subscription that renews."""
+    row = _running_subscription(db, owner_id, None)
+    return row is not None and row.auto_renew
+
+
 def _plan(code: PlanCode) -> SubscriptionPlan:
     limits = PLAN_LIMITS[code]
     prices = []
