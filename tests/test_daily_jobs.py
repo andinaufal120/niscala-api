@@ -103,6 +103,22 @@ def test_the_session_cleanup_is_the_first_daily_job():
     assert first is end_expired_sessions or first.__name__ == "end_expired_sessions"
 
 
+def test_the_daily_jobs_run_in_a_fixed_order_with_the_owner_purge_last():
+    from app.services.jobs import DAILY_JOBS
+    from app.services.owner_purge import purge_deleted_owners
+
+    assert [job.__name__ for job in DAILY_JOBS] == [
+        "end_expired_sessions",
+        "generate_rent_bills",
+        "send_due_date_reminders",
+        "send_overdue_notices",
+        "reconcile_google_play_subscriptions",
+        "apply_plan_limits",
+        "purge_deleted_owners",
+    ]
+    assert DAILY_JOBS[-1] is purge_deleted_owners
+
+
 def test_daily_jobs_have_distinct_names():
     from app.services.jobs import DAILY_JOBS
 
