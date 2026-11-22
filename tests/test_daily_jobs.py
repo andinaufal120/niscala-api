@@ -104,9 +104,8 @@ def test_the_session_cleanup_is_the_first_daily_job():
 
 
 def test_the_daily_jobs_run_in_a_fixed_order_with_the_owner_purge_last():
-    from app.services.owner_purge import purge_deleted_owners
-
     from app.services.jobs import DAILY_JOBS
+    from app.services.owner_purge import purge_deleted_owners
 
     assert [job.__name__ for job in DAILY_JOBS] == [
         "end_expired_sessions",
